@@ -13,6 +13,7 @@ export { default as Notification } from './Notification';
 export { default as AuditLog } from './AuditLog';
 export { default as SystemSetting } from './SystemSetting';
 export { default as Role } from './Role';
+export { default as Tenant } from './Tenant';
 export type { PermissionMatrix, PermissionResource, PermissionAction } from './Role';
 export { setupAssociations } from './associations';
 export * from './enums';

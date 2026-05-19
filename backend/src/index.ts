@@ -8,6 +8,7 @@ import { setupAssociations } from './models/associations';
 import './models/account/associations'; // 账户审计模块关联
 import './models';
 import cronSchedulerService from './services/account/cronScheduler.service';
+import { tenantContext, registerTenantModel } from './middlewares/tenant';
 
 const app = express();
 
@@ -40,9 +41,43 @@ setupAssociations();
 import { registerRoutes } from './routes';
 
 // 健康检查
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+app.get('/api/health', async (_req, res) => {
+  try {
+    await sequelize.authenticate();
+    const mem = process.memoryUsage();
+    res.json({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      memory: {
+        heapUsed: Math.round(mem.heapUsed / 1024 / 1024) + 'MB',
+        heapTotal: Math.round(mem.heapTotal / 1024 / 1024) + 'MB',
+      },
+      db: 'connected',
+      nodeEnv: config.nodeEnv,
+    });
+  } catch {
+    res.status(503).json({ status: 'degraded', db: 'disconnected' });
+  }
 });
+
+// 注册租户感知模型
+import User from './models/User';
+import Role from './models/Role';
+import SystemSetting from './models/SystemSetting';
+import AccountData from './models/account/AccountData';
+import AuditRule from './models/account/AuditRule';
+import ProblemAccount from './models/account/ProblemAccount';
+import TaskExecution from './models/account/TaskExecution';
+import AuditLog from './models/AuditLog';
+import Notification from './models/Notification';
+
+for (const model of [User, Role, SystemSetting, AccountData, AuditRule, ProblemAccount, TaskExecution, AuditLog, Notification]) {
+  registerTenantModel(model as any);
+}
+
+// 租户上下文中间件（在 authenticate 之后，路由处理之前）
+app.use(tenantContext);
 
 // 注册所有路由
 registerRoutes(app);

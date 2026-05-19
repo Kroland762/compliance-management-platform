@@ -1,6 +1,8 @@
 import { Sequelize } from 'sequelize';
 import { config } from './index';
 
+const isProd = config.nodeEnv === 'production';
+
 const sequelize = new Sequelize({
   dialect: 'postgres',
   host: config.db.host,
@@ -8,15 +10,21 @@ const sequelize = new Sequelize({
   database: config.db.database,
   username: config.db.username,
   password: config.db.password,
-  logging: false,
+  logging: isProd ? false : (msg: string) => { if (msg.includes('ERROR')) console.log(msg); },
   pool: {
-    max: 10,
-    min: 0,
+    max: isProd ? 20 : 10,
+    min: isProd ? 2 : 0,
     acquire: 30000,
     idle: 10000,
   },
-  dialectOptions: config.nodeEnv === 'production'
-    ? { ssl: { require: true, rejectUnauthorized: true, ca: process.env.DB_CA_CERT } }
+  dialectOptions: isProd
+    ? {
+        ssl: {
+          require: true,
+          rejectUnauthorized: true,
+          ca: process.env.DB_CA_CERT || undefined,
+        },
+      }
     : {},
 });
 

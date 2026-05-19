@@ -10,6 +10,7 @@ interface UserAttributes {
   email: string | null;
   role: UserRole;
   roleId: string | null;
+  tenantId: string | null;
   lastLogin: Date | null;
   isActive: boolean;
   failedLoginAttempts: number;
@@ -18,7 +19,7 @@ interface UserAttributes {
   updatedAt: Date;
 }
 
-type UserCreationAttributes = Optional<UserAttributes, 'id' | 'createdAt' | 'updatedAt' | 'lastLogin' | 'failedLoginAttempts' | 'lockedUntil' | 'roleId'>;
+type UserCreationAttributes = Optional<UserAttributes, 'id' | 'createdAt' | 'updatedAt' | 'lastLogin' | 'failedLoginAttempts' | 'lockedUntil' | 'roleId' | 'tenantId'>;
 
 class User extends Model<UserAttributes, UserCreationAttributes> implements UserAttributes {
   declare id: string;
@@ -28,6 +29,8 @@ class User extends Model<UserAttributes, UserCreationAttributes> implements User
   declare email: string | null;
   declare role: UserRole;
   declare roleId: string | null;
+  declare tenantId: string | null;
+
   declare lastLogin: Date | null;
   declare isActive: boolean;
   declare failedLoginAttempts: number;
@@ -45,6 +48,7 @@ User.init(
     email: { type: DataTypes.STRING(200), allowNull: true },
     role: { type: DataTypes.ENUM(...Object.values(UserRole)), allowNull: false },
     roleId: { type: DataTypes.UUID, allowNull: true },
+    tenantId: { type: DataTypes.UUID, allowNull: true },
     lastLogin: { type: DataTypes.DATE, allowNull: true },
     isActive: { type: DataTypes.BOOLEAN, defaultValue: true },
     failedLoginAttempts: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
