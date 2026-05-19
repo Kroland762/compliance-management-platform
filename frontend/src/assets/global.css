@@ -1,0 +1,53 @@
+/* ========================================
+   Apple Design System — 合规审计平台
+   ======================================== */
+
+:root {
+  --apple-blue: #007AFF;
+  --apple-gray-100: #F5F5F7;
+  --apple-gray-200: #E8E8ED;
+  --apple-gray-300: #D2D2D7;
+  --apple-gray-400: #AEAEB2;
+  --apple-gray-500: #8E8E93;
+  --apple-gray-600: #636366;
+  --apple-gray-900: #1D1D1F;
+  --apple-green: #34C759;
+  --apple-red: #FF3B30;
+  --apple-orange: #FF9500;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.06);
+  --shadow-lg: 0 8px 30px rgba(0,0,0,0.08);
+  --blur-bg: rgba(255,255,255,0.72);
+  --transition: 0.2s cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text',
+               'Helvetica Neue', Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #F5F5F7;
+  color: var(--apple-gray-900);
+  letter-spacing: -0.01em;
+  line-height: 1.5;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* Apple-style scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--apple-gray-300); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--apple-gray-400); }

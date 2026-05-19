@@ -1,0 +1,14 @@
+node_modules/
+dist/
+build/
+.env
+.env.local
+*.log
+uploads/
+coverage/
+.DS_Store
+*.tsbuildinfo
+*.bak
+*.debug
+audit-api.js.bak
+*.tar.gz
