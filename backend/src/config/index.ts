@@ -7,7 +7,7 @@ export const config = {
   db: {
     host: process.env.DB_HOST || 'localhost',
     port: parseInt(process.env.DB_PORT || '5432', 10),
-    database: process.env.DB_NAME || 'audit_platform',
+    database: process.env.DB_NAME || 'compliance_management_platform',
     username: process.env.DB_USER || 'admin',
     password: process.env.DB_PASSWORD || '',
   },
