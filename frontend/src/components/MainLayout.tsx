@@ -4,7 +4,7 @@ import {
   AuditOutlined, FormOutlined, WarningOutlined,
   BellOutlined, LogoutOutlined, FileSearchOutlined,
   MenuFoldOutlined, MenuUnfoldOutlined, DatabaseOutlined, ScheduleOutlined,
-  SecurityScanOutlined, SafetyCertificateOutlined,
+  SecurityScanOutlined, SafetyCertificateOutlined, HomeOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import { useAuthStore } from '../store/auth';
@@ -27,7 +27,7 @@ export default function MainLayout() {
   const can = useAuthStore((s) => s.hasPermission);
   useIdleTimeout();
   const [collapsed, setCollapsed] = useState(false);
-  const [activeNav, setActiveNav] = useState<'compliance' | 'account-audit'>('compliance');
+  const [activeNav, setActiveNav] = useState<'compliance' | 'account-audit' | 'system'>('compliance');
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
@@ -58,6 +58,14 @@ export default function MainLayout() {
   useEffect(() => {
     if (location.pathname.startsWith('/account-audit')) {
       setActiveNav('account-audit');
+    } else if (
+      location.pathname.startsWith('/users') ||
+      location.pathname.startsWith('/roles') ||
+      location.pathname.startsWith('/audit-logs') ||
+      location.pathname.startsWith('/tenants') ||
+      location.pathname.startsWith('/settings')
+    ) {
+      setActiveNav('system');
     } else {
       setActiveNav('compliance');
     }
@@ -100,19 +108,32 @@ export default function MainLayout() {
       { key: '/account-audit/problems', icon: <WarningOutlined />, label: '问题' },
     ] : []),
   ];
-  const sideMenuItems = activeNav === 'compliance' ? complianceMenuItems : accountAuditMenuItems;
+
+  const systemMenuItems: any[] = [
+    ...(can('tenants', 'read') ? [
+      { key: '/tenants', icon: <HomeOutlined />, label: '租户管理' },
+    ] : []),
+    ...(can('users', 'read') ? [
+      { key: '/roles', icon: <SafetyCertificateOutlined />, label: '角色管理' },
+    ] : []),
+    ...(can('users', 'read') ? [
+      { key: '/users', icon: <UserOutlined />, label: '用户管理' },
+    ] : []),
+    ...(can('users', 'read') ? [
+      { key: '/audit-logs', icon: <FileSearchOutlined />, label: '操作日志' },
+    ] : []),
+    { type: 'divider' as any },
+    { key: '/settings', icon: <SecurityScanOutlined />, label: '安全设置' },
+  ];
+
+  const sideMenuItems = activeNav === 'compliance' ? complianceMenuItems
+    : activeNav === 'account-audit' ? accountAuditMenuItems
+    : systemMenuItems;
 
   const userMenuItems = [
     { key: 'profile', icon: <UserOutlined />, label: '个人信息' },
-    { key: 'settings', icon: <SecurityScanOutlined />, label: '设置' },
     { key: 'role', label: <Text type="secondary" style={{ fontSize: 12 }}>{user?.role || ''}</Text>, disabled: true },
     { type: 'divider' as const },
-    ...(can('users', 'read') ? [
-      { key: '/users', icon: <UserOutlined />, label: '用户管理' },
-      { key: '/roles', icon: <SafetyCertificateOutlined />, label: '角色管理' },
-      { key: '/audit-logs', icon: <FileSearchOutlined />, label: '操作日志' },
-      { type: 'divider' as const },
-    ] : []),
     { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', danger: true },
   ];
 
@@ -142,6 +163,11 @@ export default function MainLayout() {
       if (location.pathname.startsWith('/account-audit/problems')) return '/account-audit/problems';
       return '/account-audit';
     }
+    if (location.pathname.startsWith('/users')) return '/users';
+    if (location.pathname.startsWith('/roles')) return '/roles';
+    if (location.pathname.startsWith('/audit-logs')) return '/audit-logs';
+    if (location.pathname.startsWith('/tenants')) return '/tenants';
+    if (location.pathname.startsWith('/settings')) return '/settings';
     return '/' + location.pathname.split('/').filter(Boolean)[0];
   })();
 
@@ -179,6 +205,8 @@ export default function MainLayout() {
               onClick={() => { setActiveNav('compliance'); navigate('/dashboard'); }}>资质合规</button>
             <button style={navTabStyle(activeNav === 'account-audit')}
               onClick={() => { setActiveNav('account-audit'); navigate('/account-audit'); }}>账户审计</button>
+            <button style={navTabStyle(activeNav === 'system')}
+              onClick={() => { setActiveNav('system'); navigate('/settings'); }}>系统设置</button>
           </nav>
           <Space size={16}>
             <Popover open={notifOpen} onOpenChange={(open) => { setNotifOpen(open); if (open) fetchNotifications(); }}
@@ -189,8 +217,21 @@ export default function MainLayout() {
                     <div style={{ textAlign: 'center', padding: 20, color: '#8E8E93' }}>暂无通知</div>
                   ) : (
                     <List dataSource={notifications} renderItem={(item: any) => (
-                      <List.Item style={{ padding: '10px 0', borderBottom: '0.5px solid rgba(0,0,0,0.06)' }}
-                        onClick={async () => { if (!item.isRead) { try { await apiClient.put(`/notifications/${item.id}/read`); fetchUnread(); } catch {} } }}>
+                      <List.Item
+                        style={{
+                          padding: '10px 0',
+                          borderBottom: '0.5px solid rgba(0,0,0,0.06)',
+                          opacity: item.isRead ? 0.6 : 1,
+                          transition: 'opacity 0.3s ease',
+                          cursor: item.isRead ? 'default' : 'pointer',
+                        }}
+                        onClick={() => {
+                          if (!item.isRead) {
+                            setNotifications(prev => prev.map(n => n.id === item.id ? { ...n, isRead: true } : n));
+                            setUnreadCount(prev => Math.max(0, prev - 1));
+                            apiClient.put(`/notifications/${item.id}/read`).catch(() => fetchUnread());
+                          }
+                        }}>
                         <div style={{ width: '100%' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                             <Tag color={item.notificationType === 'task_assigned' ? 'blue' : item.notificationType === 'task_returned' ? 'red' : 'green'}
@@ -198,7 +239,16 @@ export default function MainLayout() {
                               {item.notificationType === 'task_assigned' ? '分配' : item.notificationType === 'task_returned' ? '退回' : '提交'}
                             </Tag>
                             <Text strong style={{ fontSize: 13 }}>{item.title}</Text>
-                            {!item.isRead && <span style={{ width: 6, height: 6, borderRadius: 3, background: '#FF3B30', flexShrink: 0 }} />}
+                            {!item.isRead && (
+                              <span style={{
+                                width: 6, height: 6, borderRadius: 3,
+                                background: '#FF3B30', flexShrink: 0,
+                                transition: 'opacity 0.3s ease, transform 0.3s ease',
+                              }} />
+                            )}
+                            {item.isRead && (
+                              <span style={{ fontSize: 11, color: '#34C759', flexShrink: 0 }}>✓</span>
+                            )}
                           </div>
                           <Text style={{ fontSize: 12, color: '#636366' }}>{item.content}</Text>
                           <div style={{ fontSize: 11, color: '#AEAEB2', marginTop: 2 }}>
@@ -219,8 +269,6 @@ export default function MainLayout() {
               onClick: ({ key }) => {
                 if (key === 'logout') handleLogout();
                 if (key === 'profile') setProfileOpen(true);
-                if (key === 'settings') navigate('/settings');
-                if (key === '/users' || key === '/roles' || key === '/audit-logs') navigate(key);
               },
             }} placement="bottomRight">
               <div style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>

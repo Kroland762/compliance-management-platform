@@ -3,6 +3,7 @@ import sequelize from '../config/database';
 
 // 权限资源定义及可选操作
 export const PERMISSION_DEFINITIONS = {
+  tenants:         ['create', 'read', 'update', 'delete'],
   users:           ['create', 'read', 'update', 'delete'],
   templates:       ['create', 'read', 'update', 'delete'],
   tasks:           ['create', 'read', 'update', 'delete', 'submit', 'return'],
@@ -68,6 +69,7 @@ Role.init({
 }, {
   sequelize,
   tableName: 'roles',
+  schema: 'public',
   timestamps: true,
   createdAt: 'createdAt',
   updatedAt: 'updatedAt',

@@ -8,6 +8,8 @@ import { setupAssociations } from './models/associations';
 import './models/account/associations'; // 账户审计模块关联
 import './models';
 import cronSchedulerService from './services/account/cronScheduler.service';
+import auditLogService from './services/audit-log.service';
+import cron from 'node-cron';
 import { tenantContext, registerTenantModel } from './middlewares/tenant';
 
 const app = express();
@@ -61,22 +63,7 @@ app.get('/api/health', async (_req, res) => {
   }
 });
 
-// 注册租户感知模型
-import User from './models/User';
-import Role from './models/Role';
-import SystemSetting from './models/SystemSetting';
-import AccountData from './models/account/AccountData';
-import AuditRule from './models/account/AuditRule';
-import ProblemAccount from './models/account/ProblemAccount';
-import TaskExecution from './models/account/TaskExecution';
-import AuditLog from './models/AuditLog';
-import Notification from './models/Notification';
-
-for (const model of [User, Role, SystemSetting, AccountData, AuditRule, ProblemAccount, TaskExecution, AuditLog, Notification]) {
-  registerTenantModel(model as any);
-}
-
-// 租户上下文中间件（在 authenticate 之后，路由处理之前）
+// 租户上下文中间件（全局注册，但实际生效依赖路由中的 authenticate 先设置 req.user）
 app.use(tenantContext);
 
 // 注册所有路由
@@ -95,6 +82,16 @@ const start = async () => {
 
     // 初始化定时任务调度器
     await cronSchedulerService.initialize();
+
+    // 每日凌晨 3 点清理过期审计日志
+    cron.schedule('0 3 * * *', async () => {
+      try {
+        const deleted = await auditLogService.cleanupExpired();
+        if (deleted > 0) console.log(`🧹 清理了 ${deleted} 条过期审计日志`);
+      } catch (error: any) {
+        console.error(`⚠️ 日志清理失败: ${error.message}`);
+      }
+    });
 
     const server = app.listen(config.port, () => {
       console.log(`🚀 服务器运行在 http://localhost:${config.port}`);

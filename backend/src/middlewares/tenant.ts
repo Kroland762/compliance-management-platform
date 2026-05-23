@@ -1,48 +1,42 @@
 import { Request, Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
+import { AsyncLocalStorage } from 'async_hooks';
+import sequelize from '../config/database';
+import { config } from '../config';
 import Tenant, { TenantStatus } from '../models/Tenant';
-import User from '../models/User';
-import Role from '../models/Role';
-import SystemSetting from '../models/SystemSetting';
 
-// 所有需要租户隔离的模型（import懒加载避免循环依赖）
-const tenantModels: Array<{ schema: (name: string) => void }> = [];
-
-/**
- * 注册需要租户隔离的模型
- */
-export function registerTenantModel(model: { schema: (name: string) => void }) {
-  tenantModels.push(model);
+// 请求级租户上下文存储（Node.js 内置 AsyncLocalStorage，替代 cls-hooked）
+interface TenantStore {
+  schema: string;
+  tenantId: string | null;
 }
+const tenantAls = new AsyncLocalStorage<TenantStore>();
 
-/**
- * 设置当前请求的租户 schema
- */
-function setTenantSchema(schemaName: string) {
-  for (const model of tenantModels) {
-    try { model.schema(schemaName); } catch {}
-  }
-}
+// Patch Sequelize 连接池 —— 每次取连接时根据当前请求上下文设 search_path + RLS
+let poolPatched = false;
+function patchConnectionPool() {
+  if (poolPatched) return;
+  poolPatched = true;
 
-/**
- * 重置所有模型到 public schema（超管请求用）
- */
-function resetToPublicSchema() {
-  for (const model of tenantModels) {
-    try { model.schema('public'); } catch {}
-  }
-}
+  const connectionManager = (sequelize as any).connectionManager;
+  if (!connectionManager) return;
 
-/**
- * 根据域名解析租户（可选：用于 SaaS 多域名场景）
- */
-async function resolveTenantByDomain(hostname: string): Promise<string | null> {
-  if (!hostname || hostname === 'localhost' || hostname === '127.0.0.1') {
-    return null; // 本地开发不启用域名解析
-  }
-  const tenant = await Tenant.findOne({
-    where: { domain: hostname, status: TenantStatus.ACTIVE },
-  });
-  return tenant?.schemaName || null;
+  const origGetConnection = connectionManager.getConnection.bind(connectionManager);
+  connectionManager.getConnection = async function (options: any) {
+    const conn = await origGetConnection(options);
+    const store = tenantAls.getStore();
+    const schema = store?.schema;
+    const tenantId = store?.tenantId;
+    if (schema && schema !== 'public') {
+      await conn.query('RESET app.current_tenant_id');
+      await conn.query(`SET app.current_tenant_id = '${tenantId || ''}'`);
+      await conn.query(`SET search_path TO "${schema}", public`);
+    } else {
+      await conn.query('RESET app.current_tenant_id');
+      await conn.query('SET search_path TO public');
+    }
+    return conn;
+  };
 }
 
 // 扩展 Express Request
@@ -59,25 +53,25 @@ declare global {
   }
 }
 
-/**
- * 租户中间件
- * 1. 从 JWT 中提取 tenantId（需认证后执行）
- * 2. 查找租户并验证状态
- * 3. 设置 Sequelize schema 为租户独立 schema
- */
-export function tenantContext(req: Request, res: Response, next: NextFunction): void {
-  // 如果没有认证用户信息，跳过（登录等公开路由）
-  if (!req.user) {
-    next();
-    return;
+function getTenantIdFromHeader(req: Request): string | null {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+  try {
+    const token = authHeader.split(' ')[1];
+    const decoded = jwt.verify(token, config.jwt.secret) as any;
+    return decoded.tenantId || null;
+  } catch {
+    return null;
   }
+}
 
-  const tenantId = (req.user as any).tenantId;
+export function tenantContext(req: Request, res: Response, next: NextFunction): void {
+  patchConnectionPool();
+
+  const tenantId = (req.user as any)?.tenantId || getTenantIdFromHeader(req);
 
   if (!tenantId) {
-    // 没有租户ID → 使用默认 schema（向后兼容单租户）
-    setTenantSchema('public');
-    next();
+    tenantAls.run({ schema: 'public', tenantId: null }, () => next());
     return;
   }
 
@@ -87,7 +81,6 @@ export function tenantContext(req: Request, res: Response, next: NextFunction): 
         res.status(403).json({ success: false, error: { code: 'TENANT_NOT_FOUND', message: '租户不存在' } });
         return;
       }
-
       if (tenant.status === TenantStatus.SUSPENDED) {
         res.status(403).json({ success: false, error: { code: 'TENANT_SUSPENDED', message: '租户已停用' } });
         return;
@@ -100,12 +93,12 @@ export function tenantContext(req: Request, res: Response, next: NextFunction): 
         schemaName: tenant.schemaName,
       };
 
-      setTenantSchema(tenant.schemaName);
-      next();
+      tenantAls.run(
+        { schema: tenant.schemaName, tenantId: tenant.id },
+        () => next()
+      );
     })
     .catch((err) => {
       res.status(500).json({ success: false, error: { code: 'TENANT_ERROR', message: err.message } });
     });
 }
-
-export { setTenantSchema, resetToPublicSchema };

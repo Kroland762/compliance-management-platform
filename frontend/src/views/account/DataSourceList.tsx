@@ -1,12 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Table, Button, Input, Select, Space, Tag, Typography, message, Popconfirm, Tooltip, Switch } from 'antd';
+import { Table, Button, Input, Select, Space, Tag, message, Popconfirm, Tooltip, Switch } from 'antd';
 import { PlusOutlined, SyncOutlined, DeleteOutlined, EyeOutlined, LinkOutlined, SearchOutlined, ExclamationCircleOutlined, EditOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { dataSourceApi, type DataSource } from '../../api/account';
 import { getApiErrorMessage } from '../../utils/error';
 import DataSourceForm from './DataSourceForm';
-
-const { Title } = Typography;
 
 const statusColors: Record<string, string> = { active: 'green', inactive: 'default', error: 'red' };
 const statusLabels: Record<string, string> = { active: '正常', inactive: '停用', error: '异常' };
@@ -23,6 +21,7 @@ export default function DataSourceList() {
   const [togglingDs, setTogglingDs] = useState<string | null>(null);
   const [editingDs, setEditingDs] = useState<DataSource | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const [connectionMap, setConnectionMap] = useState<Record<string, 'ok' | 'fail' | 'testing'>>({});
 
   const fetchData = () => {
     setLoading(true);
@@ -30,7 +29,14 @@ export default function DataSourceList() {
     if (keyword) params.keyword = keyword;
     if (typeFilter) params.type = typeFilter;
     dataSourceApi.list(params)
-      .then((res: any) => setData(res.data?.items || []))
+      .then((res: any) => {
+        const items = res.data?.items || [];
+        setData(items);
+        // Auto-test database connections
+        items.filter((ds: DataSource) => ds.sourceType === 'DATABASE').forEach((ds: DataSource) => {
+          handleTestConnection(ds.id);
+        });
+      })
       .catch(() => message.error('获取数据源列表失败'))
       .finally(() => setLoading(false));
   };
@@ -38,6 +44,16 @@ export default function DataSourceList() {
   useEffect(() => { fetchData(); }, [typeFilter]);
 
   const handleSearch = () => fetchData();
+
+  const handleTestConnection = async (id: string) => {
+    setConnectionMap(prev => ({ ...prev, [id]: 'testing' }));
+    try {
+      const res: any = await dataSourceApi.testConnection(id);
+      setConnectionMap(prev => ({ ...prev, [id]: res.data?.success !== false ? 'ok' : 'fail' }));
+    } catch {
+      setConnectionMap(prev => ({ ...prev, [id]: 'fail' }));
+    }
+  };
 
   const handleSync = async (id: string, force = false) => {
     setSyncing(id);
@@ -88,7 +104,7 @@ export default function DataSourceList() {
       ),
     },
     {
-      title: '类型', dataIndex: 'sourceType', width: 90,
+      title: '类型', dataIndex: 'sourceType', width: 80,
       render: (v: string) => (
         <Tag color={v === 'DATABASE' ? 'blue' : 'purple'} style={{ borderRadius: 6 }}>
           {v === 'DATABASE' ? '数据库' : 'CSV'}
@@ -96,15 +112,26 @@ export default function DataSourceList() {
       ),
     },
     {
-      title: '映射状态', dataIndex: 'mappingStatus', width: 100,
+      title: '连接', width: 80,
+      render: (_: any, record: DataSource) => {
+        if (record.sourceType !== 'DATABASE') return <Tag style={{ borderRadius: 6 }}>—</Tag>;
+        const s = connectionMap[record.id];
+        if (s === 'testing') return <Tag color="processing" style={{ borderRadius: 6 }} icon={<SyncOutlined spin />}>检测中</Tag>;
+        if (s === 'ok') return <Tag color="success" style={{ borderRadius: 6 }}>已连接</Tag>;
+        if (s === 'fail') return <Tag color="error" style={{ borderRadius: 6 }}>连接失败</Tag>;
+        return <a onClick={() => handleTestConnection(record.id)} style={{ cursor: 'pointer', color: '#007AFF', fontSize: 13 }}>点击检测</a>;
+      },
+    },
+    {
+      title: '映射状态', dataIndex: 'mappingStatus', width: 90,
       render: (v: string) => <Tag color={mappingColors[v] || 'default'}>{mappingLabels[v] || v}</Tag>,
     },
-    { title: '关联任务', dataIndex: 'taskCount', width: 80, align: 'center' as const },
-    { title: '账户数量', dataIndex: 'totalAccounts', width: 90, align: 'right' as const,
+    { title: '关联任务', dataIndex: 'taskCount', width: 70, align: 'center' as const },
+    { title: '账户数', dataIndex: 'totalAccounts', width: 70, align: 'right' as const,
       render: (v: number) => v?.toLocaleString() || '-',
     },
     {
-      title: '启用', dataIndex: 'status', width: 70, align: 'center' as const,
+      title: '启用', dataIndex: 'status', width: 60, align: 'center' as const,
       render: (v: string, record: DataSource) => (
         <Switch
           size="small"
@@ -121,11 +148,11 @@ export default function DataSourceList() {
       ),
     },
     {
-      title: '最后同步', dataIndex: 'lastSyncTime', width: 150,
+      title: '最后同步', dataIndex: 'lastSyncTime', width: 140,
       render: (v: string | null) => v ? new Date(v).toLocaleString('zh-CN') : '-',
     },
     {
-      title: '操作', width: 220, fixed: 'right' as const,
+      title: '操作', width: 200, fixed: 'right' as const,
       render: (_: any, record: DataSource) => (
         <Space size="small">
           <Tooltip title="查看详情">
@@ -139,20 +166,14 @@ export default function DataSourceList() {
             <Button size="small" icon={<SyncOutlined spin={syncing === record.id} />}
               loading={syncing === record.id} onClick={() => handleSync(record.id)} />
           </Tooltip>
-          <Tooltip title="强制同步（跳过变化检测）">
+          <Tooltip title="强制同步">
             <Button size="small" onClick={() => handleSync(record.id, true)}
               loading={syncing === record.id}>强制</Button>
           </Tooltip>
           <Tooltip title="测试连接">
             <Button size="small" icon={<LinkOutlined />}
-              onClick={async () => {
-                try {
-                  await dataSourceApi.testConnection(record.id);
-                  message.success('连接测试成功');
-                } catch {
-                  message.error('连接测试失败');
-                }
-              }} />
+              loading={connectionMap[record.id] === 'testing'}
+              onClick={() => handleTestConnection(record.id)} />
           </Tooltip>
           <Popconfirm title="确定删除？" icon={<ExclamationCircleOutlined style={{ color: '#FF3B30' }} />}
             onConfirm={() => handleDelete(record.id)} cancelText="取消" okText="确认">
@@ -165,14 +186,8 @@ export default function DataSourceList() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Title level={3} style={{ fontWeight: 600, letterSpacing: "-0.02em", marginBottom: 24 }}>数据源管理</Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/account-audit/data-sources/new')}>
-          添加数据源
-        </Button>
-      </div>
-
-      <div style={{ marginBottom: 16, display: 'flex', gap: 8 }}>
+      <div style={{ marginBottom: 16, display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <Input
           placeholder="搜索名称"
           prefix={<SearchOutlined style={{ color: '#AEAEB2' }} />}
@@ -194,6 +209,10 @@ export default function DataSourceList() {
           ]}
         />
         <Button onClick={handleSearch}>查询</Button>
+        </div>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/account-audit/data-sources/new')}>
+          添加数据源
+        </Button>
       </div>
 
       <Table columns={columns} dataSource={data} rowKey="id" loading={loading} scroll={{ x: 1100 }} size="small" />

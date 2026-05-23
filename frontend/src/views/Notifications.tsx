@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { List, Typography, Tag, Button, Space, message } from 'antd';
 import apiClient from '../api/client';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 export default function Notifications() {
   const [notifications, setNotifications] = useState<any[]>([]);
@@ -33,7 +33,6 @@ export default function Notifications() {
 
   return (
     <div>
-      <Title level={3} style={{ fontWeight: 600, letterSpacing: "-0.02em", marginBottom: 24 }}>通知</Title>
       <List
         loading={loading}
         dataSource={notifications}

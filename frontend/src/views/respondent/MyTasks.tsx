@@ -1,12 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Table, Tag, Button, Typography } from 'antd';
+import { Table, Tag, Button } from 'antd';
 import { FormOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import apiClient from '../../api/client';
 import { useAuthStore } from '../../store/auth';
 import { MY_TASK_USER_STATUS } from '../../constants/status';
 
-const { Title } = Typography;
 
 export default function MyTasks() {
   const [tasks, setTasks] = useState<any[]>([]);
@@ -64,8 +63,7 @@ export default function MyTasks() {
 
   return (
     <div>
-      <Title level={3} style={{ fontWeight: 600, letterSpacing: "-0.02em", marginBottom: 24 }}>我的审计任务</Title>
-      <Table columns={columns} dataSource={tasks} rowKey="id" loading={loading} />
+      <Table columns={columns} dataSource={tasks} rowKey="id" loading={loading} size="small" />
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import path from 'path';
 import { authenticate, authorize } from '../middlewares/auth';
+import { tenantContext } from '../middlewares/tenant';
 import templateService from '../services/template.service';
 import { config } from '../config';
 
@@ -27,6 +28,7 @@ const upload = multer({
 });
 
 router.use(authenticate);
+router.use(tenantContext);
 
 // 导入 CSV — admin only
 router.post('/import', authorize('templates', 'create'), upload.single('file'), async (req: Request, res: Response) => {

@@ -15,6 +15,7 @@ interface UserAttributes {
   isActive: boolean;
   failedLoginAttempts: number;
   lockedUntil: Date | null;
+  tokenVersion: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -35,6 +36,7 @@ class User extends Model<UserAttributes, UserCreationAttributes> implements User
   declare isActive: boolean;
   declare failedLoginAttempts: number;
   declare lockedUntil: Date | null;
+  declare tokenVersion: number;
   declare createdAt: Date;
   declare updatedAt: Date;
 }
@@ -53,10 +55,11 @@ User.init(
     isActive: { type: DataTypes.BOOLEAN, defaultValue: true },
     failedLoginAttempts: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
     lockedUntil: { type: DataTypes.DATE, allowNull: true },
+    tokenVersion: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 1 },
     createdAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
     updatedAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
   },
-  { sequelize, tableName: 'users', timestamps: true, underscored: true },
+  { sequelize, tableName: 'users', schema: 'public', timestamps: true, underscored: true },
 );
 
 export default User;

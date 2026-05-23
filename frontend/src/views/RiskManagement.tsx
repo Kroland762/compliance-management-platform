@@ -1,10 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Table, Select, Tag, Typography, Button, Space, message, Modal, Form, Input, Popconfirm } from 'antd';
+import { Table, Select, Tag, Button, Space, message, Modal, Form, Input, Popconfirm } from 'antd';
 import { ExportOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import apiClient from '../api/client';
 import { getApiErrorMessage } from '../utils/error';
 
-const { Title } = Typography;
 
 const riskLevelColors: Record<string, string> = { high: 'red', medium: 'orange', low: 'green' };
 const riskLevelLabels: Record<string, string> = { high: '高', medium: '中', low: '低' };
@@ -131,20 +130,14 @@ export default function RiskManagement() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Title level={3} style={{ fontWeight: 600, letterSpacing: "-0.02em", marginBottom: 24 }}>风险管理</Title>
-        <Space>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateVisible(true)}>新增风险</Button>
-          <Button icon={<ExportOutlined />} onClick={handleExport}>导出报告</Button>
-        </Space>
-      </div>
-      <div style={{ marginBottom: 12, display: 'flex', gap: 12 }}>
+      <div style={{ marginBottom: 12, display: 'flex', gap: 12, justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
         <Select
           placeholder="风险级别"
           value={filters.riskLevel || undefined}
           onChange={v => setFilters(f => ({ ...f, riskLevel: v || '' }))}
           allowClear
-          size="small"
+
           style={{ width: 110 }}
           options={[
             { value: 'high', label: '高风险' },
@@ -157,7 +150,7 @@ export default function RiskManagement() {
           value={filters.remediationStatus || undefined}
           onChange={v => setFilters(f => ({ ...f, remediationStatus: v || '' }))}
           allowClear
-          size="small"
+
           style={{ width: 110 }}
           options={[
             { value: 'remediated', label: '已补救' },
@@ -170,7 +163,7 @@ export default function RiskManagement() {
           value={filters.riskStatus || undefined}
           onChange={v => setFilters(f => ({ ...f, riskStatus: v || '' }))}
           allowClear
-          size="small"
+
           style={{ width: 120 }}
           options={[
             { value: 'risk_acceptance', label: '风险接受' },
@@ -179,6 +172,11 @@ export default function RiskManagement() {
             { value: 'risk_elimination', label: '风险规避' },
           ]}
         />
+        </div>
+        <Space>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateVisible(true)}>新增风险</Button>
+          <Button icon={<ExportOutlined />} onClick={handleExport}>导出报告</Button>
+        </Space>
       </div>
       <Table columns={columns} dataSource={risks} rowKey="id" loading={loading} scroll={{ x: 1100 }} size="small" />
 

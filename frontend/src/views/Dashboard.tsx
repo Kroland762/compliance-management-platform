@@ -8,7 +8,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recha
 import { useAuthStore } from '../store/auth';
 import apiClient from '../api/client';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 const StatCard = ({
   icon, label, value, color, onClick,
@@ -120,10 +120,6 @@ export default function Dashboard() {
 
   return (
     <div>
-      <Title level={3} style={{ fontWeight: 600, letterSpacing: '-0.02em', marginBottom: 24 }}>
-        工作台
-      </Title>
-
       {/* Stat Cards */}
       <Row gutter={[16, 16]}>
         {can('tasks', 'read') && (

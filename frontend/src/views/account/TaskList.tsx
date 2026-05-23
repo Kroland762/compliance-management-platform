@@ -108,15 +108,8 @@ export default function TaskList() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Title level={3} style={{ fontWeight: 600, letterSpacing: "-0.02em", marginBottom: 24 }}>任务管理</Title>
-        <Button type="primary" icon={<PlusOutlined />}
-          onClick={() => { setEditingTask(null); setFormOpen(true); }}>
-          创建任务
-        </Button>
-      </div>
-
-      <div style={{ marginBottom: 16, display: 'flex', gap: 8 }}>
+      <div style={{ marginBottom: 16, display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <Input
           placeholder="搜索任务名称"
           prefix={<SearchOutlined style={{ color: '#AEAEB2' }} />}
@@ -140,6 +133,11 @@ export default function TaskList() {
           ]}
         />
         <Button onClick={handleSearch}>查询</Button>
+        </div>
+        <Button type="primary" icon={<PlusOutlined />}
+          onClick={() => { setEditingTask(null); setFormOpen(true); }}>
+          创建任务
+        </Button>
       </div>
 
       <Table columns={columns} dataSource={tasks} rowKey="id" loading={loading} scroll={{ x: 1050 }} size="small" />

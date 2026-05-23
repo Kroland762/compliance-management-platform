@@ -9,6 +9,7 @@ import TemplateManagement from './views/admin/TemplateManagement';
 import UserManagement from './views/admin/UserManagement';
 import RoleManagement from './views/RoleManagement';
 import AuditLogViewer from './views/admin/AuditLogViewer';
+import TenantManagement from './views/admin/TenantManagement';
 import ReviewTaskList from './views/auditor/ReviewTaskList';
 import ReviewTask from './views/auditor/ReviewTask';
 import TaskConfigure from './views/auditor/TaskConfigure';
@@ -45,6 +46,7 @@ function App() {
         <Route path="templates" element={<PrivateRoute permission={['templates', 'read']}><TemplateManagement /></PrivateRoute>} />
         <Route path="users" element={<PrivateRoute permission={['users', 'read']}><UserManagement /></PrivateRoute>} />
         <Route path="roles" element={<PrivateRoute permission={['users', 'read']}><RoleManagement /></PrivateRoute>} />
+        <Route path="tenants" element={<PrivateRoute permission={['tenants', 'read']}><TenantManagement /></PrivateRoute>} />
         <Route path="audit-logs" element={<PrivateRoute permission={['audit_logs', 'read']}><AuditLogViewer /></PrivateRoute>} />
         <Route path="tasks/review" element={<PrivateRoute permission={['tasks', 'read']}><ReviewTaskList /></PrivateRoute>} />
         <Route path="tasks/review/:id" element={<PrivateRoute permission={['tasks', 'read']}><ReviewTask /></PrivateRoute>} />

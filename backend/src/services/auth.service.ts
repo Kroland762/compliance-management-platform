@@ -35,16 +35,19 @@ export interface LoginResult {
 
 class AuthService {
   async login(username: string, password: string, captchaId?: string, captchaInput?: string): Promise<LoginResult> {
-    if (!captchaId || !captchaInput) {
-      throw new Error('请输入验证码');
-    }
-    if (!captchaService.verify(captchaId, captchaInput)) {
-      throw new Error('验证码错误或已过期，请刷新后重试');
+    // Dev mode: bypass captcha with code 'dev_bypass'
+    if (config.nodeEnv !== 'development' || captchaInput !== 'dev_bypass') {
+      if (!captchaId || !captchaInput) {
+        throw new Error('请输入验证码');
+      }
+      if (!captchaService.verify(captchaId, captchaInput)) {
+        throw new Error('验证码错误或已过期，请刷新后重试');
+      }
     }
 
     const user = await User.findOne({
       where: { username },
-      attributes: ['id', 'username', 'passwordHash', 'failedLoginAttempts', 'lockedUntil', 'isActive', 'role', 'roleId', 'department', 'email', 'tenantId'],
+      attributes: ['id', 'username', 'passwordHash', 'failedLoginAttempts', 'lockedUntil', 'isActive', 'role', 'roleId', 'department', 'email', 'tenantId', 'tokenVersion'],
     });
 
     const genericError = '用户名或密码错误';
@@ -76,16 +79,17 @@ class AuthService {
     user.lastLogin = new Date();
     await user.save();
 
-    let roleName: string = user.role;
+    let roleName = '';
     let permissions: PermissionMatrix = {};
     let roleId = user.roleId;
     if (roleId) {
       const role = await Role.findByPk(roleId);
       if (role) { roleName = role.name; permissions = role.permissions; }
     }
+    if (!roleName) throw new Error('用户未分配有效角色');
 
     const tenantId = (user as any).tenantId || undefined;
-    const payload: TokenPayload = { userId: user.id, username: user.username, role: roleName, roleId: roleId || '', tenantId };
+    const payload: TokenPayload = { userId: user.id, username: user.username, role: roleName, roleId: roleId || '', tenantId, tokenVersion: user.tokenVersion };
 
     return {
       token: jwt.sign(payload, config.jwt.secret, { expiresIn: config.jwt.expiresIn }),
@@ -103,7 +107,15 @@ class AuthService {
       const role = await Role.findByPk(decoded.roleId);
       if (role) { roleName = role.name; permissions = role.permissions; }
     }
-    return { userId: decoded.userId, username: decoded.username, role: roleName, roleId: decoded.roleId, permissions };
+    // Token 吊销检查：比对 JWT 中的 tokenVersion 与 DB 中当前值
+    const user = await User.findByPk(decoded.userId, { attributes: ['tokenVersion', 'isActive'] });
+    if (!user || !user.isActive) {
+      throw new Error('用户不存在或已禁用');
+    }
+    if (user.tokenVersion !== decoded.tokenVersion) {
+      throw new Error('令牌已失效，请重新登录');
+    }
+    return { userId: decoded.userId, username: decoded.username, role: roleName, roleId: decoded.roleId, tenantId: decoded.tenantId, permissions };
   }
 
   async verifyToken(token: string): Promise<TokenPayload> {
@@ -146,7 +158,7 @@ class AuthService {
     if (!user) throw new Error('用户不存在');
     const isValid = await bcrypt.compare(oldPassword, user.passwordHash);
     if (!isValid) throw new Error('原密码错误');
-    await user.update({ passwordHash: await this.hashPassword(newPassword) });
+    await user.update({ passwordHash: await this.hashPassword(newPassword), tokenVersion: user.tokenVersion + 1 });
   }
 
   async resetPassword(userId: string, newPassword: string): Promise<void> {
@@ -154,19 +166,22 @@ class AuthService {
     if (!validation.valid) throw new Error(`密码不符合要求: ${validation.errors.join('；')}`);
     const user = await User.findByPk(userId);
     if (!user) throw new Error('用户不存在');
-    await user.update({ passwordHash: await this.hashPassword(newPassword) });
+    await user.update({ passwordHash: await this.hashPassword(newPassword), tokenVersion: user.tokenVersion + 1 });
   }
 
   private async generateTokens(user: User): Promise<LoginResult> {
-    let roleName: string = user.role;
+    let roleName = '';
     let permissions: PermissionMatrix = {};
     let roleId = user.roleId;
     if (roleId) {
       const role = await Role.findByPk(roleId);
       if (role) { roleName = role.name; permissions = role.permissions; }
     }
+    if (!roleName) {
+      throw new Error('用户未分配有效角色');
+    }
     const tenantId = (user as any).tenantId || undefined;
-    const payload: TokenPayload = { userId: user.id, username: user.username, role: roleName, roleId: roleId || '', tenantId };
+    const payload: TokenPayload = { userId: user.id, username: user.username, role: roleName, roleId: roleId || '', tenantId, tokenVersion: user.tokenVersion };
     return {
       token: jwt.sign(payload, config.jwt.secret, { expiresIn: config.jwt.expiresIn }),
       refreshToken: jwt.sign(payload, config.jwt.secret, { expiresIn: config.jwt.refreshExpiresIn }),

@@ -12,6 +12,7 @@ interface AuditLogAttributes {
   operationDetails: string | null;
   success: boolean;
   ipAddress: string | null;
+  tenantId: string | null;
   createdAt: Date;
 }
 
@@ -26,6 +27,7 @@ class AuditLog extends Model<AuditLogAttributes, CreationAttributes> implements 
   declare operationDetails: string | null;
   declare success: boolean;
   declare ipAddress: string | null;
+  declare tenantId: string | null;
   declare createdAt: Date;
 }
 
@@ -39,6 +41,7 @@ AuditLog.init(
     operationDetails: { type: DataTypes.TEXT, allowNull: true },
     success: { type: DataTypes.BOOLEAN, allowNull: false },
     ipAddress: { type: DataTypes.STRING(45), allowNull: true },
+    tenantId: { type: DataTypes.UUID, allowNull: true },
     createdAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
   },
   { sequelize, tableName: 'audit_logs', timestamps: false },

@@ -15,6 +15,7 @@ import statsRoutes from './stats.routes';
 import accountRoutes from './account';
 import settingsRoutes from './settings.routes';
 import roleRoutes from './role.routes';
+import tenantRoutes from './tenant.routes';
 
 export function registerRoutes(app: Application): void {
   app.use('/api/auth', authRoutes);
@@ -33,4 +34,5 @@ export function registerRoutes(app: Application): void {
   app.use('/api/account', accountRoutes);
   app.use('/api/settings', settingsRoutes);
   app.use('/api/roles', roleRoutes);
+  app.use('/api/tenants', tenantRoutes);
 }

@@ -135,15 +135,9 @@ export default function ProblemList() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Title level={3} style={{ fontWeight: 600, letterSpacing: "-0.02em", marginBottom: 24 }}>问题列表</Title>
-        <Space>
-          <Button icon={<ExportOutlined />} onClick={handleExport}>导出</Button>
-        </Space>
-      </div>
-
       {/* Filters */}
-      <div style={{ marginBottom: 16, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+      <div style={{ marginBottom: 16, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <Input
           placeholder="搜索账户或描述"
           prefix={<SearchOutlined style={{ color: '#AEAEB2' }} />}
@@ -191,6 +185,8 @@ export default function ProblemList() {
           }}
         />
         <Button onClick={handleSearch}>查询</Button>
+        </div>
+        <Button icon={<ExportOutlined />} onClick={handleExport}>导出</Button>
       </div>
 
       {/* Bulk Actions */}

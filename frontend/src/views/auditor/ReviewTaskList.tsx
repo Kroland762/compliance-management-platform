@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Table, Tag, Button, Typography, Space, message, Modal, Form, Input, Select, Tooltip } from 'antd';
+import { Table, Tag, Button, Space, message, Modal, Form, Input, Select, Tooltip } from 'antd';
 import { EyeOutlined, AuditOutlined, SettingOutlined, PlusOutlined, DeleteOutlined, MailOutlined, UserSwitchOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../store/auth';
@@ -7,7 +7,6 @@ import apiClient from '../../api/client';
 import { getApiErrorMessage } from '../../utils/error';
 import { TASK_STATUS } from '../../constants/status';
 
-const { Title } = Typography;
 
 const statusMap = TASK_STATUS;
 
@@ -179,7 +178,6 @@ const handleDelete = async (id: string) => {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <Title level={3} style={{ fontWeight: 600, letterSpacing: '-0.02em', margin: 0 }}>审计任务</Title>
         {isAdmin && (
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}
             style={{ borderRadius: 10, fontWeight: 500 }}>

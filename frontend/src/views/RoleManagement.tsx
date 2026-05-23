@@ -161,13 +161,9 @@ export default function RoleManagement() {
   if (loading) return <div style={{ display: 'flex', justifyContent: 'center', padding: 120 }}><Spin size="large" /></div>;
 
   return (
-    <div style={{ maxWidth: 1000, margin: '0 auto' }}>
+    <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 24 }}>
         <div>
-          <Title level={3} style={{ fontWeight: 600, letterSpacing: '-0.02em', marginBottom: 4 }}>
-            <SafetyCertificateOutlined style={{ marginRight: 8, color: '#007AFF' }} />角色管理
-          </Title>
-          <Text type="secondary">定义角色及其权限，系统内置角色不可删除</Text>
         </div>
         {isAdmin && (
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate} style={{ borderRadius: 10, height: 40 }}>
@@ -179,6 +175,7 @@ export default function RoleManagement() {
       <Table
         dataSource={roles}
         columns={columns}
+        size="small"
         rowKey="id"
         pagination={false}
         style={{ background: '#fff', borderRadius: 16 }}

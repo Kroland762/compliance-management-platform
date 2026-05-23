@@ -4,12 +4,14 @@ export interface SecuritySettings {
   maxLoginAttempts: number;
   lockDurationMinutes: number;
   idleTimeoutMinutes: number;
+  auditLogRetentionDays: number; // 0 = 永久保留
 }
 
 const DEFAULTS: SecuritySettings = {
   maxLoginAttempts: 5,
   lockDurationMinutes: 15,
   idleTimeoutMinutes: 180,
+  auditLogRetentionDays: 365,
 };
 
 class SettingsService {
@@ -27,7 +29,7 @@ class SettingsService {
 
     const rows = await SystemSetting.findAll({
       where: {
-        key: ['security.maxLoginAttempts', 'security.lockDurationMinutes', 'security.idleTimeoutMinutes'],
+        key: ['security.maxLoginAttempts', 'security.lockDurationMinutes', 'security.idleTimeoutMinutes', 'security.auditLogRetentionDays'],
       },
     });
 
@@ -41,6 +43,10 @@ class SettingsService {
           break;
         case 'security.idleTimeoutMinutes':
           result.idleTimeoutMinutes = parseInt(row.value, 10) || DEFAULTS.idleTimeoutMinutes;
+          break;
+        case 'security.auditLogRetentionDays':
+          result.auditLogRetentionDays = parseInt(row.value, 10);
+          if (isNaN(result.auditLogRetentionDays)) result.auditLogRetentionDays = DEFAULTS.auditLogRetentionDays;
           break;
       }
     }
@@ -67,6 +73,10 @@ class SettingsService {
     if (settings.idleTimeoutMinutes !== undefined) {
       const val = Math.max(5, Math.min(1440, settings.idleTimeoutMinutes));
       updates.push({ key: 'security.idleTimeoutMinutes', value: String(val) });
+    }
+    if (settings.auditLogRetentionDays !== undefined) {
+      const val = Math.max(0, Math.min(3650, settings.auditLogRetentionDays));
+      updates.push({ key: 'security.auditLogRetentionDays', value: String(val) });
     }
 
     for (const u of updates) {

@@ -21,19 +21,24 @@ class UserService {
       username: data.username,
       passwordHash,
       department: data.department || null,
-      role: 'user' as any, // 兼容旧字段
+      // role column kept for backward compat, derived from roleId
+      role: 'user' as any,
       roleId: data.roleId,
       isActive: true,
     } as any);
   }
 
-  async getUsers(query: { page?: number; pageSize?: number; roleId?: string; department?: string; isActive?: boolean; keyword?: string }) {
-    const { page = 1, pageSize = 999, roleId, department, isActive, keyword } = query;
+  async getUsers(query: { page?: number; pageSize?: number; roleId?: string; department?: string; isActive?: boolean; keyword?: string; tenantId?: string | null }) {
+    const { page = 1, pageSize = 999, roleId, department, isActive, keyword, tenantId } = query;
     const where: any = {};
     if (roleId) where.roleId = roleId;
     if (department) where.department = department;
     if (isActive !== undefined) where.isActive = isActive;
     if (keyword) where.username = { [Op.iLike]: `%${keyword}%` };
+    // 租户过滤：有 tenantId 只查本租户，null（未指定）不过滤
+    if (tenantId !== undefined && tenantId !== null) {
+      where.tenantId = tenantId;
+    }
 
     const { count, rows } = await User.findAndCountAll({
       where,

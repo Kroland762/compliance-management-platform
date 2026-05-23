@@ -118,15 +118,7 @@ export default function RuleList() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Title level={3} style={{ fontWeight: 600, letterSpacing: "-0.02em", marginBottom: 24 }}>规则管理</Title>
-        <Button type="primary" icon={<PlusOutlined />}
-          onClick={() => { setEditingRule(null); setFormOpen(true); }}>
-          创建规则
-        </Button>
-      </div>
-
-      <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between' }}>
         <Select
           placeholder="严重度"
           value={severityFilter || undefined}
@@ -139,6 +131,10 @@ export default function RuleList() {
             { value: 'low', label: '低' },
           ]}
         />
+        <Button type="primary" icon={<PlusOutlined />}
+          onClick={() => { setEditingRule(null); setFormOpen(true); }}>
+          创建规则
+        </Button>
       </div>
 
       <div style={{

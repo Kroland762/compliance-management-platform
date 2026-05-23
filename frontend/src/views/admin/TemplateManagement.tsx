@@ -1,10 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Table, Button, Space, Modal, Typography, Upload, message, Popconfirm, Popover, Checkbox } from 'antd';
+import { Table, Button, Space, Modal, Upload, message, Popconfirm, Popover, Checkbox } from 'antd';
 import { UploadOutlined, DeleteOutlined, EyeOutlined, SettingOutlined, CaretLeftOutlined, CaretRightOutlined } from '@ant-design/icons';
 import apiClient from '../../api/client';
 import { getApiErrorMessage } from '../../utils/error';
 
-const { Title } = Typography;
 
 export default function TemplateManagement() {
   const [templates, setTemplates] = useState<any[]>([]);
@@ -80,7 +79,6 @@ export default function TemplateManagement() {
 
   return (
     <div>
-      <Title level={3} style={{ fontWeight: 600, letterSpacing: '-0.02em', marginBottom: 24 }}>问卷模版管理</Title>
       <div style={{
         background: 'rgba(255,255,255,0.8)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
         borderRadius: 18, padding: '24px 28px',
@@ -90,7 +88,7 @@ export default function TemplateManagement() {
           <div />
           <Button type="primary" icon={<UploadOutlined />} onClick={() => setImportVisible(true)}>导入CSV模版</Button>
         </div>
-        <Table columns={columns} dataSource={templates} rowKey="id" loading={loading} />
+        <Table columns={columns} dataSource={templates} rowKey="id" loading={loading} size="small" />
       </div>
 
       <Modal title="导入CSV模版" open={importVisible} onCancel={() => setImportVisible(false)} footer={null}>
@@ -132,6 +130,7 @@ export default function TemplateManagement() {
           return (
           <Table
             dataSource={questions}
+            size="small"
             rowKey="id"
             columns={allColumns}
             pagination={{ pageSize: 50, showSizeChanger: true, showTotal: (t: number) => `共 ${t} 题` }}

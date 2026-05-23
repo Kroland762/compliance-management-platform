@@ -116,6 +116,8 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
       database: ds.connectionConfig?.database,
       username: ds.connectionConfig?.username,
       password: ds.connectionConfig?.password,
+      table: ds.connectionConfig?.table,
+      sql: ds.connectionConfig?.sql,
       delimiter: ds.csvConfig?.delimiter || ',',
       encoding: ds.csvConfig?.encoding || 'UTF-8',
       hasHeader: ds.csvConfig?.hasHeader ?? true,
@@ -208,6 +210,8 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
             database: values.database,
             username: values.username,
             password: values.password,
+            table: values.table || undefined,
+            sql: values.sql || undefined,
           },
         };
         if (isEdit) {
@@ -380,6 +384,12 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
                   <Input.Password placeholder="••••••" />
                 </Form.Item>
               </div>
+              <Form.Item name="table" label="查询表名">
+                <Input placeholder="不填则默认读取 users 表" />
+              </Form.Item>
+              <Form.Item name="sql" label="自定义SQL（可选）" extra="优先于表名，如 SELECT * FROM orders WHERE status='active'">
+                <Input.TextArea placeholder="自定义查询语句，不填则 SELECT * FROM [表名]" rows={2} />
+              </Form.Item>
             </>
           ) : (
             <>

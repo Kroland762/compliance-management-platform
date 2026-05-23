@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
-import { Table, Button, Modal, Form, Input, Select, Space, message, Popconfirm, Typography, Card } from 'antd';
-import { PlusOutlined, StopOutlined, CheckCircleOutlined, EditOutlined, SearchOutlined, SafetyOutlined } from '@ant-design/icons';
+import { useState, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { Table, Button, Modal, Form, Input, Select, Space, message, Popconfirm, Typography, Card, Tag, Breadcrumb } from 'antd';
+import { PlusOutlined, StopOutlined, CheckCircleOutlined, EditOutlined, SearchOutlined, SafetyOutlined, HomeOutlined } from '@ant-design/icons';
 import apiClient from '../../api/client';
 import { getApiErrorMessage } from '../../utils/error';
 import { useAuthStore } from '../../store/auth';
@@ -14,6 +15,10 @@ interface Role {
 }
 
 export default function UserManagement() {
+  const [searchParams] = useSearchParams();
+  const urlTenantId = searchParams.get('tenantId') || '';
+  const urlTenantName = searchParams.get('tenantName') || '';
+
   const [users, setUsers] = useState<any[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(false);
@@ -24,6 +29,7 @@ export default function UserManagement() {
   const [editForm] = Form.useForm();
   const [filters, setFilters] = useState({ roleId: '', status: '', keyword: '' });
   const canManage = useAuthStore(s => s.hasPermission('users', 'create'));
+  const currentTenantId = useAuthStore(s => s.user?.tenantId);
 
   const fetchRoles = async () => {
     try {
@@ -36,6 +42,8 @@ export default function UserManagement() {
     setLoading(true);
     try {
       const params = new URLSearchParams();
+      // URL tenant param (super admin viewing a specific tenant)
+      if (urlTenantId) params.set('tenantId', urlTenantId);
       if (filters.roleId) params.set('roleId', filters.roleId);
       if (filters.status) params.set('isActive', filters.status === 'active' ? 'true' : 'false');
       if (filters.keyword) params.set('keyword', filters.keyword);
@@ -45,8 +53,14 @@ export default function UserManagement() {
     } finally { setLoading(false); }
   };
 
+  const tenantLabel = useMemo(() => {
+    if (urlTenantName) return urlTenantName;
+    if (currentTenantId) return '本租户';
+    return null;
+  }, [urlTenantName, currentTenantId]);
+
   useEffect(() => { fetchRoles(); }, []);
-  useEffect(() => { fetchUsers(); }, [filters]);
+  useEffect(() => { fetchUsers(); }, [filters, urlTenantId]);
 
   const handleCreate = async (values: any) => {
     try {
@@ -126,13 +140,15 @@ export default function UserManagement() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Title level={3} style={{ fontWeight: 600, letterSpacing: "-0.02em", marginBottom: 24 }}>用户管理</Title>
-        {canManage && (
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalVisible(true)}>创建用户</Button>
-        )}
-      </div>
-      <div style={{ marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center' }}>
+      {tenantLabel && (
+        <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Tag icon={<HomeOutlined />} color="blue" style={{ fontSize: 14, padding: '4px 12px' }}>
+            {tenantLabel}
+          </Tag>
+        </div>
+      )}
+      <div style={{ marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
         <Input
           placeholder="搜索用户名"
           prefix={<SearchOutlined style={{ color: '#AEAEB2' }} />}
@@ -160,8 +176,12 @@ export default function UserManagement() {
             { value: 'inactive', label: '禁用' },
           ]}
         />
+        </div>
+        {canManage && (
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalVisible(true)}>创建用户</Button>
+        )}
       </div>
-      <Table columns={columns} dataSource={users} rowKey="id" loading={loading} />
+      <Table columns={columns} dataSource={users} rowKey="id" loading={loading} size="small" />
 
       {/* 创建用户 */}
       <Modal title="创建用户" open={modalVisible} onCancel={() => setModalVisible(false)} onOk={() => form.submit()}>

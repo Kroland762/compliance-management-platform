@@ -4,6 +4,7 @@ import { setupAssociations } from '../models/associations';
 import { User, UserRole, Role, PermissionMatrix } from '../models';
 
 const ADMIN_PERMISSIONS: PermissionMatrix = {
+  tenants:         ['create', 'read', 'update', 'delete'],
   users:           ['create', 'read', 'update', 'delete'],
   templates:       ['create', 'read', 'update', 'delete'],
   tasks:           ['create', 'read', 'update', 'delete', 'submit', 'return'],
