@@ -198,7 +198,7 @@ router.delete('/:id', authorize('tenants', 'delete'), async (req: Request, res: 
  */
 router.get('/:id/users', authorize('tenants', 'read'), async (req: Request, res: Response) => {
   try {
-    const { User } = await import('../models/User');
+    const { User } = await import('../models');
     const users = await User.findAll({
       where: { tenantId: req.params.id },
       attributes: { exclude: ['passwordHash'] },

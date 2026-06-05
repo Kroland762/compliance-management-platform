@@ -10,7 +10,8 @@ import './models';
 import cronSchedulerService from './services/account/cronScheduler.service';
 import auditLogService from './services/audit-log.service';
 import cron from 'node-cron';
-import { tenantContext, registerTenantModel } from './middlewares/tenant';
+import { tenantContext } from './middlewares/tenant';
+import { errorHandler, notFoundHandler } from './middlewares/errorHandler';
 
 const app = express();
 
@@ -68,6 +69,8 @@ app.use(tenantContext);
 
 // 注册所有路由
 registerRoutes(app);
+app.use(notFoundHandler);
+app.use(errorHandler);
 
 // 启动服务器
 const start = async () => {

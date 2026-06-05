@@ -9,6 +9,7 @@ interface User {
   permissions: Record<string, string[]>;
   department: string | null;
   email: string | null;
+  tenantId?: string;
 }
 
 interface AuthState {

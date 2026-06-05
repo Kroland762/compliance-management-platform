@@ -15,6 +15,7 @@ interface TokenPayload {
   role: string;
   roleId: string;
   tenantId?: string;
+  tokenVersion: number;
 }
 
 export interface LoginResult {
