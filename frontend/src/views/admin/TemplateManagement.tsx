@@ -135,7 +135,6 @@ export default function TemplateManagement() {
             columns={allColumns}
             pagination={{ pageSize: 50, showSizeChanger: true, showTotal: (t: number) => `共 ${t} 题` }}
             scroll={{ x: 800 + extraKeys.length * 160 }}
-            size="small"
             title={() => (
               <Popover
                 content={

@@ -6,7 +6,7 @@ export enum TenantStatus {
   SUSPENDED = 'suspended',
 }
 
-export interface TenantAttributes {
+interface TenantAttributes {
   id: string;
   name: string;
   slug: string;

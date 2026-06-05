@@ -20,7 +20,7 @@ interface UserAttributes {
   updatedAt: Date;
 }
 
-type UserCreationAttributes = Optional<UserAttributes, 'id' | 'createdAt' | 'updatedAt' | 'lastLogin' | 'failedLoginAttempts' | 'lockedUntil' | 'roleId' | 'tenantId'>;
+type UserCreationAttributes = Optional<UserAttributes, 'id' | 'createdAt' | 'updatedAt' | 'lastLogin' | 'failedLoginAttempts' | 'lockedUntil' | 'roleId' | 'tenantId' | 'tokenVersion'>;
 
 class User extends Model<UserAttributes, UserCreationAttributes> implements UserAttributes {
   declare id: string;

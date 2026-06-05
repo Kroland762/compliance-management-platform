@@ -18,6 +18,18 @@ declare global {
   }
 }
 
+function hasPermission(permissions: PermissionMatrix | undefined, resource: PermissionResource, action: PermissionAction): boolean {
+  const allowed = permissions?.[resource];
+  return Array.isArray(allowed) && allowed.includes(action);
+}
+
+function isGlobalSuperAdmin(user: Express.Request['user']): boolean {
+  if (!user || user.tenantId) return false;
+
+  // 全局超管必须同时满足“无租户上下文”和“具备租户管理全权限”，避免仅凭 tenantId 缺失误放权。
+  return ['create', 'read', 'update', 'delete'].every((action) => hasPermission(user.permissions, 'tenants', action));
+}
+
 /**
  * JWT 认证中间件 - 验证请求是否携带有效令牌
  * 同时从 DB 加载用户角色和权限
@@ -50,20 +62,18 @@ export function authorize(resource: PermissionResource, action: PermissionAction
       return;
     }
 
-    // 超管（无 tenantId）直接放行，不检查 RBAC 矩阵
-    if ((req as any)._isSuperAdmin || !(req.user as any).tenantId) {
+    // 仅 superAdminOnly 显式确认后的请求可跳过 RBAC；普通全局用户仍需检查权限矩阵。
+    if ((req as any)._isSuperAdmin) {
       next();
       return;
     }
 
-    const permissions = req.user.permissions;
-    if (!permissions) {
+    if (!req.user.permissions) {
       res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: '无权限配置' } });
       return;
     }
 
-    const allowed = permissions[resource];
-    if (!allowed || !Array.isArray(allowed) || !allowed.includes(action)) {
+    if (!hasPermission(req.user.permissions, resource, action)) {
       res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: `缺少权限: ${resource}.${action}` } });
       return;
     }
@@ -73,15 +83,15 @@ export function authorize(resource: PermissionResource, action: PermissionAction
 }
 
 /**
- * 超管中间件 - 仅无 tenantId 的全局管理员可访问
- * 通过后设置 req._isSuperAdmin = true，使 authorize() 全部放行
+ * 超管中间件 - 仅无 tenantId 且具备租户管理全权限的全局管理员可访问
+ * 通过后设置 req._isSuperAdmin = true，使后续 authorize() 全部放行
  */
 export function superAdminOnly(req: Request, res: Response, next: NextFunction): void {
   if (!req.user) {
     res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: '未认证' } });
     return;
   }
-  if ((req.user as any).tenantId) {
+  if (!isGlobalSuperAdmin(req.user)) {
     res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: '仅全局超管可操作' } });
     return;
   }
@@ -99,19 +109,16 @@ export function authorizeAny(...checks: Array<[PermissionResource, PermissionAct
       return;
     }
 
-    // 超管直接放行
-    if ((req as any)._isSuperAdmin || !(req.user as any).tenantId) {
+    // 仅 superAdminOnly 显式确认后的请求可跳过 RBAC。
+    if ((req as any)._isSuperAdmin) {
       next();
       return;
     }
 
     const permissions = req.user.permissions || {};
-    const hasPermission = checks.some(([resource, action]) => {
-      const allowed = permissions[resource];
-      return allowed && Array.isArray(allowed) && allowed.includes(action);
-    });
+    const hasAnyPermission = checks.some(([resource, action]) => hasPermission(permissions, resource, action));
 
-    if (!hasPermission) {
+    if (!hasAnyPermission) {
       res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: '权限不足' } });
       return;
     }

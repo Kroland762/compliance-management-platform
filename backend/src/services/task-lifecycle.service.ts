@@ -22,6 +22,8 @@ class TaskLifecycleService {
     task.status = TaskStatus.ASSIGNED;
     await task.save();
 
+    if (!task.assignedTo) throw new Error('任务未分配用户');
+
     await notificationService.create({
       userId: task.assignedTo,
       taskId: task.id,

@@ -157,6 +157,7 @@ router.post('/:id/remind', authenticate, async (req: Request, res: Response) => 
     const emailService = (await import('../services/email.service')).default;
     const task = await AuditTask.findByPk(req.params.id);
     if (!task) { res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '任务不存在' } }); return; }
+    if (!task.assignedTo) { res.status(400).json({ success: false, error: { code: 'NO_ASSIGNEE', message: '任务未分配用户' } }); return; }
     const user = await User.findByPk(task.assignedTo);
     if (!user || !user.email) { res.status(400).json({ success: false, error: { code: 'NO_EMAIL', message: '普通用户未设置邮箱' } }); return; }
     const sent = await emailService.sendReminder(user.email, user.username, task.assessmentTarget);

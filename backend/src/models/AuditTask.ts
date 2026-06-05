@@ -20,7 +20,7 @@ interface AuditTaskAttributes {
   reviewedAt: Date | null;
 }
 
-type CreationAttributes = Optional<AuditTaskAttributes, 'id' | 'createdAt' | 'submittedAt' | 'reviewedAt' | 'returnReason' | 'returnedAssignees'>;
+type CreationAttributes = Optional<AuditTaskAttributes, 'id' | 'createdAt' | 'submittedAt' | 'reviewedAt' | 'returnReason' | 'returnedAssignees' | 'assignedTo' | 'reviewerId'>;
 
 class AuditTask extends Model<AuditTaskAttributes, CreationAttributes> implements AuditTaskAttributes {
   declare id: string;
