@@ -1,7 +1,10 @@
-const Joi = require('joi');
-const { validate } = require('../src/middlewares/validate');
-const { errorHandler, notFoundHandler } = require('../src/middlewares/errorHandler');
-const { AppError, asyncHandler } = require('../src/utils/http');
+import Joi from 'joi';
+import { describe, expect, test, vi } from 'vitest';
+import { validate } from '../src/middlewares/validate';
+import { errorHandler, notFoundHandler } from '../src/middlewares/errorHandler';
+import { AppError, asyncHandler } from '../src/utils/http';
+
+const jest = vi;
 
 function createResponse() {
   return {

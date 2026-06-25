@@ -1,9 +1,12 @@
-jest.mock('../src/services/auth.service', () => ({
-  __esModule: true,
-  default: { verifyTokenAndLoadUser: jest.fn() },
-}));
+import { describe, expect, test, vi } from 'vitest';
+import { authorize, authorizeAny, superAdminOnly } from '../src/middlewares/auth';
 
-const { authorize, authorizeAny, superAdminOnly } = require('../src/middlewares/auth');
+const jest = vi;
+
+vi.mock('../src/services/auth.service', () => ({
+  __esModule: true,
+  default: { verifyTokenAndLoadUser: vi.fn() },
+}));
 
 function createResponse() {
   return {
