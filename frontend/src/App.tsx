@@ -19,6 +19,7 @@ const MyTasks = lazy(() => import('./views/respondent/MyTasks'));
 const FillQuestionnaire = lazy(() => import('./views/respondent/FillQuestionnaire'));
 const RiskManagement = lazy(() => import('./views/RiskManagement'));
 const Settings = lazy(() => import('./views/Settings'));
+const OrganizationManagement = lazy(() => import('./views/OrganizationManagement'));
 const AccountAudit = lazy(() => import('./views/AccountAudit'));
 const AccountDashboard = lazy(() => import('./views/account/Dashboard'));
 const DataSourceList = lazy(() => import('./views/account/DataSourceList'));
@@ -56,6 +57,7 @@ function App() {
           <Route path="users" element={<PrivateRoute permission={['users', 'read']}><UserManagement /></PrivateRoute>} />
           <Route path="roles" element={<PrivateRoute permission={['users', 'read']}><RoleManagement /></PrivateRoute>} />
           <Route path="tenants" element={<PrivateRoute permission={['tenants', 'read']}><TenantManagement /></PrivateRoute>} />
+          <Route path="organization" element={<PrivateRoute permission={['organization', 'read']}><OrganizationManagement /></PrivateRoute>} />
           <Route path="audit-logs" element={<PrivateRoute permission={['audit_logs', 'read']}><AuditLogViewer /></PrivateRoute>} />
           <Route path="tasks/review" element={<PrivateRoute permission={['tasks', 'read']}><ReviewTaskList /></PrivateRoute>} />
           <Route path="tasks/review/:id" element={<PrivateRoute permission={['tasks', 'read']}><ReviewTask /></PrivateRoute>} />

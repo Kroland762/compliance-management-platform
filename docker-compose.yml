@@ -30,10 +30,11 @@ services:
       DB_NAME: compliance_management_platform
       DB_USER: admin
       DB_PASSWORD: compliance_management_platform_pass
-      JWT_SECRET: change-this-to-a-random-32-char-string
+      DB_SSL: 'false'
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET to a random value of at least 32 characters}
       JWT_EXPIRES_IN: '900'
       JWT_REFRESH_EXPIRES_IN: '86400'
-      ENCRYPTION_KEY: change-this-to-another-random-string
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY to a random value}
       FRONTEND_URL: http://localhost
       UPLOAD_DIR: /app/uploads
     depends_on:

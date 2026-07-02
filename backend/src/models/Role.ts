@@ -12,6 +12,7 @@ export const PERMISSION_DEFINITIONS = {
   notifications:   ['read', 'update'],
   export:          ['create'],
   settings:        ['read', 'update'],
+  organization:    ['create', 'read', 'update', 'delete'],
   data_sources:    ['create', 'read', 'update', 'delete', 'sync'],
   rules:           ['create', 'read', 'update', 'delete', 'toggle'],
   account_tasks:   ['create', 'read', 'update', 'delete', 'execute'],

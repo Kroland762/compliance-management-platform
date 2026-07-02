@@ -125,11 +125,11 @@ export default function UserManagement() {
         <Space>
           <Button size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
           {record.isActive ? (
-            <Popconfirm title="确定禁用该用户？" onConfirm={() => handleDisable(record.id)}>
+            <Popconfirm title="确定禁用该用户？" okText="确认" cancelText="取消" onConfirm={() => handleDisable(record.id)}>
               <Button size="small" danger icon={<StopOutlined />}>禁用</Button>
             </Popconfirm>
           ) : (
-            <Popconfirm title="确定启用该用户？" onConfirm={() => handleEnable(record.id)}>
+            <Popconfirm title="确定启用该用户？" okText="确认" cancelText="取消" onConfirm={() => handleEnable(record.id)}>
               <Button size="small" type="primary" icon={<CheckCircleOutlined />}>启用</Button>
             </Popconfirm>
           )}
@@ -147,39 +147,39 @@ export default function UserManagement() {
           </Tag>
         </div>
       )}
-      <div style={{ marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-        <Input
-          placeholder="搜索用户名"
-          prefix={<SearchOutlined style={{ color: '#AEAEB2' }} />}
-          value={filters.keyword}
-          onChange={e => setFilters(f => ({ ...f, keyword: e.target.value }))}
-          allowClear
-          style={{ width: 200 }}
-        />
-        <Select
-          placeholder="角色"
-          value={filters.roleId || undefined}
-          onChange={v => setFilters(f => ({ ...f, roleId: v || '' }))}
-          allowClear
-          style={{ width: 140 }}
-          options={roles.map(r => ({ value: r.id, label: r.name }))}
-        />
-        <Select
-          placeholder="状态"
-          value={filters.status || undefined}
-          onChange={v => setFilters(f => ({ ...f, status: v || '' }))}
-          allowClear
-          style={{ width: 100 }}
-          options={[
-            { value: 'active', label: '启用' },
-            { value: 'inactive', label: '禁用' },
-          ]}
-        />
+      <div className="filter-toolbar">
+        <div className="filter-toolbar-content">
+          <Input
+            placeholder="搜索用户名"
+            prefix={<SearchOutlined style={{ color: '#AEAEB2' }} />}
+            value={filters.keyword}
+            onChange={e => setFilters(f => ({ ...f, keyword: e.target.value }))}
+            allowClear
+            style={{ width: 200 }}
+          />
+          <Select
+            placeholder="角色"
+            value={filters.roleId || undefined}
+            onChange={v => setFilters(f => ({ ...f, roleId: v || '' }))}
+            allowClear
+            style={{ width: 140 }}
+            options={roles.map(r => ({ value: r.id, label: r.name }))}
+          />
+          <Select
+            placeholder="状态"
+            value={filters.status || undefined}
+            onChange={v => setFilters(f => ({ ...f, status: v || '' }))}
+            allowClear
+            style={{ width: 100 }}
+            options={[
+              { value: 'active', label: '启用' },
+              { value: 'inactive', label: '禁用' },
+            ]}
+          />
+          {canManage && (
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalVisible(true)}>创建用户</Button>
+          )}
         </div>
-        {canManage && (
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalVisible(true)}>创建用户</Button>
-        )}
       </div>
       <Table columns={columns} dataSource={users} rowKey="id" loading={loading} size="small" />
 

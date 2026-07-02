@@ -4,13 +4,11 @@ import problemService from '../../services/account/problem.service';
 
 const router = Router();
 router.use(authenticate);
-
-// 问题查看对所有已认证用户开放，管理操作需要 AUDITOR 或 ADMIN
-// 使用中间件组合实现灵活权限控制
+router.use(authorize('problems', 'read'));
 
 /**
  * GET /api/account/problems
- * 列表查询 - 所有已认证用户
+ * 列表查询
  */
 router.get('/', async (req: Request, res: Response) => {
   try {
@@ -23,7 +21,7 @@ router.get('/', async (req: Request, res: Response) => {
 
 /**
  * GET /api/account/problems/stats
- * 统计信息 - 所有已认证用户
+ * 统计信息
  */
 router.get('/stats', async (req: Request, res: Response) => {
   try {
@@ -36,7 +34,7 @@ router.get('/stats', async (req: Request, res: Response) => {
 
 /**
  * GET /api/account/problems/:id
- * 详情 - 所有已认证用户
+ * 详情
  */
 router.get('/:id', async (req: Request, res: Response) => {
   try {

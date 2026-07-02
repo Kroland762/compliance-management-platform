@@ -128,6 +128,9 @@ class AuthService {
     const payload = await this.verifyToken(token);
     const user = await User.findByPk(payload.userId);
     if (!user || !user.isActive) throw new Error('用户不存在或已禁用');
+    if (user.tokenVersion !== payload.tokenVersion) {
+      throw new Error('令牌已失效，请重新登录');
+    }
     return this.generateTokens(user);
   }
 

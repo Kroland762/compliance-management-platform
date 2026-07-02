@@ -69,7 +69,7 @@ export default function TemplateManagement() {
       title: '操作', key: 'actions', render: (_: any, record: any) => (
         <Space>
           <Button size="small" icon={<EyeOutlined />} onClick={() => handleView(record.id)}>详情</Button>
-          <Popconfirm title="确定删除此模版？" onConfirm={() => handleDelete(record.id)}>
+          <Popconfirm title="确定删除此模版？" okText="确认" cancelText="取消" onConfirm={() => handleDelete(record.id)}>
             <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
           </Popconfirm>
         </Space>
