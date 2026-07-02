@@ -4,7 +4,7 @@ import {
   AuditOutlined, FormOutlined, WarningOutlined,
   BellOutlined, LogoutOutlined, FileSearchOutlined,
   MenuFoldOutlined, MenuUnfoldOutlined, DatabaseOutlined, ScheduleOutlined,
-  SecurityScanOutlined, SafetyCertificateOutlined, HomeOutlined,
+  SecurityScanOutlined, SafetyCertificateOutlined, HomeOutlined, ApartmentOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import { useAuthStore } from '../store/auth';
@@ -32,8 +32,17 @@ export default function MainLayout() {
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [isCompact, setIsCompact] = useState(false);
 
-  const sidebarWidth = collapsed ? SIDEBAR_NARROW : SIDEBAR_WIDE;
+  useEffect(() => {
+    const updateCompact = () => setIsCompact(window.innerWidth <= 900);
+    updateCompact();
+    window.addEventListener('resize', updateCompact);
+    return () => window.removeEventListener('resize', updateCompact);
+  }, []);
+
+  const effectiveCollapsed = collapsed || isCompact;
+  const sidebarWidth = effectiveCollapsed ? SIDEBAR_NARROW : SIDEBAR_WIDE;
 
   const fetchUnread = async () => {
     try {
@@ -61,6 +70,7 @@ export default function MainLayout() {
     } else if (
       location.pathname.startsWith('/users') ||
       location.pathname.startsWith('/roles') ||
+      location.pathname.startsWith('/organization') ||
       location.pathname.startsWith('/audit-logs') ||
       location.pathname.startsWith('/tenants') ||
       location.pathname.startsWith('/settings')
@@ -119,12 +129,17 @@ export default function MainLayout() {
     ...(can('users', 'read') ? [
       { key: '/users', icon: <UserOutlined />, label: '用户管理' },
     ] : []),
+    ...(can('organization', 'read') ? [
+      { key: '/organization', icon: <ApartmentOutlined />, label: '组织管理' },
+    ] : []),
     ...(can('users', 'read') ? [
       { key: '/audit-logs', icon: <FileSearchOutlined />, label: '操作日志' },
     ] : []),
     { type: 'divider' as any },
     { key: '/settings', icon: <SecurityScanOutlined />, label: '安全设置' },
   ];
+
+  const firstSystemPath = systemMenuItems.find((item) => item?.key)?.key || '/settings';
 
   const sideMenuItems = activeNav === 'compliance' ? complianceMenuItems
     : activeNav === 'account-audit' ? accountAuditMenuItems
@@ -165,6 +180,7 @@ export default function MainLayout() {
     }
     if (location.pathname.startsWith('/users')) return '/users';
     if (location.pathname.startsWith('/roles')) return '/roles';
+    if (location.pathname.startsWith('/organization')) return '/organization';
     if (location.pathname.startsWith('/audit-logs')) return '/audit-logs';
     if (location.pathname.startsWith('/tenants')) return '/tenants';
     if (location.pathname.startsWith('/settings')) return '/settings';
@@ -185,30 +201,30 @@ export default function MainLayout() {
         <div style={{
           flex: `0 0 ${sidebarWidth}px`, height: 52,
           display: 'flex', alignItems: 'center',
-          justifyContent: collapsed ? 'center' : 'space-between',
-          paddingLeft: collapsed ? 0 : 20, paddingRight: collapsed ? 0 : 12,
+          justifyContent: effectiveCollapsed ? 'center' : 'space-between',
+          paddingLeft: effectiveCollapsed ? 0 : 20, paddingRight: effectiveCollapsed ? 0 : 12,
           borderRight: '0.5px solid rgba(0,0,0,0.06)', boxSizing: 'border-box',
-          cursor: collapsed ? 'pointer' : 'default', transition: 'all 0.2s', overflow: 'hidden',
-        }} onClick={collapsed ? () => setCollapsed(false) : undefined}>
+          cursor: effectiveCollapsed && !isCompact ? 'pointer' : 'default', transition: 'all 0.2s', overflow: 'hidden',
+        }} onClick={effectiveCollapsed && !isCompact ? () => setCollapsed(false) : undefined}>
           <Text strong style={{ fontSize: 15, letterSpacing: '-0.02em', whiteSpace: 'nowrap', color: '#1D1D1F' }}>
-            {collapsed ? '合规' : '合规管理平台'}
+            {effectiveCollapsed ? '合规' : '合规管理平台'}
           </Text>
-          {!collapsed && (
+          {!effectiveCollapsed && (
             <Button type="text" icon={<MenuFoldOutlined />}
               onClick={(e) => { e.stopPropagation(); setCollapsed(!collapsed); }}
               style={{ fontSize: 14, width: 28, height: 28, flexShrink: 0 }} />
           )}
         </div>
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', minWidth: 0 }}>
-          <nav style={{ display: 'flex', gap: 4 }}>
+        <div className="app-topbar-main" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', minWidth: 0 }}>
+          <nav className="app-topnav" style={{ display: 'flex', gap: 4 }}>
             <button style={navTabStyle(activeNav === 'compliance')}
               onClick={() => { setActiveNav('compliance'); navigate('/dashboard'); }}>资质合规</button>
             <button style={navTabStyle(activeNav === 'account-audit')}
               onClick={() => { setActiveNav('account-audit'); navigate('/account-audit'); }}>账户审计</button>
             <button style={navTabStyle(activeNav === 'system')}
-              onClick={() => { setActiveNav('system'); navigate('/settings'); }}>系统设置</button>
+              onClick={() => { setActiveNav('system'); navigate(firstSystemPath); }}>系统设置</button>
           </nav>
-          <Space size={16}>
+          <Space size={16} className="app-topbar-actions">
             <Popover open={notifOpen} onOpenChange={(open) => { setNotifOpen(open); if (open) fetchNotifications(); }}
               trigger="click" placement="bottomRight"
               content={
@@ -275,7 +291,7 @@ export default function MainLayout() {
                 <Avatar size={28} style={{ backgroundColor: '#007AFF', fontSize: 13 }}>
                   {user?.username?.[0]?.toUpperCase()}
                 </Avatar>
-                <Text style={{ fontSize: 14, fontWeight: 500, color: '#1D1D1F' }}>{user?.username}</Text>
+                <Text className="app-username" style={{ fontSize: 14, fontWeight: 500, color: '#1D1D1F' }}>{user?.username}</Text>
               </div>
             </Dropdown>
           </Space>
@@ -283,8 +299,8 @@ export default function MainLayout() {
       </div>
 
       {/* Body */}
-      <div style={{ flex: 1, display: 'flex', alignItems: 'flex-start' }}>
-        <Sider collapsible collapsed={collapsed} onCollapse={setCollapsed} trigger={null}
+      <div className="app-body" style={{ flex: 1, display: 'flex', alignItems: 'flex-start', minWidth: 0 }}>
+        <Sider collapsible collapsed={effectiveCollapsed} onCollapse={setCollapsed} trigger={null}
           width={SIDEBAR_WIDE} collapsedWidth={SIDEBAR_NARROW}
           style={{
             position: 'sticky', top: 52, height: 'calc(100vh - 52px)', overflowY: 'auto',
@@ -297,7 +313,7 @@ export default function MainLayout() {
             onClick={({ key }) => navigate(key)}
             style={{ background: 'transparent', borderInlineEnd: 'none', marginTop: 8, fontSize: 14 }} />
         </Sider>
-        <Content style={{ padding: '28px 32px', maxWidth: 1280, margin: '0 auto', width: '100%', minHeight: 'calc(100vh - 52px)' }}>
+        <Content className="app-content" style={{ padding: '28px 32px', maxWidth: 1280, margin: '0 auto', width: '100%', minWidth: 0, minHeight: 'calc(100vh - 52px)' }}>
           <Outlet />
         </Content>
       </div>

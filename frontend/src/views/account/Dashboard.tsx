@@ -33,6 +33,9 @@ const StatCard = ({
       display: 'flex',
       alignItems: 'center',
       gap: 16,
+      minHeight: 96,
+      height: '100%',
+      boxSizing: 'border-box',
       transition: 'all 0.2s cubic-bezier(0.25, 0.1, 0.25, 1)',
       cursor: onClick ? 'pointer' : 'default',
       border: '0.5px solid transparent',
@@ -58,8 +61,8 @@ const StatCard = ({
     }}>
       {icon}
     </div>
-    <div>
-      <div style={{ fontSize: 13, color: '#8E8E93', marginBottom: 2 }}>{label}</div>
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontSize: 13, color: '#8E8E93', marginBottom: 2, whiteSpace: 'nowrap' }}>{label}</div>
       <div style={{ fontSize: 28, fontWeight: 600, color: '#1D1D1F', letterSpacing: '-0.02em', lineHeight: 1 }}>
         {value}
       </div>
@@ -124,38 +127,34 @@ export default function AccountDashboard() {
   return (
     <div>
       {/* Stat Cards */}
-      <Row gutter={[16, 16]}>
-        <Col xs={24} sm={12} lg={Math.floor(24 / 5)}>
-          <StatCard
-            icon={<DatabaseOutlined />} label="数据源" value={overview?.dataSourcesCount ?? '-'}
-            color="#007AFF" onClick={() => navigate('/account-audit/data-sources')}
-          />
-        </Col>
-        <Col xs={24} sm={12} lg={Math.floor(24 / 5)}>
-          <StatCard
-            icon={<UserOutlined />} label="账户总数" value={overview?.totalAccounts ?? '-'}
-            color="#34C759"
-          />
-        </Col>
-        <Col xs={24} sm={12} lg={Math.floor(24 / 5)}>
-          <StatCard
-            icon={<WarningOutlined />} label="问题总数" value={overview?.totalProblems ?? '-'}
-            color="#FF9500" onClick={() => navigate('/account-audit/problems')}
-          />
-        </Col>
-        <Col xs={24} sm={12} lg={Math.floor(24 / 5)}>
-          <StatCard
-            icon={<AlertOutlined />} label="高风险" value={overview?.highRiskCount ?? '-'}
-            color="#FF9500"
-          />
-        </Col>
-        <Col xs={24} sm={12} lg={Math.floor(24 / 5)}>
-          <StatCard
-            icon={<ClockCircleOutlined />} label="待处理" value={overview?.pendingCount ?? '-'}
-            color="#5856D6"
-          />
-        </Col>
-      </Row>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
+        gap: 16,
+        alignItems: 'stretch',
+        width: '100%',
+      }}>
+        <StatCard
+          icon={<DatabaseOutlined />} label="数据源" value={overview?.dataSourcesCount ?? '-'}
+          color="#007AFF" onClick={() => navigate('/account-audit/data-sources')}
+        />
+        <StatCard
+          icon={<UserOutlined />} label="账户总数" value={overview?.totalAccounts ?? '-'}
+          color="#34C759"
+        />
+        <StatCard
+          icon={<WarningOutlined />} label="问题总数" value={overview?.totalProblems ?? '-'}
+          color="#FF9500" onClick={() => navigate('/account-audit/problems')}
+        />
+        <StatCard
+          icon={<AlertOutlined />} label="高风险" value={overview?.highRiskCount ?? '-'}
+          color="#FF9500"
+        />
+        <StatCard
+          icon={<ClockCircleOutlined />} label="待处理" value={overview?.pendingCount ?? '-'}
+          color="#5856D6"
+        />
+      </div>
 
       {/* Charts Row */}
       <Row gutter={[16, 16]} style={{ marginTop: 24 }}>

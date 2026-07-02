@@ -11,6 +11,8 @@ import EvidenceFile from './EvidenceFile';
 import RiskRecord from './RiskRecord';
 import Notification from './Notification';
 import AuditLog from './AuditLog';
+import Department from './Department';
+import DepartmentMember from './DepartmentMember';
 
 export function setupAssociations(): void {
   // QuestionnaireTemplate 1:N QuestionTemplate
@@ -68,4 +70,14 @@ export function setupAssociations(): void {
   // User 1:N AuditLog
   User.hasMany(AuditLog, { foreignKey: 'userId', as: 'auditLogs' });
   AuditLog.belongsTo(User, { foreignKey: 'userId', as: 'user' });
+
+  // Department tree + User M:N Department memberships
+  Department.hasMany(Department, { foreignKey: 'parentId', as: 'children' });
+  Department.belongsTo(Department, { foreignKey: 'parentId', as: 'parent' });
+  Department.belongsToMany(User, { through: DepartmentMember, foreignKey: 'departmentId', otherKey: 'userId', as: 'members' });
+  User.belongsToMany(Department, { through: DepartmentMember, foreignKey: 'userId', otherKey: 'departmentId', as: 'departments' });
+  Department.hasMany(DepartmentMember, { foreignKey: 'departmentId', as: 'departmentMembers', onDelete: 'CASCADE' });
+  DepartmentMember.belongsTo(Department, { foreignKey: 'departmentId', as: 'department' });
+  User.hasMany(DepartmentMember, { foreignKey: 'userId', as: 'departmentMembers', onDelete: 'CASCADE' });
+  DepartmentMember.belongsTo(User, { foreignKey: 'userId', as: 'user' });
 }

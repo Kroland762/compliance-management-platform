@@ -94,7 +94,7 @@ export default function Login() {
             合规管理平台
           </div>
           <Text style={{ fontSize: 14, color: '#8E8E93' }}>
-            Compliance Audit Platform
+            Compliance Management Platform
           </Text>
         </div>
 

@@ -1,7 +1,8 @@
 import sequelize from '../config/database';
 import { setupAssociations } from '../models/associations';
 import '../models'; // 导入所有模型确保注册
-import '../models/account/associations'; // 账户审计模块模型
+import '../models/account'; // 导入账户审计模块模型确保注册
+import '../models/account/associations'; // 账户审计模块关联
 
 async function migrate() {
   try {

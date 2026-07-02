@@ -4,8 +4,7 @@ import dashboardService from '../../services/account/dashboard.service';
 
 const router = Router();
 router.use(authenticate);
-
-// Dashboard 对所有已认证用户开放（只读）
+router.use(authorize('dashboard', 'read'));
 
 /**
  * GET /api/account/dashboard/overview

@@ -27,6 +27,7 @@ const RESOURCE_LABELS: Record<string, string> = {
   notifications: '通知管理',
   export: '数据导出',
   settings: '安全设置',
+  organization: '组织管理',
   data_sources: '数据源管理',
   rules: '规则管理',
   account_tasks: '账户审计任务',
@@ -149,7 +150,7 @@ export default function RoleManagement() {
         <Space>
           <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>编辑</Button>
           {!r.isSystem && (
-            <Popconfirm title="确定删除此角色？" onConfirm={() => handleDelete(r.id)}>
+            <Popconfirm title="确定删除此角色？" okText="确认" cancelText="取消" onConfirm={() => handleDelete(r.id)}>
               <Button type="link" size="small" danger icon={<DeleteOutlined />}>删除</Button>
             </Popconfirm>
           )}

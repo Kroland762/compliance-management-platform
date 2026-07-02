@@ -18,6 +18,12 @@ const TENANT_TABLES = [
   'account_data', 'account_data_sources', 'account_audit_rules', 'account_audit_tasks',
   'account_problems', 'account_task_executions', 'system_settings',
 ];
+const TENANT_SLUG_PATTERN = /^[a-z0-9_]{1,50}$/;
+
+function quoteIdentifier(identifier: string): string {
+  const queryGenerator = sequelize.getQueryInterface().queryGenerator as { quoteIdentifier(value: string): string };
+  return queryGenerator.quoteIdentifier(identifier);
+}
 
 /**
  * GET /api/tenants
@@ -63,8 +69,16 @@ router.post('/', authorize('tenants', 'create'), async (req: Request, res: Respo
       res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: '租户名称和标识为必填项' } });
       return;
     }
+    if (!TENANT_SLUG_PATTERN.test(slug)) {
+      res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: '租户标识只能包含小写字母、数字和下划线，最长 50 位' },
+      });
+      return;
+    }
 
     const schemaName = `tenant_${slug}`;
+    const quotedSchema = quoteIdentifier(schemaName);
 
     // 检查是否已存在
     const existing = await Tenant.findOne({ where: { slug } });
@@ -74,12 +88,13 @@ router.post('/', authorize('tenants', 'create'), async (req: Request, res: Respo
     }
 
     // 1. 创建 PostgreSQL schema
-    await sequelize.query(`CREATE SCHEMA IF NOT EXISTS "${schemaName}"`);
+    await sequelize.query(`CREATE SCHEMA IF NOT EXISTS ${quotedSchema}`);
 
     // 2. 在租户 schema 内创建业务表（LIKE public 表结构）
     for (const table of TENANT_TABLES) {
+      const quotedTable = quoteIdentifier(table);
       await sequelize.query(
-        `CREATE TABLE IF NOT EXISTS "${schemaName}"."${table}" (LIKE public."${table}" INCLUDING ALL)`
+        `CREATE TABLE IF NOT EXISTS ${quotedSchema}.${quotedTable} (LIKE public.${quotedTable} INCLUDING ALL)`
       ).catch(() => {}); // 忽略已存在的表
     }
 
@@ -91,7 +106,7 @@ router.post('/', authorize('tenants', 'create'), async (req: Request, res: Respo
 
     for (const r of publicRoles) {
       await sequelize.query(`
-        INSERT INTO "${schemaName}".roles (name, description, permissions, "isSystem", "createdAt", "updatedAt")
+        INSERT INTO ${quotedSchema}.roles (name, description, permissions, "isSystem", "createdAt", "updatedAt")
         VALUES (:name, :description, :permissions, :isSystem, :createdAt, :updatedAt)
         ON CONFLICT (name) DO NOTHING
       `, { replacements: r }).catch(() => {});

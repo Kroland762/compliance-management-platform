@@ -118,23 +118,25 @@ export default function RuleList() {
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between' }}>
-        <Select
-          placeholder="严重度"
-          value={severityFilter || undefined}
-          onChange={v => setSeverityFilter(v || '')}
-          allowClear
-          style={{ width: 110 }}
-          options={[
-            { value: 'high', label: '高' },
-            { value: 'medium', label: '中' },
-            { value: 'low', label: '低' },
-          ]}
-        />
-        <Button type="primary" icon={<PlusOutlined />}
-          onClick={() => { setEditingRule(null); setFormOpen(true); }}>
-          创建规则
-        </Button>
+      <div className="filter-toolbar">
+        <div className="filter-toolbar-content">
+          <Select
+            placeholder="严重度"
+            value={severityFilter || undefined}
+            onChange={v => setSeverityFilter(v || '')}
+            allowClear
+            style={{ width: 110 }}
+            options={[
+              { value: 'high', label: '高' },
+              { value: 'medium', label: '中' },
+              { value: 'low', label: '低' },
+            ]}
+          />
+          <Button type="primary" icon={<PlusOutlined />}
+            onClick={() => { setEditingRule(null); setFormOpen(true); }}>
+            创建规则
+          </Button>
+        </div>
       </div>
 
       <div style={{

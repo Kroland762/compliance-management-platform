@@ -108,36 +108,36 @@ export default function TaskList() {
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <Input
-          placeholder="搜索任务名称"
-          prefix={<SearchOutlined style={{ color: '#AEAEB2' }} />}
-          value={keyword}
-          onChange={e => setKeyword(e.target.value)}
-          onPressEnter={handleSearch}
-          style={{ width: 220 }}
-          allowClear
-        />
-        <Select
-          placeholder="状态"
-          value={statusFilter || undefined}
-          onChange={v => setStatusFilter(v || '')}
-          allowClear
-          style={{ width: 110 }}
-          options={[
-            { value: 'idle', label: '空闲' },
-            { value: 'running', label: '运行中' },
-            { value: 'completed', label: '已完成' },
-            { value: 'failed', label: '失败' },
-          ]}
-        />
-        <Button onClick={handleSearch}>查询</Button>
+      <div className="filter-toolbar">
+        <div className="filter-toolbar-content">
+          <Input
+            placeholder="搜索任务名称"
+            prefix={<SearchOutlined style={{ color: '#AEAEB2' }} />}
+            value={keyword}
+            onChange={e => setKeyword(e.target.value)}
+            onPressEnter={handleSearch}
+            style={{ width: 220 }}
+            allowClear
+          />
+          <Select
+            placeholder="状态"
+            value={statusFilter || undefined}
+            onChange={v => setStatusFilter(v || '')}
+            allowClear
+            style={{ width: 110 }}
+            options={[
+              { value: 'idle', label: '空闲' },
+              { value: 'running', label: '运行中' },
+              { value: 'completed', label: '已完成' },
+              { value: 'failed', label: '失败' },
+            ]}
+          />
+          <Button onClick={handleSearch}>查询</Button>
+          <Button type="primary" icon={<PlusOutlined />}
+            onClick={() => { setEditingTask(null); setFormOpen(true); }}>
+            创建任务
+          </Button>
         </div>
-        <Button type="primary" icon={<PlusOutlined />}
-          onClick={() => { setEditingTask(null); setFormOpen(true); }}>
-          创建任务
-        </Button>
       </div>
 
       <Table columns={columns} dataSource={tasks} rowKey="id" loading={loading} scroll={{ x: 1050 }} size="small" />

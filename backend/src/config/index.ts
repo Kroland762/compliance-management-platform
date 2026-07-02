@@ -10,6 +10,7 @@ export const config = {
     database: process.env.DB_NAME || 'compliance_management_platform',
     username: process.env.DB_USER || 'admin',
     password: process.env.DB_PASSWORD || '',
+    ssl: process.env.DB_SSL === 'true',
   },
   jwt: {
     secret: process.env.JWT_SECRET || (process.env.NODE_ENV === 'production' ? '' : 'dev-secret-do-not-use-in-prod'),

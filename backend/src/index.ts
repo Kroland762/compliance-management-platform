@@ -14,6 +14,18 @@ import { tenantContext } from './middlewares/tenant';
 import { errorHandler, notFoundHandler } from './middlewares/errorHandler';
 
 const app = express();
+const INSECURE_JWT_SECRETS = new Set([
+  'change-this-to-a-random-32-char-string',
+  'dev-secret-do-not-use-in-prod',
+]);
+
+function validateProductionSecrets(): void {
+  if (config.nodeEnv !== 'production') return;
+
+  if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32 || INSECURE_JWT_SECRETS.has(process.env.JWT_SECRET)) {
+    throw new Error('❌ 生产环境必须设置非占位 JWT_SECRET 环境变量（至少32字符）');
+  }
+}
 
 // 中间件
 if (config.nodeEnv === 'production') {
@@ -76,9 +88,7 @@ app.use(errorHandler);
 const start = async () => {
   try {
     // 生产环境密钥检查
-    if (config.nodeEnv === 'production' && (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32)) {
-      throw new Error('❌ 生产环境必须设置 JWT_SECRET 环境变量（至少32字符）');
-    }
+    validateProductionSecrets();
 
     await sequelize.authenticate();
     console.log('✅ 数据库连接成功');

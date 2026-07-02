@@ -13,6 +13,7 @@ const ADMIN_PERMISSIONS: PermissionMatrix = {
   notifications:   ['read', 'update'],
   export:          ['create'],
   settings:        ['read', 'update'],
+  organization:    ['create', 'read', 'update', 'delete'],
   data_sources:    ['create', 'read', 'update', 'delete', 'sync'],
   rules:           ['create', 'read', 'update', 'delete', 'toggle'],
   account_tasks:   ['create', 'read', 'update', 'delete', 'execute'],
@@ -27,6 +28,7 @@ const AUDITOR_PERMISSIONS: PermissionMatrix = {
   notifications:   ['read', 'update'],
   export:          ['create'],
   settings:        ['read'],
+  organization:    ['read'],
   data_sources:    ['read'],
   rules:           ['read'],
   account_tasks:   ['read', 'execute'],
@@ -60,6 +62,10 @@ async function seed() {
       where: { name: '普通用户' },
       defaults: { name: '普通用户', description: '普通用户，可查看和填写', permissions: USER_PERMISSIONS, isSystem: true },
     });
+
+    await adminRole.update({ permissions: ADMIN_PERMISSIONS });
+    await auditorRole.update({ permissions: AUDITOR_PERMISSIONS });
+    await userRole.update({ permissions: USER_PERMISSIONS });
 
     console.log('✅ 默认角色已创建:', adminRole.name, auditorRole.name, userRole.name);
 

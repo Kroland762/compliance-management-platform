@@ -186,33 +186,33 @@ export default function DataSourceList() {
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <Input
-          placeholder="搜索名称"
-          prefix={<SearchOutlined style={{ color: '#AEAEB2' }} />}
-          value={keyword}
-          onChange={e => setKeyword(e.target.value)}
-          onPressEnter={handleSearch}
-          style={{ width: 240 }}
-          allowClear
-        />
-        <Select
-          placeholder="类型筛选"
-          value={typeFilter || undefined}
-          onChange={v => setTypeFilter(v || '')}
-          allowClear
-          style={{ width: 120 }}
-          options={[
-            { value: 'DATABASE', label: '数据库' },
-            { value: 'CSV', label: 'CSV' },
-          ]}
-        />
-        <Button onClick={handleSearch}>查询</Button>
+      <div className="filter-toolbar">
+        <div className="filter-toolbar-content">
+          <Input
+            placeholder="搜索名称"
+            prefix={<SearchOutlined style={{ color: '#AEAEB2' }} />}
+            value={keyword}
+            onChange={e => setKeyword(e.target.value)}
+            onPressEnter={handleSearch}
+            style={{ width: 240 }}
+            allowClear
+          />
+          <Select
+            placeholder="类型筛选"
+            value={typeFilter || undefined}
+            onChange={v => setTypeFilter(v || '')}
+            allowClear
+            style={{ width: 120 }}
+            options={[
+              { value: 'DATABASE', label: '数据库' },
+              { value: 'CSV', label: 'CSV' },
+            ]}
+          />
+          <Button onClick={handleSearch}>查询</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/account-audit/data-sources/new')}>
+            添加数据源
+          </Button>
         </div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/account-audit/data-sources/new')}>
-          添加数据源
-        </Button>
       </div>
 
       <Table columns={columns} dataSource={data} rowKey="id" loading={loading} scroll={{ x: 1100 }} size="small" />

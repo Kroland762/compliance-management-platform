@@ -130,53 +130,48 @@ export default function RiskManagement() {
 
   return (
     <div>
-      <div style={{ marginBottom: 12, display: 'flex', gap: 12, justifyContent: 'space-between', alignItems: 'center' }}>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-        <Select
-          placeholder="风险级别"
-          value={filters.riskLevel || undefined}
-          onChange={v => setFilters(f => ({ ...f, riskLevel: v || '' }))}
-          allowClear
-
-          style={{ width: 110 }}
-          options={[
-            { value: 'high', label: '高风险' },
-            { value: 'medium', label: '中风险' },
-            { value: 'low', label: '低风险' },
-          ]}
-        />
-        <Select
-          placeholder="补救状态"
-          value={filters.remediationStatus || undefined}
-          onChange={v => setFilters(f => ({ ...f, remediationStatus: v || '' }))}
-          allowClear
-
-          style={{ width: 110 }}
-          options={[
-            { value: 'remediated', label: '已补救' },
-            { value: 'in_progress', label: '补救中' },
-            { value: 'not_remediated', label: '未补救' },
-          ]}
-        />
-        <Select
-          placeholder="风险状态"
-          value={filters.riskStatus || undefined}
-          onChange={v => setFilters(f => ({ ...f, riskStatus: v || '' }))}
-          allowClear
-
-          style={{ width: 120 }}
-          options={[
-            { value: 'risk_acceptance', label: '风险接受' },
-            { value: 'risk_transfer', label: '风险转移' },
-            { value: 'risk_reduction', label: '风险降低' },
-            { value: 'risk_elimination', label: '风险规避' },
-          ]}
-        />
-        </div>
-        <Space>
+      <div className="filter-toolbar">
+        <div className="filter-toolbar-content">
+          <Select
+            placeholder="风险级别"
+            value={filters.riskLevel || undefined}
+            onChange={v => setFilters(f => ({ ...f, riskLevel: v || '' }))}
+            allowClear
+            style={{ width: 110 }}
+            options={[
+              { value: 'high', label: '高风险' },
+              { value: 'medium', label: '中风险' },
+              { value: 'low', label: '低风险' },
+            ]}
+          />
+          <Select
+            placeholder="补救状态"
+            value={filters.remediationStatus || undefined}
+            onChange={v => setFilters(f => ({ ...f, remediationStatus: v || '' }))}
+            allowClear
+            style={{ width: 110 }}
+            options={[
+              { value: 'remediated', label: '已补救' },
+              { value: 'in_progress', label: '补救中' },
+              { value: 'not_remediated', label: '未补救' },
+            ]}
+          />
+          <Select
+            placeholder="风险状态"
+            value={filters.riskStatus || undefined}
+            onChange={v => setFilters(f => ({ ...f, riskStatus: v || '' }))}
+            allowClear
+            style={{ width: 120 }}
+            options={[
+              { value: 'risk_acceptance', label: '风险接受' },
+              { value: 'risk_transfer', label: '风险转移' },
+              { value: 'risk_reduction', label: '风险降低' },
+              { value: 'risk_elimination', label: '风险规避' },
+            ]}
+          />
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateVisible(true)}>新增风险</Button>
           <Button icon={<ExportOutlined />} onClick={handleExport}>导出报告</Button>
-        </Space>
+        </div>
       </div>
       <Table columns={columns} dataSource={risks} rowKey="id" loading={loading} scroll={{ x: 1100 }} size="small" />
 
