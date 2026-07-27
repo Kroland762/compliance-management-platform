@@ -10,6 +10,9 @@ describeIntegration('PostgreSQL tenant isolation and context API', () => {
   let tenantB;
   let globalToken;
   let tenantToken;
+  let tenantUser;
+  let tenantUsername;
+  const tenantPassword = 'TenantLogin1234!';
   let tenantBQualificationId;
   let tenantBTaskId;
 
@@ -35,6 +38,8 @@ describeIntegration('PostgreSQL tenant isolation and context API', () => {
       qualifications: ['create', 'read', 'update', 'delete'],
       tasks: ['create', 'read', 'update', 'delete'],
       risks: ['read', 'update'],
+      settings: ['read', 'update'],
+      audit_logs: ['read'],
     };
     const [template] = await RoleTemplate.findOrCreate({
       where: { name: '集成测试超管' },
@@ -101,9 +106,11 @@ describeIntegration('PostgreSQL tenant isolation and context API', () => {
       });
       tenantBTaskId = taskB.id;
     });
-    const tenantUser = await User.create({
-      username: `tenant_${suffix}`,
-      passwordHash: 'not-used',
+    const bcrypt = require('bcrypt');
+    tenantUsername = `tenant_${suffix}`;
+    tenantUser = await User.create({
+      username: tenantUsername,
+      passwordHash: await bcrypt.hash(tenantPassword, 6),
       role: UserRole.ADMINISTRATOR,
       roleId: tenantRole.id,
       tenantId: tenantA.id,
@@ -149,6 +156,81 @@ describeIntegration('PostgreSQL tenant isolation and context API', () => {
       .set('X-Tenant-ID', tenantB.id);
     expect(response.status).toBe(403);
     expect(response.body.error.code).toBe('FORBIDDEN');
+  });
+
+  test('security settings, tenant entry, login and logout create tenant audit logs', async () => {
+    const contextResponse = await request.post(`/api/tenants/${tenantA.id}/context`)
+      .set('Authorization', `Bearer ${globalToken}`);
+    expect(contextResponse.status).toBe(200);
+
+    const settingsResponse = await request.put('/api/settings/security')
+      .set('Authorization', `Bearer ${globalToken}`)
+      .set('X-Tenant-ID', tenantA.id)
+      .send({
+        maxLoginAttempts: 6,
+        lockDurationMinutes: 30,
+        idleTimeoutMinutes: 60,
+        auditLogRetentionDays: 180,
+      });
+    expect(settingsResponse.status).toBe(200);
+
+    const captchaService = require('../src/services/captcha.service').default;
+    const captcha = jest.spyOn(captchaService, 'verify').mockReturnValueOnce(true);
+    const loginResponse = await request.post('/api/auth/login').send({
+      username: tenantUsername,
+      password: tenantPassword,
+      captchaId: 'integration-captcha',
+      captchaCode: 'abcd',
+    });
+    captcha.mockRestore();
+    expect(loginResponse.status).toBe(200);
+
+    const logoutResponse = await request.post('/api/auth/logout')
+      .set('Authorization', `Bearer ${loginResponse.body.data.token}`);
+    expect(logoutResponse.status).toBe(200);
+
+    const { AuditLog, OperationType } = require('../src/models');
+    const { runWithTenantContext } = require('../src/middlewares/tenant');
+    const logs = await runWithTenantContext(
+      { schema: tenantA.schemaName, tenantId: tenantA.id },
+      () => AuditLog.findAll({
+        where: {
+          operationType: [
+            OperationType.LOGIN,
+            OperationType.LOGOUT,
+            OperationType.UPDATE,
+          ],
+        },
+        order: [['createdAt', 'ASC']],
+      }),
+    );
+    const events = logs.map((log) => ({
+      operationType: log.operationType,
+      resourceType: log.resourceType,
+      details: log.operationDetails || '',
+      userId: log.userId,
+    }));
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        operationType: OperationType.LOGIN,
+        resourceType: 'session',
+        userId: tenantUser.id,
+      }),
+      expect.objectContaining({
+        operationType: OperationType.LOGOUT,
+        resourceType: 'session',
+        userId: tenantUser.id,
+      }),
+      expect.objectContaining({
+        operationType: OperationType.UPDATE,
+        resourceType: 'security_settings',
+      }),
+    ]));
+    expect(events.some((event) => event.details.includes('进入租户上下文'))).toBe(true);
+    expect(JSON.stringify(events)).not.toContain(tenantPassword);
+    expect(JSON.stringify(events)).not.toContain('integration-captcha');
+    expect(JSON.stringify(events)).not.toContain('abcd');
   });
 
   test('cross-tenant object IDs return 404 and 45 rows paginate 20/20/5', async () => {

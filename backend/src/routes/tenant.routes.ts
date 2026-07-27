@@ -6,6 +6,8 @@ import User from '../models/User';
 import tenantProvisioningService from '../services/tenant-provisioning.service';
 import { AppError, asyncHandler } from '../utils/http';
 import { pagination, parsePagination } from '../utils/pagination';
+import authAuditService from '../services/auth-audit.service';
+import { OperationType } from '../models';
 
 const router = Router();
 router.use(authenticate, superAdminOnly);
@@ -32,6 +34,15 @@ router.post('/:id/context', authorize('tenants', 'read'), asyncHandler(async (re
     resourceId: tenant.id,
     outcome: 'success',
     details: { name: tenant.name, schemaName: tenant.schemaName },
+  });
+  await authAuditService.record({
+    operationType: OperationType.LOGIN,
+    userId: req.user!.userId,
+    tenantId: tenant.id,
+    success: true,
+    details: '全局管理员进入租户上下文',
+    ipAddress: req.ip,
+    requestId: req.requestId,
   });
   res.json({
     success: true,

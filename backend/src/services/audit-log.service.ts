@@ -1,5 +1,5 @@
 import { AuditLog, OperationType } from '../models';
-import { Op } from 'sequelize';
+import { Op, type Transaction } from 'sequelize';
 import settingsService from './settings.service';
 import { parsePagination, pagination } from '../utils/pagination';
 
@@ -8,7 +8,7 @@ class AuditLogService {
     userId: string; operationType: OperationType; resourceType: string;
     resourceId?: string | null; operationDetails?: string; success: boolean;
     ipAddress?: string; tenantId?: string;
-  }) {
+  }, transaction?: Transaction) {
     return AuditLog.create({
       userId: data.userId,
       operationType: data.operationType,
@@ -18,7 +18,7 @@ class AuditLogService {
       success: data.success,
       ipAddress: data.ipAddress || null,
       tenantId: data.tenantId || null,
-    } as any);
+    } as any, { transaction });
   }
 
   async queryLogs(query: {

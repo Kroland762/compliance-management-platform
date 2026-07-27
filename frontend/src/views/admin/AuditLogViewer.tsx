@@ -23,6 +23,8 @@ const RESOURCE_TYPES = [
   { label: '任务', value: 'task' },
   { label: '模板', value: 'template' },
   { label: '租户', value: 'tenant' },
+  { label: '登录会话', value: 'session' },
+  { label: '安全设置', value: 'security_settings' },
   { label: '资质', value: 'qualification' },
   { label: '数据源', value: 'data_source' },
   { label: '审计规则', value: 'audit_rule' },

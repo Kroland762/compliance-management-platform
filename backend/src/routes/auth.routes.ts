@@ -4,10 +4,12 @@ import captchaService from '../services/captcha.service';
 import { authenticate, authorize } from '../middlewares/auth';
 import { loginLimiter } from '../middlewares/rateLimiter';
 import { config } from '../config';
-import { UserRole } from '../models';
 import auditLogService from '../services/audit-log.service';
-import { OperationType } from '../models';
+import { OperationType, User } from '../models';
 import { loginFailures } from '../services/metrics.service';
+import authAuditService from '../services/auth-audit.service';
+import logger from '../services/logger.service';
+import { asyncHandler } from '../utils/http';
 
 const router = Router();
 
@@ -28,9 +30,17 @@ router.get('/captcha', (_req: Request, res: Response) => {
  * POST /api/auth/login
  */
 router.post('/login', loginLimiter, async (req: Request, res: Response) => {
+  const { username, password, captchaId, captchaCode } = req.body;
   try {
-    const { username, password, captchaId, captchaCode } = req.body;
     if (!username || !password) {
+      await authAuditService.record({
+        operationType: OperationType.LOGIN,
+        userId: null,
+        success: false,
+        details: '登录失败：缺少必填凭据',
+        ipAddress: req.ip,
+        requestId: req.requestId,
+      });
       res.status(400).json({
         success: false,
         error: { code: 'VALIDATION_ERROR', message: '用户名和密码为必填项' },
@@ -38,6 +48,15 @@ router.post('/login', loginLimiter, async (req: Request, res: Response) => {
       return;
     }
     const result = await authService.login(username, password, captchaId, captchaCode);
+    await authAuditService.record({
+      operationType: OperationType.LOGIN,
+      userId: result.user.id,
+      tenantId: result.user.tenantId || req.header('X-Tenant-ID') || null,
+      success: true,
+      details: '用户登录成功',
+      ipAddress: req.ip,
+      requestId: req.requestId,
+    });
     // Refresh Token → HttpOnly Cookie
     res.cookie('refreshToken', result.refreshToken, {
       httpOnly: true,
@@ -53,6 +72,25 @@ router.post('/login', loginLimiter, async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     loginFailures.inc();
+    try {
+      const candidate = typeof username === 'string'
+        ? await User.findOne({ where: { username }, attributes: ['id', 'tenantId'] })
+        : null;
+      await authAuditService.record({
+        operationType: OperationType.LOGIN,
+        userId: candidate?.id || null,
+        tenantId: candidate?.tenantId || null,
+        success: false,
+        details: '用户登录失败',
+        ipAddress: req.ip,
+        requestId: req.requestId,
+      });
+    } catch (auditError) {
+      logger.error('login_audit_failed', {
+        requestId: req.requestId,
+        message: auditError instanceof Error ? auditError.message : String(auditError),
+      });
+    }
     res.status(401).json({
       success: false,
       error: { code: 'AUTH_FAILED', message: error.message },
@@ -63,10 +101,19 @@ router.post('/login', loginLimiter, async (req: Request, res: Response) => {
 /**
  * POST /api/auth/logout
  */
-router.post('/logout', authenticate, (_req: Request, res: Response) => {
+router.post('/logout', authenticate, asyncHandler(async (req, res) => {
+  await authAuditService.record({
+    operationType: OperationType.LOGOUT,
+    userId: req.user!.userId,
+    tenantId: req.tenant?.id || req.user!.tenantId || null,
+    success: true,
+    details: '用户登出',
+    ipAddress: req.ip,
+    requestId: req.requestId,
+  });
   res.clearCookie('refreshToken', { path: '/api/auth' });
   res.json({ success: true, message: '已登出' });
-});
+}));
 
 /**
  * POST /api/auth/refresh
