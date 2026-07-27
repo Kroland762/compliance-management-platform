@@ -22,8 +22,12 @@ export default function PrivateRoute({ children, permission }: PrivateRouteProps
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
+  if (useAuthStore.getState().user?.mustChangePassword) {
+    return <Navigate to="/change-password" replace />;
+  }
+
   if (!selectedTenant && location.pathname !== '/tenants') {
-    return <Navigate to="/tenants" replace />;
+    return <Navigate to="/tenant-select" replace />;
   }
 
   if (permission) {

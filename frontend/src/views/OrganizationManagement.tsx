@@ -7,6 +7,7 @@ import { useAuthStore } from '../store/auth';
 interface DepartmentNode {
   id: string;
   name: string;
+  code: string;
   parentId: string | null;
   description: string | null;
   sortOrder: number;
@@ -17,12 +18,12 @@ interface DepartmentNode {
 interface UserOption {
   id: string;
   username: string;
+  displayName: string;
   email?: string | null;
-  department?: string | null;
-  roleName?: string | null;
-  createdAt?: string | null;
+  roles?: Array<{ id: string; name: string }>;
+  departments?: Array<{ id: string; name: string; isPrimary: boolean }>;
   lastLogin?: string | null;
-  isActive: boolean;
+  status: string;
 }
 
 function flattenDepartments(items: DepartmentNode[]): DepartmentNode[] {
@@ -60,7 +61,7 @@ export default function OrganizationManagement() {
   const [users, setUsers] = useState<UserOption[]>([]);
   const [selectedDeptId, setSelectedDeptId] = useState<string | null>(null);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
-  const [deptDraft, setDeptDraft] = useState({ name: '', parentId: '', description: '', sortOrder: 0 });
+  const [deptDraft, setDeptDraft] = useState({ name: '', code: '', parentId: '', description: '', sortOrder: 0, managerMemberId: '' });
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -72,7 +73,7 @@ export default function OrganizationManagement() {
     try {
       const [deptRes, userRes]: any[] = await Promise.all([
         apiClient.get('/departments'),
-        apiClient.get('/users', { params: { pageSize: 100, isActive: true } }),
+        apiClient.get('/members', { params: { pageSize: 100, status: 'active' } }),
       ]);
       const nextDepartments = deptRes.data || [];
       setDepartments(nextDepartments);
@@ -87,15 +88,17 @@ export default function OrganizationManagement() {
         if (nextSelectedDept) {
           setDeptDraft({
             name: nextSelectedDept.name,
+            code: nextSelectedDept.code,
             parentId: nextSelectedDept.parentId || '',
             description: nextSelectedDept.description || '',
             sortOrder: nextSelectedDept.sortOrder || 0,
+            managerMemberId: (nextSelectedDept as any).managerMemberId || '',
           });
         }
         const memberRes: any = await apiClient.get(`/departments/${nextSelectedId}/members`);
         setSelectedMemberIds((memberRes.data || []).map((user: UserOption) => user.id));
       } else {
-        setDeptDraft({ name: '', parentId: '', description: '', sortOrder: 0 });
+        setDeptDraft({ name: '', code: '', parentId: '', description: '', sortOrder: 0, managerMemberId: '' });
         setSelectedMemberIds([]);
       }
     } catch (err: any) {
@@ -115,9 +118,11 @@ export default function OrganizationManagement() {
     if (dept) {
       setDeptDraft({
         name: dept.name,
+        code: dept.code,
         parentId: dept.parentId || '',
         description: dept.description || '',
         sortOrder: dept.sortOrder || 0,
+        managerMemberId: (dept as any).managerMemberId || '',
       });
     }
     try {
@@ -134,6 +139,7 @@ export default function OrganizationManagement() {
     try {
       const res: any = await apiClient.post('/departments', {
         name: getUniqueDepartmentName(departments, parentId),
+        code: `DEPT_${Date.now().toString(36).toUpperCase()}`,
         parentId,
         sortOrder: 0,
       });
@@ -161,9 +167,9 @@ export default function OrganizationManagement() {
         parentId: deptDraft.parentId || null,
         description: deptDraft.description.trim() || null,
         sortOrder: deptDraft.sortOrder || 0,
+        managerMemberId: deptDraft.managerMemberId || null,
       });
-      await apiClient.put(`/departments/${selectedDeptId}/members`, { userIds: selectedMemberIds });
-      message.success('组织权限已更新');
+      message.success('部门信息已更新');
       await fetchOrganization(selectedDeptId);
     } catch (err: any) {
       if (err?.error?.message) message.error(err.error.message);
@@ -195,10 +201,11 @@ export default function OrganizationManagement() {
   const siblingParentId = selectedDept ? selectedDept.parentId : null;
   const memberColumns = [
     { title: '用户名', dataIndex: 'username' },
+    { title: '姓名', dataIndex: 'displayName' },
     { title: '邮箱', dataIndex: 'email', render: (value: string | null) => value || '-' },
-    { title: '原部门字段', dataIndex: 'department', render: (value: string | null) => value || '-' },
-    { title: '角色', dataIndex: 'roleName', render: (value: string | null) => value || '-' },
-    { title: '状态', dataIndex: 'isActive', render: (value: boolean) => value ? <Tag color="green">启用</Tag> : <Tag>禁用</Tag> },
+    { title: '角色', dataIndex: 'roles', render: (roles: UserOption['roles']) => roles?.map((role) => <Tag key={role.id}>{role.name}</Tag>) },
+    { title: '本部门关系', render: (_: unknown, member: any) => member.isPrimary ? <Tag color="blue">主部门</Tag> : <Tag>兼职</Tag> },
+    { title: '状态', dataIndex: 'status', render: (value: string) => value === 'active' ? <Tag color="green">有效</Tag> : <Tag>{value}</Tag> },
     { title: '最后登录', dataIndex: 'lastLogin', render: (value: string | null) => value ? new Date(value).toLocaleString('zh-CN') : '-' },
   ];
 
@@ -300,6 +307,23 @@ export default function OrganizationManagement() {
                     />
                   </div>
                 </div>
+                <div className="responsive-form-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginTop: 16 }}>
+                  <div>
+                    <div style={{ fontSize: 14, marginBottom: 8 }}>部门编码（创建后不可修改）</div>
+                    <Input disabled value={deptDraft.code} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 14, marginBottom: 8 }}>部门负责人</div>
+                    <Select
+                      allowClear
+                      disabled={!canManage}
+                      value={deptDraft.managerMemberId || undefined}
+                      onChange={(value) => setDeptDraft((draft) => ({ ...draft, managerMemberId: value || '' }))}
+                      style={{ width: '100%' }}
+                      options={users.map((member) => ({ value: member.id, label: `${member.displayName} (${member.username})` }))}
+                    />
+                  </div>
+                </div>
                 <div className="responsive-form-grid responsive-form-grid-narrow" style={{ display: 'grid', gridTemplateColumns: '1fr 160px', gap: 16, marginTop: 16 }}>
                   <div>
                     <div style={{ fontSize: 14, marginBottom: 8 }}>说明</div>
@@ -311,25 +335,9 @@ export default function OrganizationManagement() {
                   </div>
                 </div>
 
-                <div style={{ marginTop: 16 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>部门员工</div>
-                  <Select
-                    mode="multiple"
-                    disabled={!canManage}
-                    value={selectedMemberIds}
-                    onChange={setSelectedMemberIds}
-                    placeholder="选择可归属到该部门的员工"
-                    style={{ width: '100%' }}
-                    optionFilterProp="label"
-                    options={users.map((user) => ({
-                      value: user.id,
-                      label: `${user.username}${user.email ? ` · ${user.email}` : ''}`,
-                    }))}
-                  />
-                </div>
-
                 <div style={{ marginTop: 20 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>部门员工账户</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>部门成员</div>
+                  <div style={{ ...hintStyle, marginBottom: 8 }}>成员的主部门和兼职部门请在“成员管理”统一调整。</div>
                   <Table
                     rowKey="id"
                     size="small"
@@ -343,17 +351,17 @@ export default function OrganizationManagement() {
                 {canManage && (
                   <Space style={{ marginTop: 20 }}>
                     {can('organization', 'update') && (
-                      <Button type="primary" onClick={handleSaveDepartment} loading={saving} style={btnStyle}>保存组织权限</Button>
+                      <Button type="primary" onClick={handleSaveDepartment} loading={saving} style={btnStyle}>保存部门</Button>
                     )}
                     {can('organization', 'delete') && (
                       <Popconfirm
                         title="删除该部门？"
-                        description="仅空部门可以删除。"
+                        description="仅无子部门、无成员且无历史业务引用的部门可以归档。"
                         okText="确认"
                         cancelText="取消"
                         onConfirm={handleDeleteDepartment}
                       >
-                        <Button danger icon={<DeleteOutlined />} loading={saving}>删除部门</Button>
+                        <Button danger icon={<DeleteOutlined />} loading={saving}>归档部门</Button>
                       </Popconfirm>
                     )}
                   </Space>

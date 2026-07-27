@@ -17,11 +17,12 @@ export default function ReviewTaskList() {
   const [createLoading, setCreateLoading] = useState(false);
   const [templates, setTemplates] = useState<any[]>([]);
   const [auditors, setAuditors] = useState<any[]>([]);
+  const [departments, setDepartments] = useState<any[]>([]);
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   const [form] = Form.useForm();
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
-  const isAdmin = user?.role === 'administrator';
+  const isAdmin = Boolean(user?.permissions?.tasks?.includes('delete'));
 
   const fetchTasks = () => {
     setLoading(true);
@@ -54,7 +55,8 @@ const handleDelete = async (id: string) => {
 
   const openCreate = () => {
     apiClient.get('/templates').then((res: any) => setTemplates(res.data?.items || []));
-    apiClient.get('/users?role=administrator&role=auditor').then((res: any) => setAuditors(res.data?.items || []));
+    apiClient.get('/lookup/personnel').then((res: any) => setAuditors(res.data || []));
+    apiClient.get('/lookup/departments').then((res: any) => setDepartments(res.data || []));
     setCreateVisible(true);
   };
 
@@ -205,7 +207,20 @@ const handleDelete = async (id: string) => {
           </Form.Item>
           <Form.Item name="reviewerId" label="审计员" rules={[{ required: true, message: '请选择审计员' }]}>
             <Select placeholder="选择负责此任务的审计员" size="large"
-              options={auditors.map((u: any) => ({ value: u.id, label: u.username + (u.department ? '（' + u.department + '）' : '') }))} />
+              options={auditors.map((u: any) => ({
+                value: u.userId,
+                label: `${u.displayName || u.username}${u.primaryDepartmentName ? `（${u.primaryDepartmentName}）` : ''}`,
+              }))} />
+          </Form.Item>
+          <Form.Item name="departmentId" label="任务归属部门" rules={[{ required: true, message: '请选择归属部门' }]}>
+            <Select
+              placeholder="选择稳定归属部门"
+              size="large"
+              options={departments.map((department: any) => ({
+                value: department.id,
+                label: `${department.name} (${department.code})`,
+              }))}
+            />
           </Form.Item>
           <Form.Item name="templateId" label="合规模板" rules={[{ required: true, message: '请选择合规模板' }]}>
             <Select placeholder="选择审计问卷" size="large"

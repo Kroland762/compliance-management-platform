@@ -1,236 +1,346 @@
-import { useState, useEffect, useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { Table, Button, Modal, Form, Input, Select, Space, message, Popconfirm, Typography, Card, Tag, Breadcrumb } from 'antd';
-import { PlusOutlined, StopOutlined, CheckCircleOutlined, EditOutlined, SearchOutlined, SafetyOutlined, HomeOutlined } from '@ant-design/icons';
+import { useEffect, useState } from 'react';
+import {
+  App,
+  Button,
+  Form,
+  Input,
+  Modal,
+  Select,
+  Space,
+  Table,
+  Tag,
+  Typography,
+} from 'antd';
+import { EditOutlined, LinkOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons';
 import apiClient from '../../api/client';
 import { getApiErrorMessage } from '../../utils/error';
 import { useAuthStore } from '../../store/auth';
+import { buildDepartmentAssignments } from '../../utils/membership';
 
-const { Title, Text } = Typography;
+const { Text, Paragraph } = Typography;
 
-interface Role {
+interface RoleOption {
   id: string;
   name: string;
-  isSystem: boolean;
+}
+
+interface DepartmentOption {
+  id: string;
+  name: string;
+  code: string;
+  children?: DepartmentOption[];
+}
+
+function flatten(items: DepartmentOption[], prefix = ''): Array<{ value: string; label: string }> {
+  return items.flatMap((item) => {
+    const label = `${prefix}${item.name} (${item.code})`;
+    return [{ value: item.id, label }, ...flatten(item.children || [], `${prefix}— `)];
+  });
 }
 
 export default function UserManagement() {
-  const [searchParams] = useSearchParams();
-  const urlTenantId = searchParams.get('tenantId') || '';
-  const urlTenantName = searchParams.get('tenantName') || '';
-
-  const [users, setUsers] = useState<any[]>([]);
-  const [roles, setRoles] = useState<Role[]>([]);
+  const { message } = App.useApp();
+  const canCreate = useAuthStore((state) => state.hasPermission('users', 'create'));
+  const canUpdate = useAuthStore((state) => state.hasPermission('users', 'update'));
+  const canOrganization = useAuthStore((state) => state.hasPermission('organization', 'update'));
+  const selectedTenant = useAuthStore((state) => state.selectedTenant);
+  const [members, setMembers] = useState<any[]>([]);
+  const [roles, setRoles] = useState<RoleOption[]>([]);
+  const [departmentOptions, setDepartmentOptions] = useState<Array<{ value: string; label: string }>>([]);
   const [loading, setLoading] = useState(false);
-  const [modalVisible, setModalVisible] = useState(false);
-  const [editVisible, setEditVisible] = useState(false);
-  const [editingUser, setEditingUser] = useState<any>(null);
+  const [keyword, setKeyword] = useState('');
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<any | null>(null);
+  const [temporaryPassword, setTemporaryPassword] = useState('');
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [invitationLink, setInvitationLink] = useState('');
   const [form] = Form.useForm();
-  const [editForm] = Form.useForm();
-  const [filters, setFilters] = useState({ roleId: '', status: '', keyword: '' });
-  const canManage = useAuthStore(s => s.hasPermission('users', 'create'));
-  const currentTenantId = useAuthStore(s => s.user?.tenantId);
+  const [inviteForm] = Form.useForm();
+  const selectedDepartmentIds: string[] = Form.useWatch('departmentIds', form) || [];
+  const invitedDepartmentIds: string[] = Form.useWatch('departmentIds', inviteForm) || [];
 
-  const fetchRoles = async () => {
-    try {
-      const res: any = await apiClient.get('/roles');
-      setRoles(res.data?.items || []);
-    } catch {}
+  const loadOptions = async () => {
+    const [roleResponse, departmentResponse]: any[] = await Promise.all([
+      apiClient.get('/roles?page=1&pageSize=100'),
+      apiClient.get('/departments'),
+    ]);
+    setRoles(roleResponse.data?.items || []);
+    setDepartmentOptions(flatten(departmentResponse.data || []));
   };
 
-  const fetchUsers = async () => {
+  const loadMembers = async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      // URL tenant param (super admin viewing a specific tenant)
-      if (urlTenantId) params.set('tenantId', urlTenantId);
-      if (filters.roleId) params.set('roleId', filters.roleId);
-      if (filters.status) params.set('isActive', filters.status === 'active' ? 'true' : 'false');
-      if (filters.keyword) params.set('keyword', filters.keyword);
-      const qs = params.toString();
-      const res: any = await apiClient.get(`/users${qs ? '?' + qs : ''}`);
-      setUsers(res.data?.items || []);
-    } finally { setLoading(false); }
-  };
-
-  const tenantLabel = useMemo(() => {
-    if (urlTenantName) return urlTenantName;
-    if (currentTenantId) return '本租户';
-    return null;
-  }, [urlTenantName, currentTenantId]);
-
-  useEffect(() => { fetchRoles(); }, []);
-  useEffect(() => { fetchUsers(); }, [filters, urlTenantId]);
-
-  const handleCreate = async (values: any) => {
-    try {
-      await apiClient.post('/users', values);
-      message.success('用户创建成功');
-      setModalVisible(false);
-      form.resetFields();
-      fetchUsers();
-    } catch (err: any) {
-      message.error(getApiErrorMessage(err, '创建失败'));
+      const [response, invitationResponse]: any[] = await Promise.all([
+        apiClient.get('/members', {
+          params: { page: 1, pageSize: 100, keyword: keyword || undefined },
+        }),
+        apiClient.get('/members/invitations'),
+      ]);
+      const invitations = (invitationResponse.data?.items || [])
+        .filter((invitation: any) => !keyword || invitation.targetUsername?.includes(keyword))
+        .map((invitation: any) => ({
+          id: `invitation-${invitation.id}`,
+          username: invitation.targetUsername,
+          displayName: '待接受邀请',
+          email: invitation.targetEmail,
+          status: 'invited',
+          invitationStatus: `有效至 ${new Date(invitation.expiresAt).toLocaleString('zh-CN')}`,
+          roleIds: invitation.roleIds,
+          departments: invitation.departments,
+        }));
+      setMembers([...(response.data?.items || []), ...invitations]);
+    } catch (error) {
+      message.error(getApiErrorMessage(error, '成员列表加载失败'));
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleEdit = (record: any) => {
-    setEditingUser(record);
-    editForm.setFieldsValue({ department: record.department, email: record.email, roleId: record.roleId });
-    setEditVisible(true);
+  useEffect(() => {
+    loadOptions().catch((error) => message.error(getApiErrorMessage(error, '角色或部门加载失败')));
+  }, []);
+  useEffect(() => { loadMembers(); }, [keyword]);
+
+  const openCreate = () => {
+    setEditing(null);
+    form.resetFields();
+    form.setFieldsValue({ status: 'active', roleIds: [], departmentIds: [] });
+    setModalOpen(true);
   };
 
-  const handleUpdate = async (values: any) => {
+  const openEdit = (member: any) => {
+    setEditing(member);
+    const primary = member.departments?.find((item: any) => item.isPrimary);
+    form.setFieldsValue({
+      displayName: member.displayName,
+      email: member.email,
+      employeeNo: member.employeeNo,
+      status: member.status,
+      roleIds: member.roles?.map((item: any) => item.id) || [],
+      departmentIds: member.departments?.map((item: any) => item.id) || [],
+      primaryDepartmentId: primary?.id,
+    });
+    setModalOpen(true);
+  };
+
+  const save = async (values: any) => {
     try {
-      await apiClient.put(`/users/${editingUser.id}`, values);
-      message.success('用户信息已更新');
-      setEditVisible(false);
-      setEditingUser(null);
-      fetchUsers();
-    } catch (err: any) {
-      message.error(getApiErrorMessage(err, '更新失败'));
+      const departments = buildDepartmentAssignments(values.departmentIds, values.primaryDepartmentId);
+      if (!editing) {
+        const response: any = await apiClient.post('/members', {
+          username: values.username,
+          displayName: values.displayName,
+          email: values.email || null,
+          employeeNo: values.employeeNo || null,
+          roleIds: values.roleIds,
+          departments,
+        });
+        setTemporaryPassword(response.data.temporaryPassword);
+      } else {
+        await apiClient.put(`/members/${editing.id}`, {
+          displayName: values.displayName,
+          email: values.email || null,
+          employeeNo: values.employeeNo || null,
+          status: values.status,
+        });
+        await apiClient.put(`/members/${editing.id}/roles`, { roleIds: values.roleIds });
+        if (canOrganization) {
+          await apiClient.put(`/members/${editing.id}/departments`, { departments });
+        }
+        message.success('成员资料已更新');
+      }
+      setModalOpen(false);
+      await loadMembers();
+    } catch (error) {
+      message.error(getApiErrorMessage(error, editing ? '更新失败' : '创建失败'));
     }
   };
 
-  const handleDisable = async (id: string) => {
+  const createInvitation = async (values: any) => {
     try {
-      await apiClient.delete(`/users/${id}`);
-      message.success('用户已禁用');
-      fetchUsers();
-    } catch (err: any) {
-      message.error(getApiErrorMessage(err, '操作失败'));
-    }
-  };
-
-  const handleEnable = async (id: string) => {
-    try {
-      await apiClient.put(`/users/${id}`, { isActive: true });
-      message.success('用户已启用');
-      fetchUsers();
-    } catch (err: any) {
-      message.error(getApiErrorMessage(err, '操作失败'));
+      const departments = buildDepartmentAssignments(values.departmentIds, values.primaryDepartmentId);
+      const response: any = await apiClient.post('/members/invitations', {
+        targetUsername: values.targetUsername,
+        roleIds: values.roleIds,
+        departments,
+      });
+      const token = response.data.token;
+      const tenantId = selectedTenant?.id || '';
+      setInvitationLink(`${window.location.origin}/accept-invitation?tenantId=${encodeURIComponent(tenantId)}&token=${encodeURIComponent(token)}`);
+      setInviteOpen(false);
+      inviteForm.resetFields();
+    } catch (error) {
+      message.error(getApiErrorMessage(error, '邀请创建失败'));
     }
   };
 
   const columns = [
     { title: '用户名', dataIndex: 'username' },
-    { title: '部门', dataIndex: 'department' },
-    { title: '邮箱', dataIndex: 'email', render: (v: string) => v || '-' },
-    { title: '角色', dataIndex: 'roleName', render: (v: string) => v || '-' },
-    { title: '状态', dataIndex: 'isActive', render: (v: boolean) => v ? '启用' : '禁用' },
-    { title: '创建时间', dataIndex: 'createdAt', render: (v: string) => v ? new Date(v).toLocaleString('zh-CN') : '-' },
-    { title: '最后登录', dataIndex: 'lastLogin', render: (v: string) => v ? new Date(v).toLocaleString() : '-' },
-    ...(canManage ? [{
-      title: '操作', render: (_: any, record: any) => (
-        <Space>
-          <Button size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
-          {record.isActive ? (
-            <Popconfirm title="确定禁用该用户？" okText="确认" cancelText="取消" onConfirm={() => handleDisable(record.id)}>
-              <Button size="small" danger icon={<StopOutlined />}>禁用</Button>
-            </Popconfirm>
-          ) : (
-            <Popconfirm title="确定启用该用户？" okText="确认" cancelText="取消" onConfirm={() => handleEnable(record.id)}>
-              <Button size="small" type="primary" icon={<CheckCircleOutlined />}>启用</Button>
-            </Popconfirm>
-          )}
+    { title: '姓名', dataIndex: 'displayName' },
+    {
+      title: '部门',
+      render: (_: unknown, member: any) => (
+        <Space wrap size={4}>
+          {(member.departments || []).map((department: any) => (
+            <Tag key={department.id || department.departmentId} color={department.isPrimary ? 'blue' : 'default'}>
+              {department.name
+                || departmentOptions.find((item) => item.value === department.departmentId)?.label
+                || department.departmentId}
+              {department.isPrimary ? ' · 主' : ' · 兼职'}
+            </Tag>
+          ))}
         </Space>
+      ),
+    },
+    {
+      title: '角色',
+      render: (_: unknown, member: any) => (
+        <Space wrap size={4}>
+          {(member.roles || []).map((role: any) => <Tag key={role.id}>{role.name}</Tag>)}
+          {(member.roleIds || []).map((roleId: string) => (
+            <Tag key={roleId}>{roles.find((role) => role.id === roleId)?.name || roleId}</Tag>
+          ))}
+        </Space>
+      ),
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      render: (status: string) => <Tag color={status === 'active' ? 'green' : 'default'}>{status}</Tag>,
+    },
+    {
+      title: '邀请状态',
+      render: (_: unknown, member: any) => (
+        <Text type={member.status === 'invited' ? 'warning' : 'secondary'}>
+          {member.invitationStatus || '已加入'}
+        </Text>
+      ),
+    },
+    {
+      title: '最后登录',
+      dataIndex: 'lastLogin',
+      render: (value: string | null) => value ? new Date(value).toLocaleString('zh-CN') : '-',
+    },
+    ...(canUpdate ? [{
+      title: '操作',
+      render: (_: unknown, member: any) => (
+        member.status === 'invited'
+          ? <Text type="secondary">等待接受</Text>
+          : <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(member)}>编辑</Button>
       ),
     }] : []),
   ];
 
   return (
     <div>
-      {tenantLabel && (
-        <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Tag icon={<HomeOutlined />} color="blue" style={{ fontSize: 14, padding: '4px 12px' }}>
-            {tenantLabel}
-          </Tag>
-        </div>
-      )}
-      <div className="filter-toolbar">
-        <div className="filter-toolbar-content">
-          <Input
-            placeholder="搜索用户名"
-            prefix={<SearchOutlined style={{ color: '#AEAEB2' }} />}
-            value={filters.keyword}
-            onChange={e => setFilters(f => ({ ...f, keyword: e.target.value }))}
-            allowClear
-            style={{ width: 200 }}
-          />
-          <Select
-            placeholder="角色"
-            value={filters.roleId || undefined}
-            onChange={v => setFilters(f => ({ ...f, roleId: v || '' }))}
-            allowClear
-            style={{ width: 140 }}
-            options={roles.map(r => ({ value: r.id, label: r.name }))}
-          />
-          <Select
-            placeholder="状态"
-            value={filters.status || undefined}
-            onChange={v => setFilters(f => ({ ...f, status: v || '' }))}
-            allowClear
-            style={{ width: 100 }}
-            options={[
-              { value: 'active', label: '启用' },
-              { value: 'inactive', label: '禁用' },
-            ]}
-          />
-          {canManage && (
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalVisible(true)}>创建用户</Button>
-          )}
-        </div>
-      </div>
-      <Table columns={columns} dataSource={users} rowKey="id" loading={loading} size="small" />
+      <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 16 }}>
+        <Input
+          allowClear
+          prefix={<SearchOutlined />}
+          placeholder="搜索成员姓名"
+          value={keyword}
+          onChange={(event) => setKeyword(event.target.value)}
+          style={{ width: 260 }}
+        />
+        {canCreate && (
+          <Space>
+            <Button icon={<LinkOutlined />} onClick={() => setInviteOpen(true)}>邀请已有身份</Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建本地成员</Button>
+          </Space>
+        )}
+      </Space>
+      <Table rowKey="id" size="small" columns={columns} dataSource={members} loading={loading} />
 
-      {/* 创建用户 */}
-      <Modal title="创建用户" open={modalVisible} onCancel={() => setModalVisible(false)} onOk={() => form.submit()}>
-        <Form form={form} layout="vertical" onFinish={handleCreate}>
-          <Form.Item name="username" label="用户名" rules={[{ required: true, message: '请输入用户名' }]}>
-            <Input />
+      <Modal
+        title={editing ? `编辑成员 · ${editing.username}` : '新建本地成员'}
+        open={modalOpen}
+        onCancel={() => setModalOpen(false)}
+        onOk={() => form.submit()}
+        width={640}
+      >
+        <Form form={form} layout="vertical" onFinish={save}>
+          {!editing && (
+            <Form.Item name="username" label="登录用户名" rules={[{ required: true }, { min: 3 }]}>
+              <Input autoComplete="off" />
+            </Form.Item>
+          )}
+          <Space align="start" style={{ width: '100%' }} size={16}>
+            <Form.Item name="displayName" label="姓名" rules={[{ required: true }]} style={{ flex: 1 }}>
+              <Input />
+            </Form.Item>
+            <Form.Item name="employeeNo" label="工号" style={{ flex: 1 }}><Input /></Form.Item>
+          </Space>
+          <Form.Item name="email" label="邮箱"><Input /></Form.Item>
+          {editing && (
+            <Form.Item name="status" label="成员状态" rules={[{ required: true }]}>
+              <Select options={[
+                { value: 'active', label: '有效' },
+                { value: 'suspended', label: '停用' },
+                { value: 'left', label: '离职' },
+              ]} />
+            </Form.Item>
+          )}
+          <Form.Item name="roleIds" label="多角色" rules={[{ required: true, type: 'array', min: 1 }]}>
+            <Select mode="multiple" options={roles.map((role) => ({ value: role.id, label: role.name }))} />
           </Form.Item>
-          <Form.Item name="password" label="密码" rules={[
-            { required: true, message: '请输入密码' },
-            { min: 8, message: '密码长度不能少于 8 位' },
-            { pattern: /[a-z]/, message: '必须包含小写字母' },
-            { pattern: /[A-Z]/, message: '必须包含大写字母' },
-            { pattern: /[0-9]/, message: '必须包含数字' },
-            { pattern: /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?`~]/, message: '必须包含特殊字符' },
-          ]}>
-            <Input.Password />
+          <Form.Item name="departmentIds" label="主/兼职部门" rules={[{ required: true, type: 'array', min: 1 }]}>
+            <Select mode="multiple" options={departmentOptions} disabled={editing && !canOrganization} />
           </Form.Item>
-          <Card size="small" style={{ marginBottom: 16, background: '#F9F9FB', borderRadius: 10, border: 'none' }}>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              <SafetyOutlined style={{ marginRight: 4 }} />
-              密码要求：8位以上，含大写字母、小写字母、数字和特殊字符
-            </Text>
-          </Card>
-          <Form.Item name="email" label="邮箱">
-            <Input />
-          </Form.Item>
-          <Form.Item name="department" label="部门">
-            <Input />
-          </Form.Item>
-          <Form.Item name="roleId" label="角色" rules={[{ required: true, message: '请选择角色' }]}>
-            <Select options={roles.map(r => ({ value: r.id, label: r.name }))} />
+          <Form.Item name="primaryDepartmentId" label="主部门" rules={[{ required: true }]}>
+            <Select
+              options={departmentOptions.filter((item) => selectedDepartmentIds.includes(item.value))}
+              disabled={editing && !canOrganization}
+            />
           </Form.Item>
         </Form>
       </Modal>
 
-      {/* 编辑用户 */}
-      <Modal title={`编辑用户 - ${editingUser?.username || ''}`} open={editVisible}
-        onCancel={() => { setEditVisible(false); setEditingUser(null); }} onOk={() => editForm.submit()}>
-        <Form form={editForm} layout="vertical" onFinish={handleUpdate}>
-          <Form.Item name="department" label="部门">
-            <Input />
+      <Modal
+        title="邀请已有登录身份加入租户"
+        open={inviteOpen}
+        onCancel={() => setInviteOpen(false)}
+        onOk={() => inviteForm.submit()}
+      >
+        <Form form={inviteForm} layout="vertical" onFinish={createInvitation}>
+          <Form.Item name="targetUsername" label="已有用户名" rules={[{ required: true }]}>
+            <Input placeholder="输入对方现有登录用户名" />
           </Form.Item>
-          <Form.Item name="email" label="邮箱">
-            <Input />
+          <Form.Item name="roleIds" label="租户角色" rules={[{ required: true, type: 'array', min: 1 }]}>
+            <Select mode="multiple" options={roles.map((role) => ({ value: role.id, label: role.name }))} />
           </Form.Item>
-          <Form.Item name="roleId" label="角色" rules={[{ required: true, message: '请选择角色' }]}>
-            <Select options={roles.map(r => ({ value: r.id, label: r.name }))} />
+          <Form.Item name="departmentIds" label="主/兼职部门" rules={[{ required: true, type: 'array', min: 1 }]}>
+            <Select mode="multiple" options={departmentOptions} />
+          </Form.Item>
+          <Form.Item name="primaryDepartmentId" label="主部门" rules={[{ required: true }]}>
+            <Select options={departmentOptions.filter((item) => invitedDepartmentIds.includes(item.value))} />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title="一次性临时密码"
+        open={Boolean(temporaryPassword)}
+        closable={false}
+        maskClosable={false}
+        okText="我已安全保存"
+        cancelButtonProps={{ style: { display: 'none' } }}
+        onOk={() => setTemporaryPassword('')}
+      >
+        <Paragraph type="warning">关闭后无法再次查看。成员首次登录必须修改密码。</Paragraph>
+        <Input.TextArea value={temporaryPassword} readOnly autoSize />
+      </Modal>
+      <Modal
+        title="一次性邀请链接"
+        open={Boolean(invitationLink)}
+        closable={false}
+        maskClosable={false}
+        okText="我已安全发送"
+        cancelButtonProps={{ style: { display: 'none' } }}
+        onOk={() => setInvitationLink('')}
+      >
+        <Paragraph type="warning">链接只显示一次、72 小时内有效且接受后不可重放。</Paragraph>
+        <Input.TextArea value={invitationLink} readOnly autoSize />
       </Modal>
     </div>
   );

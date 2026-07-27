@@ -44,6 +44,8 @@ export default function QualificationLedger() {
   const [pageSize, setPageSize] = useState(20);
   const [total, setTotal] = useState(0);
   const [stats, setStats] = useState({ total: 0, valid: 0, expiring: 0, expired: 0, missing: 0 });
+  const [departments, setDepartments] = useState<any[]>([]);
+  const [personnel, setPersonnel] = useState<any[]>([]);
   const [form] = Form.useForm();
 
   const fetchData = async () => {
@@ -67,6 +69,14 @@ export default function QualificationLedger() {
   };
 
   useEffect(() => { fetchData(); }, [filters, page, pageSize]);
+  useEffect(() => {
+    Promise.all([apiClient.get('/lookup/departments'), apiClient.get('/lookup/personnel')])
+      .then(([departmentResponse, personnelResponse]: any[]) => {
+        setDepartments(departmentResponse.data || []);
+        setPersonnel(personnelResponse.data || []);
+      })
+      .catch(() => message.error('部门或负责人选项加载失败'));
+  }, []);
 
   const openCreate = () => {
     setEditing(null);
@@ -128,8 +138,18 @@ export default function QualificationLedger() {
     { title: '证书编号', dataIndex: 'certificateNo', width: 140, render: (v: string) => v || '-' },
     { title: '签发机构', dataIndex: 'issuer', width: 160, render: (v: string) => v || '-' },
     { title: '所属公司', dataIndex: 'ownerCompany', width: 140, render: (v: string) => v || '-' },
-    { title: '所属部门', dataIndex: 'ownerDepartment', width: 120, render: (v: string) => v || '-' },
-    { title: '负责人', dataIndex: 'responsiblePerson', width: 100, render: (v: string) => v || '-' },
+    {
+      title: '所属部门',
+      dataIndex: 'ownerDepartmentId',
+      width: 120,
+      render: (value: string) => departments.find((item) => item.id === value)?.name || '-',
+    },
+    {
+      title: '负责人',
+      dataIndex: 'responsibleUserId',
+      width: 100,
+      render: (value: string) => personnel.find((item) => item.userId === value)?.displayName || '-',
+    },
     { title: '签发日期', dataIndex: 'issueDate', width: 110, render: (v: string) => v || '-' },
     { title: '有效期至', dataIndex: 'expiryDate', width: 110, render: (v: string) => v || '-' },
     { title: '附件', dataIndex: 'attachmentUrl', width: 90, render: (v: string) => v ? <a href={v} target="_blank" rel="noreferrer">查看</a> : '-' },
@@ -246,11 +266,26 @@ export default function QualificationLedger() {
             <Form.Item name="ownerCompany" label="所属公司">
               <Input placeholder="例如：集团总部/子公司名称" />
             </Form.Item>
-            <Form.Item name="ownerDepartment" label="所属部门">
-              <Input placeholder="例如：信息安全部" />
+            <Form.Item name="ownerDepartmentId" label="归属部门" rules={[{ required: true, message: '请选择归属部门' }]}>
+              <Select
+                showSearch
+                optionFilterProp="label"
+                options={departments.map((department) => ({
+                  value: department.id,
+                  label: `${department.name} (${department.code})`,
+                }))}
+              />
             </Form.Item>
-            <Form.Item name="responsiblePerson" label="负责人">
-              <Input placeholder="资质维护责任人" />
+            <Form.Item name="responsibleUserId" label="负责人">
+              <Select
+                allowClear
+                showSearch
+                optionFilterProp="label"
+                options={personnel.map((member) => ({
+                  value: member.userId,
+                  label: `${member.displayName || member.username} (${member.primaryDepartmentName || '-'})`,
+                }))}
+              />
             </Form.Item>
             <Form.Item name="issueDate" label="签发日期">
               <DatePicker style={{ width: '100%' }} />

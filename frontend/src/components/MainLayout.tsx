@@ -26,7 +26,9 @@ export default function MainLayout() {
   const logout = useAuthStore((s) => s.logout);
   const can = useAuthStore((s) => s.hasPermission);
   const selectedTenant = useAuthStore((s) => s.selectedTenant);
-  const selectTenant = useAuthStore((s) => s.selectTenant);
+  const contexts = useAuthStore((s) => s.contexts);
+  const selectContext = useAuthStore((s) => s.selectContext);
+  const clearContext = useAuthStore((s) => s.clearContext);
   useIdleTimeout();
   const [collapsed, setCollapsed] = useState(false);
   const [activeNav, setActiveNav] = useState<'compliance' | 'account-audit' | 'system'>('compliance');
@@ -35,27 +37,27 @@ export default function MainLayout() {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [profileOpen, setProfileOpen] = useState(false);
   const [isCompact, setIsCompact] = useState(false);
-  const [tenantOptions, setTenantOptions] = useState<Array<{ label: string; value: string }>>([]);
-
-  useEffect(() => {
-    if (user?.tenantId || !can('tenants', 'read')) return;
-    apiClient.get('/tenants?page=1&pageSize=100')
-      .then((res: any) => setTenantOptions(
-        (res.data?.items || []).filter((tenant: any) => tenant.status === 'active')
-          .map((tenant: any) => ({ label: tenant.name, value: tenant.id })),
-      ))
-      .catch(() => message.error('租户列表加载失败'));
-  }, [user?.tenantId]);
+  const tenantOptions = [
+    ...(user?.isGlobalAdmin ? [{ label: '控制面（不读取业务数据）', value: '__control__' }] : []),
+    ...contexts.map((tenant) => ({ label: tenant.name, value: tenant.id })),
+  ];
 
   const handleTenantChange = async (tenantId: string) => {
+    if (tenantId === '__control__') {
+      try {
+        await clearContext();
+        navigate('/tenants');
+      } catch {
+        message.error('退出租户上下文失败');
+      }
+      return;
+    }
     const option = tenantOptions.find((item) => item.value === tenantId);
     if (!option) return;
     try {
-      await apiClient.post(`/tenants/${tenantId}/context`);
-      selectTenant({ id: tenantId, name: option.label });
+      await selectContext(tenantId);
       navigate('/dashboard');
     } catch {
-      selectTenant(null);
       message.error('租户上下文切换失败');
     }
   };
@@ -156,7 +158,7 @@ export default function MainLayout() {
       { key: '/roles', icon: <SafetyCertificateOutlined />, label: '角色管理' },
     ] : []),
     ...(can('users', 'read') ? [
-      { key: '/users', icon: <UserOutlined />, label: '用户管理' },
+      { key: '/users', icon: <UserOutlined />, label: '成员管理' },
     ] : []),
     ...(can('organization', 'read') ? [
       { key: '/organization', icon: <ApartmentOutlined />, label: '组织管理' },
@@ -255,11 +257,11 @@ export default function MainLayout() {
               onClick={() => { setActiveNav('system'); navigate(firstSystemPath); }}>系统设置</button>
           </nav>
           <Space size={16} className="app-topbar-actions">
-            {!user?.tenantId && can('tenants', 'read') && (
+            {tenantOptions.length > 1 && (
               <Select
                 aria-label="选择租户"
                 placeholder="选择租户"
-                value={selectedTenant?.id}
+                value={selectedTenant?.id || (user?.isGlobalAdmin ? '__control__' : undefined)}
                 options={tenantOptions}
                 onChange={handleTenantChange}
                 style={{ width: 160 }}

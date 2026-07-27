@@ -22,7 +22,14 @@ const clearAuthState = () => {
   sessionStorage.removeItem('selectedTenant');
   try {
     const setState = (window as any).__authSetState;
-    if (setState) setState({ token: null, user: null, isAuthenticated: false, refreshPending: null });
+    if (setState) setState({
+      token: null,
+      user: null,
+      contexts: [],
+      selectedTenant: null,
+      isAuthenticated: false,
+      refreshPending: null,
+    });
   } catch {}
 };
 
@@ -86,11 +93,14 @@ apiClient.interceptors.response.use(
     }
 
     const code = error.response?.data?.error?.code;
-    if (['TENANT_INACTIVE', 'TENANT_NOT_FOUND'].includes(code)) {
+    if (code === 'PASSWORD_CHANGE_REQUIRED') {
+      if (window.location.pathname !== '/change-password') window.location.replace('/change-password');
+    }
+    if (['TENANT_INACTIVE', 'TENANT_NOT_FOUND', 'MEMBERSHIP_INACTIVE'].includes(code)) {
       sessionStorage.removeItem('selectedTenant');
       const setState = (window as any).__authSetState;
       if (setState) setState({ selectedTenant: null });
-      if (window.location.pathname !== '/tenants') window.location.replace('/tenants');
+      if (window.location.pathname !== '/tenant-select') window.location.replace('/tenant-select');
     }
     return Promise.reject(error.response?.data || error);
   },

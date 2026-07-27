@@ -5,6 +5,9 @@ import { useAuthStore } from './store/auth';
 import PrivateRoute from './components/PrivateRoute';
 import MainLayout from './components/MainLayout';
 import Login from './views/Login';
+import TenantSelection from './views/TenantSelection';
+import ChangePassword from './views/ChangePassword';
+import InvitationAcceptance from './views/InvitationAcceptance';
 
 const Dashboard = lazy(() => import('./views/Dashboard'));
 const TemplateManagement = lazy(() => import('./views/admin/TemplateManagement'));
@@ -51,6 +54,9 @@ function App() {
     <Suspense fallback={routeFallback}>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/tenant-select" element={<TenantSelection />} />
+        <Route path="/change-password" element={<ChangePassword />} />
+        <Route path="/accept-invitation" element={<InvitationAcceptance />} />
         <Route path="/" element={<PrivateRoute><MainLayout /></PrivateRoute>}>
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<Dashboard />} />
