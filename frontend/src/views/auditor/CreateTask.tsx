@@ -47,7 +47,7 @@ export default function CreateTask() {
           <Form.Item name="assessmentTarget" label="评估对象" rules={[{ required: true, message: '请输入评估对象' }]}>
             <Input placeholder="例如：核心业务系统、财务管理系统" size="large" />
           </Form.Item>
-          <Form.Item name="templateId" label="问卷模版" rules={[{ required: true, message: '请选择问卷模版' }]}>
+          <Form.Item name="templateId" label="合规模板" rules={[{ required: true, message: '请选择合规模板' }]}>
             <Select placeholder="选择审计问卷" size="large"
               options={templates.map((t: any) => ({ value: t.id, label: `${t.name}（${t.questionCount}题）` }))} />
           </Form.Item>

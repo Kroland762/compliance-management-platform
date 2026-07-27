@@ -21,7 +21,22 @@ export const config = {
     dir: process.env.UPLOAD_DIR || 'uploads',
     maxFileSize: parseInt(process.env.MAX_FILE_SIZE || '52428800', 10),
   },
+  storage: {
+    driver: process.env.FILE_STORAGE_DRIVER || 'local',
+    s3: {
+      endpoint: process.env.S3_ENDPOINT || '',
+      region: process.env.S3_REGION || '',
+      bucket: process.env.S3_BUCKET || '',
+      accessKeyId: process.env.S3_ACCESS_KEY_ID || '',
+      secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || '',
+      forcePathStyle: process.env.S3_FORCE_PATH_STYLE === 'true',
+    },
+  },
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
+  security: {
+    allowPrivateDataSourceHosts: process.env.ALLOW_PRIVATE_DATASOURCE_HOSTS === 'true',
+    scheduleTaskTimeoutMs: parseInt(process.env.SCHEDULE_TASK_TIMEOUT_MS || '600000', 10),
+  },
   smtp: {
     host: process.env.SMTP_HOST || '',
     port: parseInt(process.env.SMTP_PORT || '587', 10),

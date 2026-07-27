@@ -145,9 +145,7 @@ export default function TaskForm({ open, editingTask, onClose, onSuccess }: Prop
                     title={<Text strong>{ds.name}</Text>}
                     description={
                       <Space size={8}>
-                        <Tag color={ds.sourceType === 'DATABASE' ? 'blue' : 'purple'} style={{ borderRadius: 4 }}>
-                          {ds.sourceType === 'DATABASE' ? '数据库' : 'CSV'}
-                        </Tag>
+                        <Tag color="blue" style={{ borderRadius: 4 }}>PostgreSQL</Tag>
                         <Text type="secondary">{ds.totalAccounts?.toLocaleString() || 0} 个账户</Text>
                       </Space>
                     }

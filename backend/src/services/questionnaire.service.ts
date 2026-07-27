@@ -1,16 +1,17 @@
 import { QuestionItem, EvidenceFile, AuditTask, TaskStatus, AnswerStatus, AuditLog, OperationType } from '../models';
 import { encrypt, decrypt } from '../utils/crypto';
+import type { PermissionMatrix } from '../models/Role';
+import { validateEvidence } from './evidence-security.service';
+import { fileStorage } from './file-storage.service';
+import { AppError } from '../utils/http';
 
 class QuestionnaireService {
-  async getQuestions(taskId: string, userId?: string) {
+  async getQuestions(taskId: string, user?: { userId: string; permissions: PermissionMatrix }) {
     const where: any = { taskId };
-    // 如果传了 userId 且不是审计员/管理员，则按 assignedTo 过滤
-    if (userId) {
-      const { User } = await import('../models');
-      const user = await User.findByPk(userId);
-      if (user && user.role === 'user') {
-        where.assignedTo = userId;
-      }
+    const canReadAll = user?.permissions?.tasks?.some((action) => ['create', 'update', 'delete'].includes(action))
+      || (user?.permissions?.users?.includes('read') && user?.permissions?.tasks?.includes('read'));
+    if (user && !canReadAll) {
+      where.assignedTo = user.userId;
     }
     const items = await QuestionItem.findAll({
       where,
@@ -20,6 +21,9 @@ class QuestionnaireService {
     // Decrypt sensitive fields
     return items.map(item => {
       const json = item.toJSON() as any;
+      json.evidenceFiles = (json.evidenceFiles || [])
+        .filter((file: any) => file.status === 'active')
+        .map(({ filePath: _path, storedFilename: _stored, storageKey: _key, ...safe }: any) => safe);
       if (json.currentStatusDescription) {
         json.currentStatusDescription = decrypt(json.currentStatusDescription);
       }
@@ -77,34 +81,70 @@ class QuestionnaireService {
     return task;
   }
 
-  async uploadEvidence(questionItemId: string, file: Express.Multer.File, uploadedBy: string) {
+  async uploadEvidence(
+    questionItemId: string,
+    file: Express.Multer.File,
+    uploadedBy: string,
+    tenantId: string,
+    evidenceType: 'current' | 'historical',
+  ) {
     const item = await QuestionItem.findByPk(questionItemId);
     if (!item) throw new Error('问卷条目不存在');
     if (file.size > 52428800) throw new Error('文件大小不能超过50MB');
 
-    return EvidenceFile.create({
-      questionItemId, uploadedBy,
-      // 修复中文文件名乱码
-      originalFilename: Buffer.from(file.originalname, 'latin1').toString('utf8'),
-      storedFilename: file.filename,
-      filePath: file.path,
-      fileSize: file.size,
-      mimeType: file.mimetype,
-    } as any);
+    const validated = validateEvidence(file, tenantId);
+    await fileStorage.put(validated.storageKey, file.buffer);
+    try {
+      const evidence = await EvidenceFile.create({
+        questionItemId,
+        uploadedBy,
+        originalFilename: validated.originalFilename,
+        storedFilename: null,
+        filePath: null,
+        storageKey: validated.storageKey,
+        sha256: validated.sha256,
+        status: 'active',
+        deletedAt: null,
+        evidenceType,
+        fileSize: file.size,
+        mimeType: file.mimetype,
+      });
+      const { filePath: _path, storedFilename: _stored, storageKey: _key, ...safe } = evidence.toJSON() as any;
+      return safe;
+    } catch (error) {
+      await fileStorage.delete(validated.storageKey);
+      throw error;
+    }
   }
 
-  async deleteEvidence(evidenceId: string) {
-    const evidence = await EvidenceFile.findByPk(evidenceId);
-    if (!evidence) throw new Error('证据文件不存在');
-    const fs = await import('fs');
-    fs.unlink(evidence.filePath, () => {});
-    await evidence.destroy();
+  async deleteEvidence(evidenceId: string, userId?: string) {
+    const evidence = await EvidenceFile.findOne({ where: { id: evidenceId, status: 'active' } });
+    if (!evidence) throw new AppError(404, 'NOT_FOUND', '证据文件不存在');
+    if (evidence.storageKey) await fileStorage.delete(evidence.storageKey);
+    await evidence.update({ status: 'deleted', deletedAt: new Date() });
+    if (userId) {
+      await AuditLog.create({
+        userId,
+        operationType: OperationType.DELETE,
+        resourceType: 'evidence',
+        resourceId: evidence.id,
+        operationDetails: '软删除证据文件',
+        success: true,
+      } as any);
+    }
   }
 
   async getHistoricalEvidence(questionItemId: string) {
     const item = await QuestionItem.findByPk(questionItemId);
-    if (!item || !item.historicalEvidencePath) return [];
-    return [{ path: item.historicalEvidencePath, name: '历史证据' }];
+    if (!item) return [];
+    const rows = await EvidenceFile.findAll({
+      where: { questionItemId, evidenceType: 'historical', status: 'active' },
+      order: [['uploadedAt', 'DESC']],
+    });
+    return rows.map((row) => {
+      const { filePath: _path, storedFilename: _stored, storageKey: _key, ...safe } = row.toJSON() as any;
+      return safe;
+    });
   }
 }
 

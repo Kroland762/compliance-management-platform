@@ -9,6 +9,7 @@ import {
   OperationType,
 } from '../models';
 import auditLogService from './audit-log.service';
+import { parsePagination, pagination } from '../utils/pagination';
 
 // CSV 行数据结构
 interface CsvRow {
@@ -117,7 +118,8 @@ class TemplateService {
     pageSize?: number;
     keyword?: string;
   }) {
-    const { page = 1, pageSize = 20, keyword } = query;
+    const { page, pageSize } = parsePagination(query);
+    const { keyword } = query;
     const where: any = {};
     if (keyword) {
       where.name = { [Op.iLike]: `%${keyword}%` };
@@ -139,7 +141,7 @@ class TemplateService {
         ...t.toJSON(),
         questionCount: (t as any).templateQuestions?.length ?? t.questionCount,
       })),
-      pagination: { page, pageSize, total: count, totalPages: Math.ceil(count / pageSize) },
+      pagination: pagination(page, pageSize, count),
     };
   }
 

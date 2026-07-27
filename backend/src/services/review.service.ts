@@ -10,6 +10,9 @@ class ReviewService {
     });
     return items.map(item => {
       const json = item.toJSON() as any;
+      json.evidenceFiles = (json.evidenceFiles || [])
+        .filter((file: any) => file.status === 'active')
+        .map(({ filePath: _path, storedFilename: _stored, storageKey: _key, ...safe }: any) => safe);
       if (json.currentStatusDescription) {
         json.currentStatusDescription = decrypt(json.currentStatusDescription);
       }

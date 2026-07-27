@@ -54,7 +54,7 @@ router.post('/', authorize('account_tasks', 'create'), async (req: Request, res:
  */
 router.put('/:id', authorize('account_tasks', 'update'), async (req: Request, res: Response) => {
   try {
-    const result = await auditTaskService.updateTask(req.params.id, req.body);
+    const result = await auditTaskService.updateTask(req.params.id, req.body, req.user!.userId);
     res.json({ success: true, data: result });
   } catch (error: any) {
     const status = error.message === '审计任务不存在' ? 404 : 400;
@@ -68,7 +68,7 @@ router.put('/:id', authorize('account_tasks', 'update'), async (req: Request, re
  */
 router.delete('/:id', authorize('account_tasks', 'delete'), async (req: Request, res: Response) => {
   try {
-    await auditTaskService.deleteTask(req.params.id);
+    await auditTaskService.deleteTask(req.params.id, req.user!.userId);
     res.json({ success: true, message: '审计任务已删除' });
   } catch (error: any) {
     const status = error.message === '审计任务不存在' ? 404 : 400;

@@ -1,73 +1,66 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
-import path from 'path';
 import { authenticate } from '../middlewares/auth';
 import questionnaireService from '../services/questionnaire.service';
 import { config } from '../config';
 import { AppError, asyncHandler } from '../utils/http';
+import objectAccessService from '../services/object-access.service';
+import { fileStorage } from '../services/file-storage.service';
+import auditLogService from '../services/audit-log.service';
+import { OperationType } from '../models';
+import { uploadOperations } from '../services/metrics.service';
 
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: path.resolve(config.upload.dir),
-    filename: (_req, file, cb) => {
-      // 修复中文文件名乱码：multer/busboy 用 latin1 编码非 ASCII 字符
-      const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
-      const unique = `${Date.now()}-${Math.random().toString(36).substring(7)}`;
-      cb(null, `${unique}-${originalName}`);
-    },
-  }),
+  storage: multer.memoryStorage(),
   limits: { fileSize: config.upload.maxFileSize },
 });
 
 const router = Router();
 router.use(authenticate);
 
-function canOperateQuestion(req: Request): boolean {
-  const taskPermissions = req.user?.permissions?.tasks || [];
-  return taskPermissions.includes('create') || taskPermissions.includes('return') || taskPermissions.includes('delete');
+async function auditUploadFailure(req: Request) {
+  uploadOperations.inc({ outcome: 'failure' });
+  if (!req.user) return;
+  await auditLogService.log({
+    userId: req.user.userId,
+    operationType: OperationType.CREATE,
+    resourceType: 'evidence',
+    resourceId: req.params.id || null,
+    operationDetails: '证据上传失败',
+    success: false,
+    tenantId: req.tenant?.id,
+  }).catch(() => undefined);
 }
 
-async function getQuestionItemOrThrow(id: string) {
-  const { QuestionItem } = await import('../models');
-  const item = await QuestionItem.findByPk(id);
-  if (!item) throw new AppError(404, 'NOT_FOUND', '问卷条目不存在');
-  return item;
+function evidenceUpload(req: Request, res: Response, next: NextFunction) {
+  upload.single('file')(req, res, (error: any) => {
+    if (!error) return next();
+    void auditUploadFailure(req).finally(() => next(error));
+  });
 }
 
 async function assertCanAccessQuestion(req: Request, questionItemId: string, operatorOnly = false) {
-  const item = await getQuestionItemOrThrow(questionItemId);
-  const isOperator = canOperateQuestion(req);
-  if (operatorOnly && !isOperator) {
-    throw new AppError(403, 'FORBIDDEN', '无权操作该问卷条目');
-  }
-  if (!isOperator && item.assignedTo !== req.user!.userId) {
-    throw new AppError(403, 'FORBIDDEN', '无权访问该问卷条目');
-  }
-  return item;
+  return objectAccessService.questionOrNotFound(questionItemId, req.user!, operatorOnly);
 }
 
 async function assertCanAccessEvidence(req: Request, evidenceId: string, write = false) {
   const { EvidenceFile } = await import('../models');
-  const evidence = await EvidenceFile.findByPk(evidenceId);
+  const evidence = await EvidenceFile.findOne({ where: { id: evidenceId, status: 'active' } });
   if (!evidence) throw new AppError(404, 'NOT_FOUND', '文件不存在');
 
-  const item = await assertCanAccessQuestion(req, evidence.questionItemId);
-  const isOperator = canOperateQuestion(req);
-  if (write && !isOperator && evidence.uploadedBy !== req.user!.userId) {
-    throw new AppError(403, 'FORBIDDEN', '无权操作该证据文件');
+  const item = await assertCanAccessQuestion(req, evidence.questionItemId, write);
+  if (write && evidence.uploadedBy !== req.user!.userId && !objectAccessService.canReadAllTasks(req.user!)) {
+    throw new AppError(404, 'NOT_FOUND', '文件不存在');
   }
   return { evidence, item };
 }
 
 // 获取任务的所有问题
-router.get('/tasks/:taskId/questions', async (req: Request, res: Response) => {
-  try {
-    const questions = await questionnaireService.getQuestions(req.params.taskId, req.user!.userId);
-    res.json({ success: true, data: { questions } });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: { code: 'QUERY_FAILED', message: error.message } });
-  }
-});
+router.get('/tasks/:taskId/questions', asyncHandler(async (req: Request, res: Response) => {
+  await objectAccessService.taskOrNotFound(req.params.taskId, req.user!);
+  const questions = await questionnaireService.getQuestions(req.params.taskId, req.user!);
+  res.json({ success: true, data: { questions } });
+}));
 
 // 保存问题答案
 router.put('/questions/:id/answer', asyncHandler(async (req: Request, res: Response) => {
@@ -83,16 +76,24 @@ router.put('/questions/:id/answer', asyncHandler(async (req: Request, res: Respo
 }));
 
 // 上传证据文件
-router.post('/questions/:id/evidence', upload.single('file'), asyncHandler(async (req: Request, res: Response) => {
+router.post('/questions/:id/evidence', evidenceUpload, asyncHandler(async (req: Request, res: Response) => {
   try {
     await assertCanAccessQuestion(req, req.params.id);
     if (!req.file) {
       res.status(400).json({ success: false, error: { code: 'NO_FILE', message: '请上传文件' } });
       return;
     }
-    const evidence = await questionnaireService.uploadEvidence(req.params.id, req.file, req.user!.userId);
+    const evidence = await questionnaireService.uploadEvidence(
+      req.params.id,
+      req.file,
+      req.user!.userId,
+      req.tenant!.id,
+      'current',
+    );
+    uploadOperations.inc({ outcome: 'success' });
     res.status(201).json({ success: true, data: evidence });
   } catch (error: any) {
+    await auditUploadFailure(req);
     if (error instanceof AppError) throw error;
     res.status(400).json({ success: false, error: { code: 'UPLOAD_FAILED', message: error.message } });
   }
@@ -102,7 +103,7 @@ router.post('/questions/:id/evidence', upload.single('file'), asyncHandler(async
 router.delete('/evidence/:id', asyncHandler(async (req: Request, res: Response) => {
   try {
     await assertCanAccessEvidence(req, req.params.id, true);
-    await questionnaireService.deleteEvidence(req.params.id);
+    await questionnaireService.deleteEvidence(req.params.id, req.user!.userId);
     res.json({ success: true, message: '证据已删除' });
   } catch (error: any) {
     if (error instanceof AppError) throw error;
@@ -114,7 +115,16 @@ router.delete('/evidence/:id', asyncHandler(async (req: Request, res: Response) 
 router.get('/evidence/:id/download', asyncHandler(async (req: Request, res: Response) => {
   try {
     const { evidence } = await assertCanAccessEvidence(req, req.params.id);
-    res.download(evidence.filePath, evidence.originalFilename);
+    if (!evidence.storageKey) throw new AppError(404, 'NOT_FOUND', '文件尚未迁移到安全存储');
+    await auditLogService.log({
+      userId: req.user!.userId,
+      operationType: OperationType.QUERY,
+      resourceType: 'evidence',
+      resourceId: evidence.id,
+      operationDetails: '下载证据文件',
+      success: true,
+    });
+    res.download(fileStorage.absolutePath(evidence.storageKey), evidence.originalFilename);
   } catch (error: any) {
     if (error instanceof AppError) throw error;
     res.status(500).json({ success: false, error: { code: 'DOWNLOAD_FAILED', message: error.message } });
@@ -134,20 +144,27 @@ router.get('/questions/:id/historical-evidence', asyncHandler(async (req: Reques
 }));
 
 // 上传历史证据文件（配置任务时使用）
-router.post('/questions/:id/historical-evidence', upload.single('file'), asyncHandler(async (req: Request, res: Response) => {
+router.post('/questions/:id/historical-evidence', evidenceUpload, asyncHandler(async (req: Request, res: Response) => {
   try {
     const item = await assertCanAccessQuestion(req, req.params.id, true);
     if (!req.file) {
       res.status(400).json({ success: false, error: { code: 'NO_FILE', message: '请上传文件' } });
       return;
     }
-    item.historicalEvidencePath = req.file.path;
-    await item.save();
+    const evidence = await questionnaireService.uploadEvidence(
+      item.id,
+      req.file,
+      req.user!.userId,
+      req.tenant!.id,
+      'historical',
+    );
+    uploadOperations.inc({ outcome: 'success' });
     res.status(201).json({
       success: true,
-      data: { path: req.file.path, filename: req.file.originalname, questionId: req.params.id },
+      data: evidence,
     });
   } catch (error: any) {
+    await auditUploadFailure(req);
     if (error instanceof AppError) throw error;
     res.status(400).json({ success: false, error: { code: 'UPLOAD_FAILED', message: error.message } });
   }
@@ -156,12 +173,13 @@ router.post('/questions/:id/historical-evidence', upload.single('file'), asyncHa
 // 删除历史证据
 router.delete('/questions/:id/historical-evidence', asyncHandler(async (req: Request, res: Response) => {
   try {
-    const fs = await import('fs');
     const item = await assertCanAccessQuestion(req, req.params.id, true);
-    if (item.historicalEvidencePath) {
-      fs.unlink(item.historicalEvidencePath, () => {});
-      item.historicalEvidencePath = null;
-      await item.save();
+    const { EvidenceFile } = await import('../models');
+    const evidence = await EvidenceFile.findOne({
+      where: { questionItemId: item.id, evidenceType: 'historical', status: 'active' },
+    });
+    if (evidence) {
+      await questionnaireService.deleteEvidence(evidence.id, req.user!.userId);
     }
     res.json({ success: true, message: '历史证据已删除' });
   } catch (error: any) {

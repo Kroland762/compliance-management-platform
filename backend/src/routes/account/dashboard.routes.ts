@@ -4,7 +4,7 @@ import dashboardService from '../../services/account/dashboard.service';
 
 const router = Router();
 router.use(authenticate);
-router.use(authorize('dashboard', 'read'));
+router.use(authorize('account_dashboard', 'read'));
 
 /**
  * GET /api/account/dashboard/overview

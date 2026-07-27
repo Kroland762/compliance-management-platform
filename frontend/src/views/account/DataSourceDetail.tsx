@@ -108,9 +108,7 @@ export default function DataSourceDetail() {
         <Descriptions bordered column={2} size="small" style={{ marginTop: 8 }}>
           <Descriptions.Item label="名称">{ds.name}</Descriptions.Item>
           <Descriptions.Item label="类型">
-            <Tag color={ds.sourceType === 'DATABASE' ? 'blue' : 'purple'}>
-              {ds.sourceType === 'DATABASE' ? '数据库' : 'CSV'}
-            </Tag>
+            <Tag color="blue">PostgreSQL</Tag>
           </Descriptions.Item>
           <Descriptions.Item label="状态">
             <Tag color={statusColors[ds.status]}>{statusLabels[ds.status] || ds.status}</Tag>

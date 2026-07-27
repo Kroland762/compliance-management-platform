@@ -207,7 +207,7 @@ const handleDelete = async (id: string) => {
             <Select placeholder="选择负责此任务的审计员" size="large"
               options={auditors.map((u: any) => ({ value: u.id, label: u.username + (u.department ? '（' + u.department + '）' : '') }))} />
           </Form.Item>
-          <Form.Item name="templateId" label="问卷模版" rules={[{ required: true, message: '请选择问卷模版' }]}>
+          <Form.Item name="templateId" label="合规模板" rules={[{ required: true, message: '请选择合规模板' }]}>
             <Select placeholder="选择审计问卷" size="large"
               options={templates.map((t: any) => ({ value: t.id, label: `${t.name}（${t.questionCount}题）` }))} />
           </Form.Item>

@@ -2,6 +2,7 @@ import { User, Role } from '../models/index';
 import { Op } from 'sequelize';
 import bcrypt from 'bcrypt';
 import { validatePassword } from '../utils/password';
+import { parsePagination, pagination } from '../utils/pagination';
 
 class UserService {
   async createUser(data: { username: string; password: string; department?: string; roleId: string }) {
@@ -29,7 +30,8 @@ class UserService {
   }
 
   async getUsers(query: { page?: number; pageSize?: number; roleId?: string; department?: string; isActive?: boolean; keyword?: string; tenantId?: string | null }) {
-    const { page = 1, pageSize = 999, roleId, department, isActive, keyword, tenantId } = query;
+    const { page, pageSize } = parsePagination(query);
+    const { roleId, department, isActive, keyword, tenantId } = query;
     const where: any = {};
     if (roleId) where.roleId = roleId;
     if (department) where.department = department;
@@ -61,7 +63,7 @@ class UserService {
 
     return {
       items,
-      pagination: { page, pageSize, total: count, totalPages: Math.ceil(count / pageSize) },
+      pagination: pagination(page, pageSize, count),
     };
   }
 

@@ -1,5 +1,6 @@
 import { RiskRecord, RiskLevel, RemediationStatus, RiskStatus, OperationType, AuditLog } from '../models';
 import { Op } from 'sequelize';
+import { parsePagination, pagination } from '../utils/pagination';
 
 interface CreateRiskInput {
   assessmentType: string;
@@ -15,14 +16,16 @@ class RiskService {
   async getRisks(query: {
     page?: number; pageSize?: number; riskLevel?: RiskLevel;
     remediationStatus?: RemediationStatus; riskStatus?: RiskStatus;
-    assessmentType?: string;
+    assessmentType?: string; taskIds?: string[] | null;
   }) {
-    const { page = 1, pageSize = 20, riskLevel, remediationStatus, riskStatus, assessmentType } = query;
+    const { page, pageSize } = parsePagination(query);
+    const { riskLevel, remediationStatus, riskStatus, assessmentType } = query;
     const where: any = {};
     if (riskLevel) where.riskLevel = riskLevel;
     if (remediationStatus) where.remediationStatus = remediationStatus;
     if (riskStatus) where.riskStatus = riskStatus;
     if (assessmentType) where.assessmentType = assessmentType;
+    if (query.taskIds) where.taskId = { [Op.in]: query.taskIds };
 
     const { count, rows } = await RiskRecord.findAndCountAll({
       where,
@@ -33,7 +36,7 @@ class RiskService {
 
     return {
       items: rows.map(r => r.toJSON()),
-      pagination: { page, pageSize, total: count, totalPages: Math.ceil(count / pageSize) },
+      pagination: pagination(page, pageSize, count),
     };
   }
 

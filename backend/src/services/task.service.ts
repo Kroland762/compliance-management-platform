@@ -8,9 +8,10 @@ import {
   TaskStatus,
   AnswerStatus,
   OperationType,
-  UserRole,
 } from '../models';
 import auditLogService from './audit-log.service';
+import objectAccessService from './object-access.service';
+import { pagination, parsePagination } from '../utils/pagination';
 
 interface CreateTaskInput {
   templateId: string;
@@ -27,7 +28,7 @@ interface TaskQuery {
   status?: TaskStatus;
   assessmentType?: string;
   userId?: string;
-  userRole?: UserRole;
+  user?: NonNullable<Express.Request['user']>;
   my?: string;
 }
 
@@ -100,47 +101,10 @@ class TaskService {
   // ============ 查询（带过滤 + 统计）============
 
   private async getTasks(query: TaskQuery) {
-    const { page = 1, pageSize = 20, status, assessmentType, userId, userRole } = query;
-    const where: any = {};
-
-    if (userId) {
-      if (query.my === 'true') {
-        // 「我的任务」：只看有题目分给自己的任务
-        const assignedTaskIds = await QuestionItem.findAll({
-          where: { assignedTo: userId },
-          attributes: [['taskId', 'taskId']],
-          group: ['taskId'],
-          raw: true,
-        });
-        const ids = assignedTaskIds.map((r: any) => r.taskId);
-        if (ids.length > 0) {
-          where.id = { [Op.in]: ids };
-        } else {
-          where.id = { [Op.in]: [] }; // 无匹配任务
-        }
-        where.status = { [Op.ne]: TaskStatus.DRAFT };
-      } else if (userRole === UserRole.AUDITOR) {
-        where[Op.or] = [
-          { createdBy: userId },
-          { assignedTo: userId },
-          { reviewerId: userId },
-        ];
-      } else if (userRole === UserRole.USER) {
-        const assignedTaskIds = await QuestionItem.findAll({
-          where: { assignedTo: userId },
-          attributes: [['taskId', 'taskId']],
-          group: ['taskId'],
-          raw: true,
-        });
-        const ids = assignedTaskIds.map((r: any) => r.taskId);
-        if (ids.length > 0) {
-          where.id = { [Op.in]: ids };
-        } else {
-          where.id = { [Op.in]: [] };
-        }
-        where.status = { [Op.ne]: TaskStatus.DRAFT };
-      }
-    }
+    const { page, pageSize } = parsePagination(query);
+    const { status, assessmentType, userId } = query;
+    const where: any = query.user ? await objectAccessService.taskScope(query.user, query.my === 'true') : {};
+    if (query.my === 'true') where.status = { [Op.ne]: TaskStatus.DRAFT };
 
     if (status) where.status = status;
     if (assessmentType) where.assessmentType = assessmentType;
@@ -161,7 +125,7 @@ class TaskService {
 
     return {
       items: rows,
-      pagination: { page, pageSize, total: count, totalPages: Math.ceil(count / pageSize) },
+      pagination: pagination(page, pageSize, count),
     };
   }
 

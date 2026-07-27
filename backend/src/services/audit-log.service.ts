@@ -1,6 +1,7 @@
 import { AuditLog, OperationType } from '../models';
 import { Op } from 'sequelize';
 import settingsService from './settings.service';
+import { parsePagination, pagination } from '../utils/pagination';
 
 class AuditLogService {
   async log(data: {
@@ -25,7 +26,8 @@ class AuditLogService {
     operationType?: OperationType; resourceType?: string;
     startDate?: string; endDate?: string; userSearch?: string;
   }) {
-    const { page = 1, pageSize = 20, userId, operationType, resourceType, startDate, endDate, userSearch } = query;
+    const { page, pageSize } = parsePagination(query);
+    const { userId, operationType, resourceType, startDate, endDate, userSearch } = query;
     const where: any = {};
     if (userId) where.userId = userId;
     if (operationType) where.operationType = operationType;
@@ -52,7 +54,7 @@ class AuditLogService {
 
     return {
       items: rows,
-      pagination: { page, pageSize, total: count, totalPages: Math.ceil(count / pageSize) },
+      pagination: pagination(page, pageSize, count),
     };
   }
 
