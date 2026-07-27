@@ -40,6 +40,7 @@ router.put('/security', authorize('settings', 'update'), asyncHandler(async (req
       success: true,
       ipAddress: req.ip,
       tenantId: req.tenant?.id,
+      departmentId: req.user!.primaryDepartmentId,
     }, transaction);
     return updated;
   });

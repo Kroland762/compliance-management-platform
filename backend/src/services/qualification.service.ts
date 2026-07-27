@@ -1,7 +1,8 @@
-import { Op } from 'sequelize';
-import { AuditLog, OperationType, Qualification } from '../models';
+import { Op, type WhereOptions } from 'sequelize';
+import { Department, OperationType, Qualification, TenantMember, TenantMemberStatus } from '../models';
 import { QualificationStatus } from '../models/Qualification';
 import { pagination, parsePagination } from '../utils/pagination';
+import auditLogService from './audit-log.service';
 
 interface QualificationInput {
   name: string;
@@ -11,6 +12,8 @@ interface QualificationInput {
   ownerCompany?: string | null;
   ownerDepartment?: string | null;
   responsiblePerson?: string | null;
+  ownerDepartmentId: string;
+  responsibleUserId?: string | null;
   issueDate?: string | null;
   expiryDate?: string | null;
   attachmentUrl?: string | null;
@@ -67,9 +70,9 @@ function toView(row: Qualification) {
 }
 
 class QualificationService {
-  async list(query: QualificationQuery) {
+  async list(query: QualificationQuery, accessWhere: WhereOptions = {}) {
     const { page, pageSize } = parsePagination(query);
-    const where: any = {};
+    const where: any = { ...(accessWhere as object) };
 
     if (query.keyword) {
       where[Op.or] = [
@@ -107,11 +110,14 @@ class QualificationService {
 
   async create(input: QualificationInput, userId: string) {
     this.validate(input);
+    await this.validateOwnership(input.ownerDepartmentId, input.responsibleUserId);
     const cleaned = this.clean(input);
     const qualification = await Qualification.create({
       ...cleaned,
       name: cleaned.name!,
       category: cleaned.category!,
+      ownerDepartmentId: input.ownerDepartmentId,
+      responsibleUserId: input.responsibleUserId || null,
       createdBy: userId,
     });
 
@@ -123,8 +129,16 @@ class QualificationService {
     const qualification = await Qualification.findByPk(id);
     if (!qualification) throw new Error('资质记录不存在');
     this.validate({ ...qualification.toJSON(), ...input } as QualificationInput);
+    await this.validateOwnership(
+      input.ownerDepartmentId || qualification.ownerDepartmentId,
+      input.responsibleUserId !== undefined ? input.responsibleUserId : qualification.responsibleUserId,
+    );
 
-    await qualification.update(this.clean(input));
+    await qualification.update({
+      ...this.clean(input),
+      ...(input.ownerDepartmentId !== undefined ? { ownerDepartmentId: input.ownerDepartmentId } : {}),
+      ...(input.responsibleUserId !== undefined ? { responsibleUserId: input.responsibleUserId || null } : {}),
+    });
     await this.log(userId, OperationType.UPDATE, id, `更新资质: ${qualification.name}`);
     return toView(qualification);
   }
@@ -159,6 +173,18 @@ class QualificationService {
   private validate(input: QualificationInput) {
     if (!input.name?.trim()) throw new Error('资质名称为必填项');
     if (!input.category?.trim()) throw new Error('资质类型为必填项');
+    if (!input.ownerDepartmentId) throw new Error('归属部门为必填项');
+  }
+
+  private async validateOwnership(departmentId: string, responsibleUserId?: string | null) {
+    const department = await Department.findOne({ where: { id: departmentId, status: 'active' } });
+    if (!department) throw new Error('归属部门不存在或已归档');
+    if (responsibleUserId) {
+      const member = await TenantMember.findOne({
+        where: { userId: responsibleUserId, status: TenantMemberStatus.ACTIVE },
+      });
+      if (!member) throw new Error('负责人不存在或不属于当前租户');
+    }
   }
 
   private clean(input: Partial<QualificationInput>) {
@@ -184,14 +210,14 @@ class QualificationService {
   }
 
   private async log(userId: string, operationType: OperationType, resourceId: string, operationDetails: string) {
-    await AuditLog.create({
+    await auditLogService.log({
       userId,
       operationType,
       resourceType: 'qualification',
       resourceId,
       operationDetails,
       success: true,
-    } as any);
+    });
   }
 }
 

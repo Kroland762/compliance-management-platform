@@ -1,6 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
-import { authenticate } from '../middlewares/auth';
+import { authenticate, authorize } from '../middlewares/auth';
 import questionnaireService from '../services/questionnaire.service';
 import { config } from '../config';
 import { AppError, asyncHandler } from '../utils/http';
@@ -56,16 +56,16 @@ async function assertCanAccessEvidence(req: Request, evidenceId: string, write =
 }
 
 // 获取任务的所有问题
-router.get('/tasks/:taskId/questions', asyncHandler(async (req: Request, res: Response) => {
+router.get('/tasks/:taskId/questions', authorize('tasks', 'read'), asyncHandler(async (req: Request, res: Response) => {
   await objectAccessService.taskOrNotFound(req.params.taskId, req.user!);
   const questions = await questionnaireService.getQuestions(req.params.taskId, req.user!);
   res.json({ success: true, data: { questions } });
 }));
 
 // 保存问题答案
-router.put('/questions/:id/answer', asyncHandler(async (req: Request, res: Response) => {
+router.put('/questions/:id/answer', authorize('tasks', 'update'), asyncHandler(async (req: Request, res: Response) => {
   try {
-    await assertCanAccessQuestion(req, req.params.id);
+    await assertCanAccessQuestion(req, req.params.id, true);
     const { currentStatusDescription } = req.body;
     const item = await questionnaireService.saveAnswer(req.params.id, currentStatusDescription || '');
     res.json({ success: true, data: item });
@@ -76,9 +76,9 @@ router.put('/questions/:id/answer', asyncHandler(async (req: Request, res: Respo
 }));
 
 // 上传证据文件
-router.post('/questions/:id/evidence', evidenceUpload, asyncHandler(async (req: Request, res: Response) => {
+router.post('/questions/:id/evidence', authorize('tasks', 'update'), evidenceUpload, asyncHandler(async (req: Request, res: Response) => {
   try {
-    await assertCanAccessQuestion(req, req.params.id);
+    await assertCanAccessQuestion(req, req.params.id, true);
     if (!req.file) {
       res.status(400).json({ success: false, error: { code: 'NO_FILE', message: '请上传文件' } });
       return;
@@ -100,7 +100,7 @@ router.post('/questions/:id/evidence', evidenceUpload, asyncHandler(async (req: 
 }));
 
 // 删除证据
-router.delete('/evidence/:id', asyncHandler(async (req: Request, res: Response) => {
+router.delete('/evidence/:id', authorize('tasks', 'update'), asyncHandler(async (req: Request, res: Response) => {
   try {
     await assertCanAccessEvidence(req, req.params.id, true);
     await questionnaireService.deleteEvidence(req.params.id, req.user!.userId);
@@ -112,7 +112,7 @@ router.delete('/evidence/:id', asyncHandler(async (req: Request, res: Response) 
 }));
 
 // 下载证据
-router.get('/evidence/:id/download', asyncHandler(async (req: Request, res: Response) => {
+router.get('/evidence/:id/download', authorize('tasks', 'read'), asyncHandler(async (req: Request, res: Response) => {
   try {
     const { evidence } = await assertCanAccessEvidence(req, req.params.id);
     if (!evidence.storageKey) throw new AppError(404, 'NOT_FOUND', '文件尚未迁移到安全存储');
@@ -132,7 +132,7 @@ router.get('/evidence/:id/download', asyncHandler(async (req: Request, res: Resp
 }));
 
 // 查看历史证据
-router.get('/questions/:id/historical-evidence', asyncHandler(async (req: Request, res: Response) => {
+router.get('/questions/:id/historical-evidence', authorize('tasks', 'read'), asyncHandler(async (req: Request, res: Response) => {
   try {
     await assertCanAccessQuestion(req, req.params.id);
     const evidence = await questionnaireService.getHistoricalEvidence(req.params.id);
@@ -144,7 +144,7 @@ router.get('/questions/:id/historical-evidence', asyncHandler(async (req: Reques
 }));
 
 // 上传历史证据文件（配置任务时使用）
-router.post('/questions/:id/historical-evidence', evidenceUpload, asyncHandler(async (req: Request, res: Response) => {
+router.post('/questions/:id/historical-evidence', authorize('tasks', 'update'), evidenceUpload, asyncHandler(async (req: Request, res: Response) => {
   try {
     const item = await assertCanAccessQuestion(req, req.params.id, true);
     if (!req.file) {
@@ -171,7 +171,7 @@ router.post('/questions/:id/historical-evidence', evidenceUpload, asyncHandler(a
 }));
 
 // 删除历史证据
-router.delete('/questions/:id/historical-evidence', asyncHandler(async (req: Request, res: Response) => {
+router.delete('/questions/:id/historical-evidence', authorize('tasks', 'update'), asyncHandler(async (req: Request, res: Response) => {
   try {
     const item = await assertCanAccessQuestion(req, req.params.id, true);
     const { EvidenceFile } = await import('../models');

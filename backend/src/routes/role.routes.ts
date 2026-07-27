@@ -1,152 +1,176 @@
-import { Router, Request, Response } from 'express';
+import { Router } from 'express';
+import { Op } from 'sequelize';
 import { authenticate, authorize } from '../middlewares/auth';
 import Role, { PERMISSION_DEFINITIONS } from '../models/Role';
-import { User } from '../models';
+import { MemberRole, OperationType } from '../models';
 import auditLogService from '../services/audit-log.service';
-import { OperationType } from '../models';
-import { asyncHandler } from '../utils/http';
+import { AppError, asyncHandler } from '../utils/http';
 import { pagination, parsePagination } from '../utils/pagination';
 
 const router = Router();
 router.use(authenticate);
 
-/**
- * GET /api/roles
- * 角色列表
- */
-router.get('/', authorize('users', 'read'), asyncHandler(async (req: Request, res: Response) => {
+const DATA_SCOPES = ['self', 'assigned', 'department', 'department_tree', 'all'];
+
+function validatePermissionConfiguration(
+  permissions: Record<string, string[]> = {},
+  permissionScopes: Record<string, Record<string, string>> = {},
+): void {
+  for (const [resource, actions] of Object.entries(permissions)) {
+    const definitions = PERMISSION_DEFINITIONS[resource as keyof typeof PERMISSION_DEFINITIONS] as readonly string[] | undefined;
+    if (!definitions || !Array.isArray(actions) || actions.some((action) => !definitions.includes(action))) {
+      throw new AppError(400, 'VALIDATION_ERROR', `非法权限配置: ${resource}`);
+    }
+    for (const action of actions) {
+      const scope = permissionScopes?.[resource]?.[action];
+      if (!scope || !DATA_SCOPES.includes(scope)) {
+        throw new AppError(400, 'VALIDATION_ERROR', `权限 ${resource}.${action} 必须配置有效数据范围`);
+      }
+    }
+  }
+  for (const [resource, scopes] of Object.entries(permissionScopes)) {
+    for (const action of Object.keys(scopes || {})) {
+      if (!permissions[resource]?.includes(action)) {
+        throw new AppError(400, 'VALIDATION_ERROR', `数据范围没有对应权限: ${resource}.${action}`);
+      }
+    }
+  }
+}
+
+async function roleOrNotFound(id: string, tenantId: string) {
+  const role = await Role.findOne({ where: { id, tenantId } });
+  if (!role) throw new AppError(404, 'NOT_FOUND', '角色不存在');
+  return role;
+}
+
+router.get('/', authorize('users', 'read'), asyncHandler(async (req, res) => {
   const { page, pageSize } = parsePagination(req.query);
   const { count, rows } = await Role.findAndCountAll({
     where: { tenantId: req.tenant!.id },
-    order: [['createdAt', 'ASC']],
+    order: [['isSystem', 'DESC'], ['createdAt', 'ASC']],
     limit: pageSize,
     offset: (page - 1) * pageSize,
   });
   res.json({ success: true, data: { items: rows, pagination: pagination(page, pageSize, count) } });
 }));
 
-/**
- * GET /api/roles/permission-defs
- * 权限定义清单（供前端渲染权限矩阵）
- */
-router.get('/permission-defs', authorize('users', 'read'), async (_req: Request, res: Response) => {
-  res.json({ success: true, data: PERMISSION_DEFINITIONS });
-});
+router.get('/permission-defs', authorize('users', 'read'), asyncHandler(async (_req, res) => {
+  res.json({ success: true, data: { resources: PERMISSION_DEFINITIONS, dataScopes: DATA_SCOPES } });
+}));
 
-/**
- * GET /api/roles/:id
- * 角色详情
- */
-router.get('/:id', authorize('users', 'read'), async (req: Request, res: Response) => {
-  try {
-    const role = await Role.findOne({ where: { id: req.params.id, tenantId: req.tenant!.id } });
-    if (!role) { res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '角色不存在' } }); return; }
-    res.json({ success: true, data: role });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: { code: 'QUERY_FAILED', message: error.message } });
+router.post('/', authorize('users', 'create'), asyncHandler(async (req, res) => {
+  const name = String(req.body.name || '').trim();
+  if (!name) throw new AppError(400, 'VALIDATION_ERROR', '角色名称不能为空');
+  if (await Role.findOne({ where: { tenantId: req.tenant!.id, name } })) {
+    throw new AppError(409, 'CONFLICT', '角色名称已存在');
   }
-});
+  validatePermissionConfiguration(req.body.permissions || {}, req.body.permissionScopes || {});
+  const role = await Role.create({
+    tenantId: req.tenant!.id,
+    name,
+    description: req.body.description || null,
+    permissions: req.body.permissions || {},
+    permissionScopes: req.body.permissionScopes || {},
+    isSystem: false,
+    systemKey: null,
+    isLocked: false,
+  });
+  await auditLogService.log({
+    userId: req.user!.userId,
+    operationType: OperationType.CREATE,
+    resourceType: 'role',
+    resourceId: role.id,
+    operationDetails: `创建角色: ${role.name}`,
+    success: true,
+    tenantId: req.tenant!.id,
+    departmentId: req.user!.primaryDepartmentId,
+    ipAddress: req.ip,
+  });
+  res.status(201).json({ success: true, data: role });
+}));
 
-/**
- * POST /api/roles
- * 新建角色
- */
-router.post('/', authorize('users', 'create'), async (req: Request, res: Response) => {
-  try {
-    const { name, description, permissions } = req.body;
-    if (!name) { res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: '角色名称不能为空' } }); return; }
+router.post('/:id/clone', authorize('users', 'create'), asyncHandler(async (req, res) => {
+  const source = await roleOrNotFound(req.params.id, req.tenant!.id);
+  const name = String(req.body.name || `${source.name} 副本`).trim();
+  if (await Role.findOne({ where: { tenantId: req.tenant!.id, name } })) {
+    throw new AppError(409, 'CONFLICT', '角色名称已存在');
+  }
+  const role = await Role.create({
+    tenantId: req.tenant!.id,
+    name,
+    description: req.body.description ?? source.description,
+    permissions: source.permissions,
+    permissionScopes: source.permissionScopes,
+    isSystem: false,
+    systemKey: null,
+    isLocked: false,
+  });
+  res.status(201).json({ success: true, data: role });
+}));
 
-    const existing = await Role.findOne({ where: { tenantId: req.tenant!.id, name } });
-    if (existing) { res.status(409).json({ success: false, error: { code: 'CONFLICT', message: '角色名称已存在' } }); return; }
+router.get('/:id', authorize('users', 'read'), asyncHandler(async (req, res) => {
+  res.json({ success: true, data: await roleOrNotFound(req.params.id, req.tenant!.id) });
+}));
 
-    const role = await Role.create({ tenantId: req.tenant!.id, name, description: description || null, permissions: permissions || {}, isSystem: false });
-
-    await auditLogService.log({
-      userId: req.user!.userId,
-      operationType: OperationType.CREATE,
-      resourceType: 'role',
-      resourceId: role.id,
-      operationDetails: `创建角色: ${name}`,
-      success: true,
+router.put('/:id', authorize('users', 'update'), asyncHandler(async (req, res) => {
+  const role = await roleOrNotFound(req.params.id, req.tenant!.id);
+  if (role.isSystem || role.isLocked) {
+    throw new AppError(409, 'SYSTEM_ROLE_LOCKED', '系统角色不可修改，请复制后编辑');
+  }
+  const nextName = req.body.name !== undefined ? String(req.body.name).trim() : role.name;
+  if (!nextName) throw new AppError(400, 'VALIDATION_ERROR', '角色名称不能为空');
+  if (nextName !== role.name && await Role.findOne({ where: { tenantId: req.tenant!.id, name: nextName } })) {
+    throw new AppError(409, 'CONFLICT', '角色名称已存在');
+  }
+  const nextPermissions = req.body.permissions !== undefined ? req.body.permissions : role.permissions;
+  const nextScopes = req.body.permissionScopes !== undefined ? req.body.permissionScopes : role.permissionScopes;
+  validatePermissionConfiguration(nextPermissions, nextScopes);
+  await role.update({
+    name: nextName,
+    ...(req.body.description !== undefined ? { description: req.body.description || null } : {}),
+    permissions: nextPermissions,
+    permissionScopes: nextScopes,
+  });
+  const assignments = await MemberRole.findAll({ where: { roleId: role.id } });
+  if (assignments.length > 0) {
+    const { TenantMember } = await import('../models');
+    await TenantMember.increment('sessionVersion', {
+      by: 1,
+      where: { id: { [Op.in]: assignments.map((assignment) => assignment.memberId) } },
     });
-
-    res.status(201).json({ success: true, data: role });
-  } catch (error: any) {
-    res.status(400).json({ success: false, error: { code: 'CREATE_FAILED', message: error.message } });
   }
-});
+  await auditLogService.log({
+    userId: req.user!.userId,
+    operationType: OperationType.UPDATE,
+    resourceType: 'role',
+    resourceId: role.id,
+    operationDetails: `更新角色: ${role.name}`,
+    success: true,
+    tenantId: req.tenant!.id,
+    departmentId: req.user!.primaryDepartmentId,
+    ipAddress: req.ip,
+  });
+  res.json({ success: true, data: role });
+}));
 
-/**
- * PUT /api/roles/:id
- * 更新角色
- */
-router.put('/:id', authorize('users', 'update'), async (req: Request, res: Response) => {
-  try {
-    const role = await Role.findOne({ where: { id: req.params.id, tenantId: req.tenant!.id } });
-    if (!role) { res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '角色不存在' } }); return; }
-
-    const { name, description, permissions } = req.body;
-
-    if (name !== undefined && name !== role.name) {
-      const existing = await Role.findOne({ where: { tenantId: req.tenant!.id, name } });
-      if (existing) { res.status(409).json({ success: false, error: { code: 'CONFLICT', message: '角色名称已存在' } }); return; }
-      role.name = name;
-    }
-    if (description !== undefined) role.description = description;
-    if (permissions !== undefined) role.permissions = permissions;
-
-    await role.save();
-
-    await auditLogService.log({
-      userId: req.user!.userId,
-      operationType: OperationType.UPDATE,
-      resourceType: 'role',
-      resourceId: role.id,
-      operationDetails: `更新角色: ${role.name}`,
-      success: true,
-    });
-
-    res.json({ success: true, data: role });
-  } catch (error: any) {
-    res.status(400).json({ success: false, error: { code: 'UPDATE_FAILED', message: error.message } });
-  }
-});
-
-/**
- * DELETE /api/roles/:id
- * 删除角色（仅非系统角色，且角色下无用户）
- */
-router.delete('/:id', authorize('users', 'delete'), async (req: Request, res: Response) => {
-  try {
-    const role = await Role.findOne({ where: { id: req.params.id, tenantId: req.tenant!.id } });
-    if (!role) { res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '角色不存在' } }); return; }
-
-    if (role.isSystem) {
-      res.status(400).json({ success: false, error: { code: 'SYSTEM_ROLE', message: '系统内置角色不可删除' } });
-      return;
-    }
-
-    const userCount = await User.count({ where: { roleId: role.id, tenantId: req.tenant!.id } });
-    if (userCount > 0) {
-      res.status(400).json({ success: false, error: { code: 'ROLE_IN_USE', message: `该角色下还有 ${userCount} 个用户，请先转移用户` } });
-      return;
-    }
-
-    await role.destroy();
-
-    await auditLogService.log({
-      userId: req.user!.userId,
-      operationType: OperationType.DELETE,
-      resourceType: 'role',
-      resourceId: role.id,
-      operationDetails: `删除角色: ${role.name}`,
-      success: true,
-    });
-
-    res.json({ success: true, message: '角色已删除' });
-  } catch (error: any) {
-    res.status(400).json({ success: false, error: { code: 'DELETE_FAILED', message: error.message } });
-  }
-});
+router.delete('/:id', authorize('users', 'delete'), asyncHandler(async (req, res) => {
+  const role = await roleOrNotFound(req.params.id, req.tenant!.id);
+  if (role.isSystem || role.isLocked) throw new AppError(409, 'SYSTEM_ROLE', '系统角色不可删除');
+  const count = await MemberRole.count({ where: { roleId: role.id } });
+  if (count > 0) throw new AppError(409, 'ROLE_IN_USE', `该角色下还有 ${count} 个成员`);
+  await role.destroy();
+  await auditLogService.log({
+    userId: req.user!.userId,
+    operationType: OperationType.DELETE,
+    resourceType: 'role',
+    resourceId: role.id,
+    operationDetails: `删除角色: ${role.name}`,
+    success: true,
+    tenantId: req.tenant!.id,
+    departmentId: req.user!.primaryDepartmentId,
+    ipAddress: req.ip,
+  });
+  res.json({ success: true, message: '角色已删除' });
+}));
 
 export default router;

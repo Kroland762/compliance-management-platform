@@ -1,9 +1,10 @@
-import { QuestionItem, EvidenceFile, AuditTask, TaskStatus, AnswerStatus, AuditLog, OperationType } from '../models';
+import { QuestionItem, EvidenceFile, AuditTask, TaskStatus, AnswerStatus, OperationType } from '../models';
 import { encrypt, decrypt } from '../utils/crypto';
 import type { PermissionMatrix } from '../models/Role';
 import { validateEvidence } from './evidence-security.service';
 import { fileStorage } from './file-storage.service';
 import { AppError } from '../utils/http';
+import auditLogService from './audit-log.service';
 
 class QuestionnaireService {
   async getQuestions(taskId: string, user?: { userId: string; permissions: PermissionMatrix }) {
@@ -72,11 +73,11 @@ class QuestionnaireService {
     task.submittedAt = new Date();
     await task.save();
 
-    await AuditLog.create({
+    await auditLogService.log({
       userId, operationType: OperationType.UPDATE, resourceType: 'task',
       resourceId: taskId, success: true,
       operationDetails: '提交审计任务',
-    } as any);
+    });
 
     return task;
   }
@@ -123,14 +124,14 @@ class QuestionnaireService {
     if (evidence.storageKey) await fileStorage.delete(evidence.storageKey);
     await evidence.update({ status: 'deleted', deletedAt: new Date() });
     if (userId) {
-      await AuditLog.create({
+      await auditLogService.log({
         userId,
         operationType: OperationType.DELETE,
         resourceType: 'evidence',
         resourceId: evidence.id,
         operationDetails: '软删除证据文件',
         success: true,
-      } as any);
+      });
     }
   }
 

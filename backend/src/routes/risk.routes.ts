@@ -20,9 +20,8 @@ router.get('/', async (req: Request, res: Response) => {
 
 router.post('/', authorize('risks', 'update'), async (req: Request, res: Response) => {
   try {
-    if (!objectAccessService.canReadAllTasks(req.user!)) {
-      throw new AppError(403, 'FORBIDDEN', '仅租户管理员可创建未关联任务的风险');
-    }
+    if (!req.body.taskId) throw new AppError(400, 'VALIDATION_ERROR', '风险必须关联任务');
+    await objectAccessService.taskOrNotFound(req.body.taskId, req.user!, 'update');
     const risk = await riskService.createRisk(req.body, req.user!.userId);
     res.status(201).json({ success: true, data: risk });
   } catch (error: any) {
@@ -36,7 +35,7 @@ router.post('/', authorize('risks', 'update'), async (req: Request, res: Respons
 
 router.put('/:id', authorize('risks', 'update'), async (req: Request, res: Response) => {
   try {
-    await objectAccessService.riskOrNotFound(req.params.id, req.user!);
+    await objectAccessService.riskOrNotFound(req.params.id, req.user!, 'update');
     const risk = await riskService.updateRisk(req.params.id, req.body, req.user!.userId);
     res.json({ success: true, data: risk });
   } catch (error: any) {
@@ -50,7 +49,7 @@ router.put('/:id', authorize('risks', 'update'), async (req: Request, res: Respo
 
 router.delete('/:id', authorize('risks', 'update'), async (req: Request, res: Response) => {
   try {
-    await objectAccessService.riskOrNotFound(req.params.id, req.user!);
+    await objectAccessService.riskOrNotFound(req.params.id, req.user!, 'update');
     await riskService.deleteRisk(req.params.id, req.user!.userId);
     res.json({ success: true, message: '风险记录已删除' });
   } catch (error: any) {

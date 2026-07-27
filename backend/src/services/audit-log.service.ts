@@ -1,14 +1,22 @@
 import { AuditLog, OperationType } from '../models';
-import { Op, type Transaction } from 'sequelize';
+import { Op, type Transaction, type WhereOptions } from 'sequelize';
 import settingsService from './settings.service';
 import { parsePagination, pagination } from '../utils/pagination';
+import memberContextService from './member-context.service';
+import { getTenantStore } from '../middlewares/tenant';
 
 class AuditLogService {
   async log(data: {
     userId: string; operationType: OperationType; resourceType: string;
     resourceId?: string | null; operationDetails?: string; success: boolean;
-    ipAddress?: string; tenantId?: string;
+    ipAddress?: string; tenantId?: string; departmentId?: string;
   }, transaction?: Transaction) {
+    const tenantId = data.tenantId || getTenantStore()?.tenantId || null;
+    let departmentId = data.departmentId || null;
+    if (!departmentId && tenantId) {
+      const context = await memberContextService.resolve(data.userId, false);
+      departmentId = context?.primaryDepartmentId || null;
+    }
     return AuditLog.create({
       userId: data.userId,
       operationType: data.operationType,
@@ -17,7 +25,8 @@ class AuditLogService {
       operationDetails: data.operationDetails || null,
       success: data.success,
       ipAddress: data.ipAddress || null,
-      tenantId: data.tenantId || null,
+      tenantId,
+      departmentId,
     } as any, { transaction });
   }
 
@@ -25,10 +34,10 @@ class AuditLogService {
     page?: number; pageSize?: number; userId?: string;
     operationType?: OperationType; resourceType?: string;
     startDate?: string; endDate?: string; userSearch?: string;
-  }) {
+  }, accessWhere: WhereOptions = {}) {
     const { page, pageSize } = parsePagination(query);
     const { userId, operationType, resourceType, startDate, endDate, userSearch } = query;
-    const where: any = {};
+    const where: any = { ...(accessWhere as object) };
     if (userId) where.userId = userId;
     if (operationType) where.operationType = operationType;
     if (resourceType) where.resourceType = resourceType;

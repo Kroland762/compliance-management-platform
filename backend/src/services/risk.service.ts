@@ -1,8 +1,10 @@
-import { RiskRecord, RiskLevel, RemediationStatus, RiskStatus, OperationType, AuditLog } from '../models';
+import { RiskRecord, RiskLevel, RemediationStatus, RiskStatus, OperationType } from '../models';
 import { Op } from 'sequelize';
 import { parsePagination, pagination } from '../utils/pagination';
+import auditLogService from './audit-log.service';
 
 interface CreateRiskInput {
+  taskId: string;
   assessmentType: string;
   assessmentTarget: string;
   riskIdentification: string;
@@ -43,6 +45,7 @@ class RiskService {
   async createRisk(input: CreateRiskInput, userId: string) {
     const risk = await RiskRecord.create({
       assessmentType: input.assessmentType as any,
+      taskId: input.taskId,
       assessmentTarget: input.assessmentTarget,
       riskIdentification: input.riskIdentification,
       riskLevel: input.riskLevel,
@@ -51,11 +54,11 @@ class RiskService {
       riskStatus: input.riskStatus || RiskStatus.RISK_ACCEPTANCE,
     } as any);
 
-    await AuditLog.create({
+    await auditLogService.log({
       userId, operationType: OperationType.CREATE, resourceType: 'risk',
       resourceId: risk.id, success: true,
       operationDetails: `创建风险记录: ${input.riskIdentification.substring(0, 50)}`,
-    } as any);
+    });
 
     return risk;
   }
@@ -65,11 +68,11 @@ class RiskService {
     if (!risk) throw new Error('风险记录不存在');
     await risk.destroy();
 
-    await AuditLog.create({
+    await auditLogService.log({
       userId, operationType: OperationType.DELETE, resourceType: 'risk',
       resourceId: id, success: true,
       operationDetails: '删除风险记录',
-    } as any);
+    });
   }
 
   async updateRisk(id: string, data: { remediationStatus?: RemediationStatus; riskStatus?: RiskStatus; riskIdentification?: string; remediationMeasures?: string; riskLevel?: RiskLevel }, userId: string) {
@@ -83,11 +86,11 @@ class RiskService {
     risk.updatedAt = new Date();
     await risk.save();
 
-    await AuditLog.create({
+    await auditLogService.log({
       userId, operationType: OperationType.UPDATE, resourceType: 'risk',
       resourceId: id, success: true,
       operationDetails: `更新风险状态: ${JSON.stringify(data)}`,
-    } as any);
+    });
 
     return risk;
   }

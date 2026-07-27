@@ -5,6 +5,9 @@ import {
   QuestionTemplate,
   QuestionItem,
   User,
+  TenantMember,
+  TenantMemberStatus,
+  Department,
   TaskStatus,
   AnswerStatus,
   OperationType,
@@ -19,6 +22,7 @@ interface CreateTaskInput {
   assessmentTarget: string;
   assignedTo?: string | null;
   reviewerId?: string | null;
+  departmentId: string;
   createdBy: string;
 }
 
@@ -43,8 +47,16 @@ class TaskService {
     if (!template) throw new Error('模板不存在');
 
     if (input.assignedTo) {
-      const assignee = await User.findByPk(input.assignedTo);
-      if (!assignee) throw new Error('被指派的用户不存在');
+      const assignee = await TenantMember.findOne({
+        where: { userId: input.assignedTo, status: TenantMemberStatus.ACTIVE },
+      });
+      if (!assignee) throw new Error('被指派的用户不存在或不属于当前租户');
+    }
+    if (input.reviewerId && !await TenantMember.findOne({
+      where: { userId: input.reviewerId, status: TenantMemberStatus.ACTIVE },
+    })) throw new Error('审阅人不存在或不属于当前租户');
+    if (!await Department.findOne({ where: { id: input.departmentId, status: 'active' } })) {
+      throw new Error('归属部门不存在或已归档');
     }
 
     const task = await AuditTask.create({
@@ -54,6 +66,7 @@ class TaskService {
       createdBy: input.createdBy,
       assignedTo: input.assignedTo || null,
       reviewerId: input.reviewerId || input.createdBy,
+      departmentId: input.departmentId,
       status: TaskStatus.DRAFT,
     } as any);
 
@@ -80,6 +93,7 @@ class TaskService {
       resourceId: task.id,
       operationDetails: `创建审计任务，目标: ${input.assessmentTarget}`,
       success: true,
+      departmentId: input.departmentId,
     });
 
     return task;
@@ -89,9 +103,9 @@ class TaskService {
     const task = await AuditTask.findByPk(id, {
       include: [
         { association: 'template', attributes: ['id', 'name', 'description'] },
-        { association: 'creator', attributes: ['id', 'username', 'department'] },
-        { association: 'assignee', attributes: ['id', 'username', 'department'] },
-        { association: 'reviewer', attributes: ['id', 'username', 'department'] },
+        { association: 'creator', attributes: ['id', 'username'] },
+        { association: 'assignee', attributes: ['id', 'username'] },
+        { association: 'reviewer', attributes: ['id', 'username'] },
       ],
     });
     if (!task) throw new Error('任务不存在');
@@ -103,7 +117,9 @@ class TaskService {
   private async getTasks(query: TaskQuery) {
     const { page, pageSize } = parsePagination(query);
     const { status, assessmentType, userId } = query;
-    const where: any = query.user ? await objectAccessService.taskScope(query.user, query.my === 'true') : {};
+    const where: any = query.user
+      ? await objectAccessService.taskScope(query.user, 'read', query.my === 'true')
+      : {};
     if (query.my === 'true') where.status = { [Op.ne]: TaskStatus.DRAFT };
 
     if (status) where.status = status;
@@ -113,9 +129,9 @@ class TaskService {
       where,
       include: [
         { association: 'template', attributes: ['id', 'name'] },
-        { association: 'creator', attributes: ['id', 'username', 'department'] },
-        { association: 'assignee', attributes: ['id', 'username', 'department'] },
-        { association: 'reviewer', attributes: ['id', 'username', 'department'] },
+        { association: 'creator', attributes: ['id', 'username'] },
+        { association: 'assignee', attributes: ['id', 'username'] },
+        { association: 'reviewer', attributes: ['id', 'username'] },
       ],
       order: [['createdAt', 'DESC']],
       limit: pageSize,

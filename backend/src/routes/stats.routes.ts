@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { Op, QueryTypes } from 'sequelize';
+import { Op } from 'sequelize';
 import { authenticate, authorize } from '../middlewares/auth';
 import { AuditTask, Qualification, QuestionnaireTemplate, RiskRecord, TaskStatus } from '../models';
 import objectAccessService from '../services/object-access.service';
@@ -38,23 +38,37 @@ router.get('/', asyncHandler(async (req, res) => {
   riskStats.forEach((row: any) => { riskLevelMap[row.riskLevel] = Number(row.count); });
 
   const emptyQualificationStatus = { total: 0, valid: 0, expiring: 0, expired: 0, missing: 0 };
+  const qualificationWhere = can('qualifications', 'read')
+    ? await objectAccessService.qualificationScope(req.user!)
+    : null;
   const [qualificationRows, templates] = await Promise.all([
-    can('qualifications', 'read')
-      ? Qualification.sequelize!.query<{
-        total: number; valid: number; expiring: number; expired: number; missing: number;
-      }>(`
-        SELECT
-          COUNT(*)::int AS total,
-          COUNT(*) FILTER (WHERE "expiryDate" > CURRENT_DATE + INTERVAL '30 days')::int AS valid,
-          COUNT(*) FILTER (WHERE "expiryDate" BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '30 days')::int AS expiring,
-          COUNT(*) FILTER (WHERE "expiryDate" < CURRENT_DATE)::int AS expired,
-          COUNT(*) FILTER (WHERE "expiryDate" IS NULL)::int AS missing
-        FROM qualifications
-      `, { type: QueryTypes.SELECT })
+    qualificationWhere
+      ? Qualification.findAll({
+        where: qualificationWhere,
+        attributes: [
+          [Qualification.sequelize!.literal('COUNT(*)::int'), 'total'],
+          [Qualification.sequelize!.literal(
+            'COUNT(*) FILTER (WHERE "expiryDate" > CURRENT_DATE + INTERVAL \'30 days\')::int',
+          ), 'valid'],
+          [Qualification.sequelize!.literal(
+            'COUNT(*) FILTER (WHERE "expiryDate" BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL \'30 days\')::int',
+          ), 'expiring'],
+          [Qualification.sequelize!.literal(
+            'COUNT(*) FILTER (WHERE "expiryDate" < CURRENT_DATE)::int',
+          ), 'expired'],
+          [Qualification.sequelize!.literal(
+            'COUNT(*) FILTER (WHERE "expiryDate" IS NULL)::int',
+          ), 'missing'],
+        ],
+        raw: true,
+      })
       : Promise.resolve([]),
     can('templates', 'read') ? QuestionnaireTemplate.count() : 0,
   ]);
-  const qualificationStatus = qualificationRows[0] || emptyQualificationStatus;
+  const rawQualificationStatus = qualificationRows[0] as any;
+  const qualificationStatus = rawQualificationStatus
+    ? Object.fromEntries(Object.entries(rawQualificationStatus).map(([key, value]) => [key, Number(value)]))
+    : emptyQualificationStatus;
   const taskTotal = Object.values(taskStatusMap).reduce((sum, value) => sum + value, 0);
 
   const taskPie = [
