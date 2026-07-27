@@ -6,6 +6,8 @@ jest.mock('jsonwebtoken', () => ({
 jest.mock('../src/models/index', () => ({
   User: { findByPk: jest.fn() },
   Role: { findByPk: jest.fn() },
+  RoleTemplate: { findByPk: jest.fn() },
+  Tenant: { findByPk: jest.fn() },
   OperationType: { CREATE: 'CREATE', UPDATE: 'UPDATE' },
 }));
 
@@ -25,7 +27,7 @@ jest.mock('../src/services/audit-log.service', () => ({
 }));
 
 const jwt = require('jsonwebtoken');
-const { User, Role } = require('../src/models/index');
+const { User, RoleTemplate } = require('../src/models/index');
 const authService = require('../src/services/auth.service').default;
 
 describe('auth service refresh token revocation', () => {
@@ -44,7 +46,7 @@ describe('auth service refresh token revocation', () => {
     User.findByPk.mockResolvedValue({ id: 'user-1', isActive: true, tokenVersion: 2 });
 
     await expect(authService.refreshToken('old-refresh-token')).rejects.toThrow('令牌已失效，请重新登录');
-    expect(Role.findByPk).not.toHaveBeenCalled();
+    expect(RoleTemplate.findByPk).not.toHaveBeenCalled();
   });
 
   test('allows refresh tokens with current tokenVersion', async () => {
@@ -59,7 +61,7 @@ describe('auth service refresh token revocation', () => {
       department: 'IT',
       email: 'admin@example.com',
     });
-    Role.findByPk.mockResolvedValue({
+    RoleTemplate.findByPk.mockResolvedValue({
       name: '管理员',
       permissions: { dashboard: ['read'] },
     });
