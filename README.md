@@ -1,6 +1,6 @@
 # Compliance Management Platform
 
-企业合规审计管理平台，基于 B/S 架构，涵盖**资质合规**与**账户审计**两大模块，支持 RBAC 权限体系、多数据源接入、规则引擎自动化审计。
+企业合规审计管理平台，基于 B/S 架构，涵盖**资质合规**与**账户审计**两大模块，支持 schema 级租户隔离、RBAC 权限体系、PostgreSQL 只读数据源和规则引擎自动化审计。
 
 ## 功能模块
 
@@ -11,7 +11,7 @@
 - 可视化仪表盘（任务分布、风险分布饼图）
 
 ### 账户审计
-- 多数据源接入（数据库直连 / CSV 上传，支持字段映射）
+- PostgreSQL 只读数据源接入（表/字段白名单映射，不接受任意 SQL）
 - 账户数据 3 层生命周期（HOT → WARM → COLD）
 - 内置规则引擎 + 自定义规则（AND/OR 嵌套条件，10+ 运算符）
 - 定时/手动执行审计任务，自动匹配规则并生成问题
@@ -32,21 +32,25 @@
 | 后端 | Node.js + Express + TypeScript + Sequelize ORM |
 | 数据库 | PostgreSQL |
 | 认证 | JWT (access + refresh) + bcrypt + SVG 验证码 |
-| 调度 | node-cron（定时审计任务） |
+| 调度 | PostgreSQL 持久化租约 + node-cron 触发 |
+
+支持基线：Node.js 22、PostgreSQL 14+。生产数据只允许通过版本化迁移器变更。
 
 ## 快速开始
 
 ```bash
 # 1. 安装依赖
-cd backend && npm install
-cd ../frontend && npm install
+cd backend && npm ci
+cd ../frontend && npm ci
 
 # 2. 配置环境变量
 cp backend/.env.example backend/.env
 # 编辑 .env 填写数据库连接信息
 
 # 3. 初始化数据库
-cd backend && npm run migrate && npm run seed
+cd backend
+npm run migrate:up
+SEED_ADMIN_PASSWORD='replace-with-strong-password' npm run seed
 
 # 4. 启动服务
 # 终端 1: 后端
@@ -55,10 +59,27 @@ cd backend && npm run dev
 cd frontend && npm run dev
 ```
 
-访问 http://localhost:5173 ，默认账号：
-- admin / Admin1234（管理员）
-- auditor / Auditor1234（审计员）
-- respondent / Respondent1234（普通用户）
+访问 http://localhost:5173。系统不再内置固定默认密码；控制面管理员仅在显式设置
+`SEED_ADMIN_PASSWORD` 时创建。全局管理员登录后必须先选择租户，业务 API 才会接受请求。
+
+## 迁移与验证
+
+```bash
+cd backend
+npm run migrate:status
+npm run migrate:up
+npm run migrate:legacy-public          # 默认只生成 public 存量清单
+npm run migrate:legacy-public -- --apply --tenant=<tenant-id>
+npm run migrate:legacy-files -- --tenant=<tenant-id>  # 默认只生成文件清单
+
+npm test
+cd ../frontend && npm test && npm run build
+```
+
+迁移记录以 `(migration_id, schema_name)` 为主键并校验迁移内容；迁移器使用 PostgreSQL
+advisory lock 防止并发执行。`migrate:down` 只允许对最后一个迁移进行显式确认回滚。
+
+运维、升级、备份恢复和故障排查见 [部署与升级指南](./部署与升级指南.md)。
 
 ## 项目结构
 

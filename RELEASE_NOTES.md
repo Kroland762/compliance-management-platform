@@ -1,5 +1,19 @@
 # Release Notes
 
+## 2026-07-27 — P0/P1/P2 hardening candidate
+
+- 认证中间件统一创建 AsyncLocalStorage 租户上下文；全局管理员通过顶部切换器和
+  `X-Tenant-ID` 显式选租户，普通用户无法伪造或切换。
+- `public` 收敛为控制面，租户角色、组织、资质、任务、证据和账户审计进入租户 schema。
+- 新增带校验和、advisory lock 和按 schema 状态的版本化迁移器，以及受保护的存量复制工具。
+- 统一服务端分页和授权范围统计；资质摘要与工作台不再依赖当前页长度。
+- 证据改用随机 tenant-scoped storage key、扩展名/MIME/签名校验、SHA-256 和软删除。
+- 账户审计数据源限定为 PostgreSQL 只读表/字段白名单，阻断元数据及未授权私网地址。
+- 新增 live/ready/metrics、Winston JSON 日志、requestId、PostgreSQL 持久化调度租约和幂等执行。
+- 新增加密备份/恢复脚本、Vitest/真实 PostgreSQL/Supertest/Playwright 门禁和 Node 22 CI。
+- 前端取消 Ant Design 单一大 chunk，保留路由懒加载并将最大 chunk 降至 700 KB 门禁以内。
+- 上传中间件升级到 Multer 2；Vite/Vitest 升级到 8/4，React Router 升级到 7.18 系列。
+
 ## 2026-07-02
 
 ### 新增功能
