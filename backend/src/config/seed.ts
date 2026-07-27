@@ -1,7 +1,7 @@
 import bcrypt from 'bcrypt';
 import sequelize from './database';
 import { setupAssociations } from '../models/associations';
-import { PermissionMatrix, RoleTemplate, User, UserRole } from '../models';
+import { PermissionMatrix, PermissionScopeMatrix, RoleTemplate, User } from '../models';
 import { migrateUp } from './migrations/runner';
 
 export const ADMIN_PERMISSIONS: PermissionMatrix = {
@@ -48,23 +48,32 @@ export const USER_PERMISSIONS: PermissionMatrix = {
   dashboard: ['read'],
 };
 
+function scopesFor(permissions: PermissionMatrix, scope: 'all' | 'assigned'): PermissionScopeMatrix {
+  return Object.fromEntries(
+    Object.entries(permissions).map(([resource, actions]) => [
+      resource,
+      Object.fromEntries((actions || []).map((action) => [action, scope])),
+    ]),
+  ) as PermissionScopeMatrix;
+}
+
 async function seed(): Promise<void> {
   setupAssociations();
   await migrateUp();
 
   const templates = [
-    ['管理员', '系统管理员，拥有租户内全部权限', ADMIN_PERMISSIONS],
-    ['审计员', '审计员，可操作审计流程', AUDITOR_PERMISSIONS],
-    ['普通用户', '普通用户，可查看和填写', USER_PERMISSIONS],
+    ['管理员', '系统管理员，拥有租户内全部权限', ADMIN_PERMISSIONS, scopesFor(ADMIN_PERMISSIONS, 'all'), 'tenant_admin'],
+    ['审计员', '审计员，可操作审计流程', AUDITOR_PERMISSIONS, scopesFor(AUDITOR_PERMISSIONS, 'assigned'), 'auditor'],
+    ['普通用户', '普通用户，可查看和填写', USER_PERMISSIONS, scopesFor(USER_PERMISSIONS, 'assigned'), 'member'],
   ] as const;
 
   let adminTemplate: RoleTemplate | null = null;
-  for (const [name, description, permissions] of templates) {
+  for (const [name, description, permissions, permissionScopes, systemKey] of templates) {
     const [template] = await RoleTemplate.findOrCreate({
       where: { name },
-      defaults: { name, description, permissions, isSystem: true },
+      defaults: { name, description, permissions, permissionScopes, systemKey, isSystem: true, isLocked: true },
     });
-    await template.update({ description, permissions, isSystem: true });
+    await template.update({ description, permissions, permissionScopes, systemKey, isSystem: true, isLocked: true });
     if (name === '管理员') adminTemplate = template;
   }
   if (!adminTemplate) throw new Error('无法创建全局管理员角色模板');
@@ -79,15 +88,13 @@ async function seed(): Promise<void> {
     defaults: {
       username: process.env.SEED_ADMIN_USERNAME || 'admin',
       passwordHash: await bcrypt.hash(password, 12),
-      department: '平台管理',
       email: process.env.SEED_ADMIN_EMAIL || null,
-      role: UserRole.ADMINISTRATOR,
-      roleId: adminTemplate.id,
-      tenantId: null,
+      globalRoleTemplateId: adminTemplate.id,
+      mustChangePassword: false,
       isActive: true,
     },
   });
-  await admin.update({ roleId: adminTemplate.id, tenantId: null });
+  await admin.update({ globalRoleTemplateId: adminTemplate.id });
   console.log(`✅ 控制面管理员 ${admin.username} 已就绪`);
 }
 

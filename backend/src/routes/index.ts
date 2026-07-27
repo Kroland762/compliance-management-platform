@@ -1,6 +1,6 @@
 import { Application } from 'express';
 import authRoutes from './auth.routes';
-import userRoutes from './user.routes';
+import memberRoutes from './member.routes';
 import templateRoutes from './template.routes';
 import taskRoutes from './task.routes';
 import questionnaireRoutes from './questionnaire.routes';
@@ -27,7 +27,7 @@ export function registerRoutes(app: Application): void {
 
   // 除认证和租户控制面外，所有业务 API 都必须在已认证租户上下文中运行。
   app.use('/api', authenticate, requireTenantContext);
-  app.use('/api/users', userRoutes);
+  app.use('/api/members', memberRoutes);
   app.use('/api/templates', templateRoutes);
   app.use('/api/tasks', taskRoutes);
   app.use('/api', questionnaireRoutes);
