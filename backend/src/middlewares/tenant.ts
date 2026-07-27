@@ -90,13 +90,10 @@ export async function resolveTenantForUser(
     return tenant;
   }
 
-  if (!headerTenantId) return null;
-  const tenant = await Tenant.findByPk(headerTenantId);
-  if (!tenant) throw new AppError(403, 'TENANT_NOT_FOUND', '选择的租户不存在');
-  if (tenant.status !== TenantStatus.ACTIVE) {
-    throw new AppError(403, 'TENANT_INACTIVE', '选择的租户已停用');
+  if (headerTenantId) {
+    throw new AppError(403, 'TENANT_CONTEXT_REQUIRED', '请先通过租户上下文接口签发租户令牌');
   }
-  return tenant;
+  return null;
 }
 
 export function enterResolvedTenant(

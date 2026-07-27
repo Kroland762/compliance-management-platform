@@ -18,7 +18,13 @@ export const normalizeErrorResponses: RequestHandler = (_req, res, next) => {
   res.json = ((body: any) => {
     if (!body?.error || res.statusCode < 400) return originalJson(body);
     const status = res.statusCode >= 500 ? 500 : res.statusCode;
-    const preserveTenantCode = body.error.code === 'TENANT_CONTEXT_REQUIRED';
+    const preservedCodes = new Set([
+      'TENANT_CONTEXT_REQUIRED',
+      'TENANT_INACTIVE',
+      'TENANT_NOT_FOUND',
+      'PASSWORD_CHANGE_REQUIRED',
+      'MEMBERSHIP_INACTIVE',
+    ]);
     const sensitive = /(sequelize|sql|select\s|insert\s|update\s.+set|delete\s+from|\/users\/|\/var\/|enoent|stack)/i
       .test(String(body.error.message || ''));
     const message = config.nodeEnv === 'production' && (status >= 500 || sensitive)
@@ -28,7 +34,7 @@ export const normalizeErrorResponses: RequestHandler = (_req, res, next) => {
       ...body,
       error: {
         ...body.error,
-        code: preserveTenantCode ? body.error.code : (CODE_BY_STATUS[status] || body.error.code),
+        code: preservedCodes.has(body.error.code) ? body.error.code : (CODE_BY_STATUS[status] || body.error.code),
         message,
         ...(config.nodeEnv === 'production' ? { stack: undefined } : {}),
       },

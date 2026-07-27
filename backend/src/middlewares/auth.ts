@@ -1,6 +1,11 @@
 import { Request, Response, NextFunction } from 'express';
 import authService from '../services/auth.service';
-import type { PermissionMatrix, PermissionResource, PermissionAction } from '../models/Role';
+import type {
+  PermissionMatrix,
+  PermissionScopeMatrix,
+  PermissionResource,
+  PermissionAction,
+} from '../models/Role';
 import { AppError } from '../utils/http';
 import { enterResolvedTenant, resolveTenantForUser } from './tenant';
 
@@ -12,9 +17,16 @@ declare global {
         userId: string;
         username: string;
         role: string;       // 角色名
-        roleId: string;     // 角色ID
+        roleIds: string[];
+        memberId?: string;
         tenantId?: string;  // 租户ID
         permissions: PermissionMatrix;
+        permissionScopes: PermissionScopeMatrix;
+        departmentIds: string[];
+        primaryDepartmentId?: string;
+        mustChangePassword: boolean;
+        isGlobalAdmin: boolean;
+        tokenKind: 'identity' | 'control' | 'tenant';
       };
     }
   }
@@ -26,7 +38,7 @@ function hasPermission(permissions: PermissionMatrix | undefined, resource: Perm
 }
 
 function isGlobalSuperAdmin(user: Express.Request['user']): boolean {
-  if (!user || user.tenantId) return false;
+  if (!user?.isGlobalAdmin) return false;
 
   // 全局超管必须同时满足“无租户上下文”和“具备租户管理全权限”，避免仅凭 tenantId 缺失误放权。
   return ['create', 'read', 'update', 'delete'].every((action) => hasPermission(user.permissions, 'tenants', action));
@@ -52,6 +64,12 @@ export function authenticate(req: Request, _res: Response, next: NextFunction): 
     .then(async (user) => {
       if (!user) throw new AppError(401, 'UNAUTHORIZED', '令牌对应的用户不存在');
       req.user = user;
+      if (user.mustChangePassword) {
+        const allowed = ['/api/auth/change-password', '/api/auth/logout'];
+        if (!allowed.some((path) => req.originalUrl.split('?')[0] === path)) {
+          throw new AppError(403, 'PASSWORD_CHANGE_REQUIRED', '首次登录必须先修改密码');
+        }
+      }
       const tenant = await resolveTenantForUser(req, user);
       enterResolvedTenant(req, tenant, next);
     })
@@ -67,6 +85,10 @@ export function authorize(resource: PermissionResource, action: PermissionAction
   return (req: Request, res: Response, next: NextFunction): void => {
     if (!req.user) {
       next(new AppError(401, 'UNAUTHORIZED', '未认证'));
+      return;
+    }
+    if (req.user.mustChangePassword) {
+      next(new AppError(403, 'PASSWORD_CHANGE_REQUIRED', '首次登录必须先修改密码'));
       return;
     }
 
@@ -103,6 +125,10 @@ export function superAdminOnly(req: Request, _res: Response, next: NextFunction)
     next(new AppError(403, 'FORBIDDEN', '仅全局超管可操作'));
     return;
   }
+  if (req.user.mustChangePassword) {
+    next(new AppError(403, 'PASSWORD_CHANGE_REQUIRED', '首次登录必须先修改密码'));
+    return;
+  }
   (req as any)._isSuperAdmin = true;
   next();
 }
@@ -114,6 +140,10 @@ export function authorizeAny(...checks: Array<[PermissionResource, PermissionAct
   return (req: Request, res: Response, next: NextFunction): void => {
     if (!req.user) {
       next(new AppError(401, 'UNAUTHORIZED', '未认证'));
+      return;
+    }
+    if (req.user.mustChangePassword) {
+      next(new AppError(403, 'PASSWORD_CHANGE_REQUIRED', '首次登录必须先修改密码'));
       return;
     }
 

@@ -3,6 +3,7 @@ import ControlAuditEvent from '../models/ControlAuditEvent';
 import Tenant from '../models/Tenant';
 import { runWithTenantContext } from '../middlewares/tenant';
 import auditLogService from './audit-log.service';
+import memberContextService from './member-context.service';
 
 interface AuthAuditEvent {
   operationType: OperationType.LOGIN | OperationType.LOGOUT;
@@ -21,16 +22,20 @@ class AuthAuditService {
       if (tenant) {
         await runWithTenantContext(
           { schema: tenant.schemaName, tenantId: tenant.id },
-          () => auditLogService.log({
-            userId: event.userId!,
-            operationType: event.operationType,
-            resourceType: 'session',
-            resourceId: event.userId,
-            operationDetails: event.details,
-            success: event.success,
-            ipAddress: event.ipAddress,
-            tenantId: tenant.id,
-          }),
+          async () => {
+            const context = await memberContextService.resolve(event.userId!, false);
+            return auditLogService.log({
+              userId: event.userId!,
+              operationType: event.operationType,
+              resourceType: 'session',
+              resourceId: event.userId,
+              operationDetails: event.details,
+              success: event.success,
+              ipAddress: event.ipAddress,
+              tenantId: tenant.id,
+              departmentId: context?.primaryDepartmentId,
+            });
+          },
         );
         return;
       }
