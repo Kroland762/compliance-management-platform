@@ -17,6 +17,8 @@ interface QualificationAttributes {
   ownerCompany: string | null;
   ownerDepartment: string | null;
   responsiblePerson: string | null;
+  ownerDepartmentId: string;
+  responsibleUserId: string | null;
   issueDate: string | null;
   expiryDate: string | null;
   attachmentUrl: string | null;
@@ -29,7 +31,7 @@ interface QualificationAttributes {
 type CreationAttributes = Optional<
   QualificationAttributes,
   'id' | 'certificateNo' | 'issuer' | 'ownerCompany' | 'ownerDepartment' | 'responsiblePerson' |
-  'issueDate' | 'expiryDate' | 'attachmentUrl' | 'notes' | 'createdBy' | 'createdAt' | 'updatedAt'
+  'issueDate' | 'expiryDate' | 'attachmentUrl' | 'notes' | 'createdBy' | 'responsibleUserId' | 'createdAt' | 'updatedAt'
 >;
 
 class Qualification extends Model<QualificationAttributes, CreationAttributes> implements QualificationAttributes {
@@ -41,6 +43,8 @@ class Qualification extends Model<QualificationAttributes, CreationAttributes> i
   declare ownerCompany: string | null;
   declare ownerDepartment: string | null;
   declare responsiblePerson: string | null;
+  declare ownerDepartmentId: string;
+  declare responsibleUserId: string | null;
   declare issueDate: string | null;
   declare expiryDate: string | null;
   declare attachmentUrl: string | null;
@@ -59,6 +63,8 @@ Qualification.init({
   ownerCompany: { type: DataTypes.STRING(150), allowNull: true },
   ownerDepartment: { type: DataTypes.STRING(100), allowNull: true },
   responsiblePerson: { type: DataTypes.STRING(100), allowNull: true },
+  ownerDepartmentId: { type: DataTypes.UUID, allowNull: false },
+  responsibleUserId: { type: DataTypes.UUID, allowNull: true },
   issueDate: { type: DataTypes.DATEONLY, allowNull: true },
   expiryDate: { type: DataTypes.DATEONLY, allowNull: true },
   attachmentUrl: { type: DataTypes.STRING(500), allowNull: true },
@@ -76,6 +82,7 @@ Qualification.init({
     { fields: ['category'] },
     { fields: ['ownerCompany'] },
     { fields: ['ownerDepartment'] },
+    { fields: ['ownerDepartmentId'] },
     { fields: ['expiryDate'] },
   ],
 });

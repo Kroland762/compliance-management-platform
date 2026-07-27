@@ -6,7 +6,7 @@ import QuestionItem from './QuestionItem';
 
 interface RiskRecordAttributes {
   id: string;
-  taskId: string | null;
+  taskId: string;
   questionItemId: string | null;
   assessmentType: AssessmentType;
   assessmentTarget: string;
@@ -19,11 +19,11 @@ interface RiskRecordAttributes {
   updatedAt: Date;
 }
 
-type CreationAttributes = Optional<RiskRecordAttributes, 'id' | 'taskId' | 'questionItemId' | 'identifiedAt' | 'updatedAt' | 'remediationMeasures'>;
+type CreationAttributes = Optional<RiskRecordAttributes, 'id' | 'questionItemId' | 'identifiedAt' | 'updatedAt' | 'remediationMeasures'>;
 
 class RiskRecord extends Model<RiskRecordAttributes, CreationAttributes> implements RiskRecordAttributes {
   declare id: string;
-  declare taskId: string | null;
+  declare taskId: string;
   declare questionItemId: string | null;
   declare assessmentType: AssessmentType;
   declare assessmentTarget: string;
@@ -39,7 +39,7 @@ class RiskRecord extends Model<RiskRecordAttributes, CreationAttributes> impleme
 RiskRecord.init(
   {
     id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
-    taskId: { type: DataTypes.UUID, allowNull: true, references: { model: AuditTask, key: 'id' } },
+    taskId: { type: DataTypes.UUID, allowNull: false, references: { model: AuditTask, key: 'id' } },
     questionItemId: { type: DataTypes.UUID, allowNull: true, references: { model: QuestionItem, key: 'id' } },
     assessmentType: { type: DataTypes.STRING(100), allowNull: false },
     assessmentTarget: { type: DataTypes.STRING(200), allowNull: false },

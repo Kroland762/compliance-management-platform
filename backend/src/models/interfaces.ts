@@ -3,35 +3,33 @@
 // ========================================
 
 import {
-  UserRole, AssessmentType, TaskStatus, AnswerStatus,
+  AssessmentType, TaskStatus, AnswerStatus,
   ComplianceStatus, RiskLevel, RemediationStatus, RiskStatus,
   NotificationType, OperationType,
 } from './enums';
 
-// ---- User ----
-export interface IUser {
+// ---- Global identity and tenant member ----
+export interface IUserIdentity {
   id: string;
   username: string;
   passwordHash: string;
-  department: string | null;
-  role: UserRole;
+  email: string | null;
+  globalRoleTemplateId: string | null;
+  mustChangePassword: boolean;
   lastLogin: Date | null;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
 
-export interface IUserCreate {
-  username: string;
-  password: string;
-  department?: string;
-  role: UserRole;
-}
-
-export interface IUserUpdate {
-  department?: string;
-  role?: UserRole;
-  isActive?: boolean;
+export interface ITenantMember {
+  id: string;
+  userId: string;
+  displayName: string;
+  employeeNo: string | null;
+  email: string | null;
+  status: 'invited' | 'active' | 'suspended' | 'left';
+  sessionVersion: number;
 }
 
 // ---- QuestionnaireTemplate ----
@@ -65,6 +63,7 @@ export interface IAuditTask {
   assessmentTarget: string;
   createdBy: string;
   assignedTo: string;
+  departmentId: string;
   status: TaskStatus;
   returnReason: string | null;
   returnedAssignees: string[] | null;
@@ -78,6 +77,7 @@ export interface IAuditTaskCreate {
   assessmentType: AssessmentType;
   assessmentTarget: string;
   assignedTo: string;
+  departmentId: string;
   questionAssignments?: IQuestionAssignment[];
 }
 

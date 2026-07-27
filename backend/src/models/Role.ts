@@ -24,10 +24,14 @@ export const PERMISSION_DEFINITIONS = {
 
 export type PermissionResource = keyof typeof PERMISSION_DEFINITIONS;
 export type PermissionAction = string;
+export type DataScope = 'self' | 'assigned' | 'department' | 'department_tree' | 'all';
 
 // 完整权限矩阵类型: { users: string[], templates: string[], ... }
 export type PermissionMatrix = {
   [K in PermissionResource]?: PermissionAction[];
+};
+export type PermissionScopeMatrix = {
+  [K in PermissionResource]?: Record<PermissionAction, DataScope>;
 };
 
 const DEFAULT_PERMISSIONS: PermissionMatrix = {};
@@ -38,12 +42,16 @@ interface RoleAttributes {
   name: string;
   description: string | null;
   permissions: PermissionMatrix;
+  permissionScopes: PermissionScopeMatrix;
   isSystem: boolean;
+  systemKey: string | null;
+  isLocked: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
 
-type CreationAttributes = Optional<RoleAttributes, 'id' | 'description' | 'createdAt' | 'updatedAt'>;
+type CreationAttributes = Optional<RoleAttributes,
+  'id' | 'description' | 'permissionScopes' | 'isSystem' | 'systemKey' | 'isLocked' | 'createdAt' | 'updatedAt'>;
 
 class Role extends Model<RoleAttributes, CreationAttributes> implements RoleAttributes {
   declare id: string;
@@ -51,7 +59,10 @@ class Role extends Model<RoleAttributes, CreationAttributes> implements RoleAttr
   declare name: string;
   declare description: string | null;
   declare permissions: PermissionMatrix;
+  declare permissionScopes: PermissionScopeMatrix;
   declare isSystem: boolean;
+  declare systemKey: string | null;
+  declare isLocked: boolean;
   declare createdAt: Date;
   declare updatedAt: Date;
 
@@ -69,7 +80,10 @@ Role.init({
   name: { type: DataTypes.STRING(50), allowNull: false },
   description: { type: DataTypes.STRING(255), allowNull: true },
   permissions: { type: DataTypes.JSONB, allowNull: false, defaultValue: DEFAULT_PERMISSIONS },
+  permissionScopes: { type: DataTypes.JSONB, allowNull: false, defaultValue: {} },
   isSystem: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+  systemKey: { type: DataTypes.STRING(60), allowNull: true },
+  isLocked: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   createdAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
   updatedAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
 }, {
@@ -78,6 +92,9 @@ Role.init({
   timestamps: true,
   createdAt: 'createdAt',
   updatedAt: 'updatedAt',
+  indexes: [
+    { unique: true, fields: ['tenantId', 'name'] },
+  ],
 });
 
 export default Role;

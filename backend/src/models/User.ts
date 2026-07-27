@@ -1,16 +1,12 @@
 import { DataTypes, Model, type Optional } from 'sequelize';
 import sequelize from '../config/database';
-import { UserRole } from './enums';
-
 interface UserAttributes {
   id: string;
   username: string;
   passwordHash: string;
-  department: string | null;
   email: string | null;
-  role: UserRole;
-  roleId: string | null;
-  tenantId: string | null;
+  globalRoleTemplateId: string | null;
+  mustChangePassword: boolean;
   lastLogin: Date | null;
   isActive: boolean;
   failedLoginAttempts: number;
@@ -20,17 +16,15 @@ interface UserAttributes {
   updatedAt: Date;
 }
 
-type UserCreationAttributes = Optional<UserAttributes, 'id' | 'createdAt' | 'updatedAt' | 'lastLogin' | 'failedLoginAttempts' | 'lockedUntil' | 'roleId' | 'tenantId' | 'tokenVersion'>;
+type UserCreationAttributes = Optional<UserAttributes, 'id' | 'createdAt' | 'updatedAt' | 'lastLogin' | 'failedLoginAttempts' | 'lockedUntil' | 'globalRoleTemplateId' | 'mustChangePassword' | 'tokenVersion'>;
 
 class User extends Model<UserAttributes, UserCreationAttributes> implements UserAttributes {
   declare id: string;
   declare username: string;
   declare passwordHash: string;
-  declare department: string | null;
   declare email: string | null;
-  declare role: UserRole;
-  declare roleId: string | null;
-  declare tenantId: string | null;
+  declare globalRoleTemplateId: string | null;
+  declare mustChangePassword: boolean;
 
   declare lastLogin: Date | null;
   declare isActive: boolean;
@@ -46,11 +40,9 @@ User.init(
     id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
     username: { type: DataTypes.STRING(50), allowNull: false, unique: true },
     passwordHash: { type: DataTypes.STRING(255), allowNull: false },
-    department: { type: DataTypes.STRING(100), allowNull: true },
     email: { type: DataTypes.STRING(200), allowNull: true },
-    role: { type: DataTypes.STRING(30), allowNull: false, validate: { isIn: [Object.values(UserRole)] } },
-    roleId: { type: DataTypes.UUID, allowNull: true },
-    tenantId: { type: DataTypes.UUID, allowNull: true },
+    globalRoleTemplateId: { type: DataTypes.UUID, allowNull: true },
+    mustChangePassword: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     lastLogin: { type: DataTypes.DATE, allowNull: true },
     isActive: { type: DataTypes.BOOLEAN, defaultValue: true },
     failedLoginAttempts: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },

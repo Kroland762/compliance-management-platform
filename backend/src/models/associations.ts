@@ -13,6 +13,9 @@ import Notification from './Notification';
 import AuditLog from './AuditLog';
 import Department from './Department';
 import DepartmentMember from './DepartmentMember';
+import TenantMember from './TenantMember';
+import MemberRole from './MemberRole';
+import Role from './Role';
 
 export function setupAssociations(): void {
   // QuestionnaireTemplate 1:N QuestionTemplate
@@ -71,13 +74,23 @@ export function setupAssociations(): void {
   User.hasMany(AuditLog, { foreignKey: 'userId', as: 'auditLogs' });
   AuditLog.belongsTo(User, { foreignKey: 'userId', as: 'user' });
 
-  // Department tree + User M:N Department memberships
+  // Tenant member, role and department relationships. Business actor fields
+  // deliberately continue to reference public User IDs.
+  User.hasMany(TenantMember, { foreignKey: 'userId', as: 'tenantMembers' });
+  TenantMember.belongsTo(User, { foreignKey: 'userId', as: 'user' });
+  TenantMember.belongsToMany(Role, { through: MemberRole, foreignKey: 'memberId', otherKey: 'roleId', as: 'roles' });
+  Role.belongsToMany(TenantMember, { through: MemberRole, foreignKey: 'roleId', otherKey: 'memberId', as: 'members' });
+  TenantMember.hasMany(MemberRole, { foreignKey: 'memberId', as: 'memberRoles', onDelete: 'CASCADE' });
+  MemberRole.belongsTo(TenantMember, { foreignKey: 'memberId', as: 'member' });
+  Role.hasMany(MemberRole, { foreignKey: 'roleId', as: 'memberRoles', onDelete: 'CASCADE' });
+  MemberRole.belongsTo(Role, { foreignKey: 'roleId', as: 'role' });
+
   Department.hasMany(Department, { foreignKey: 'parentId', as: 'children' });
   Department.belongsTo(Department, { foreignKey: 'parentId', as: 'parent' });
-  Department.belongsToMany(User, { through: DepartmentMember, foreignKey: 'departmentId', otherKey: 'userId', as: 'members' });
-  User.belongsToMany(Department, { through: DepartmentMember, foreignKey: 'userId', otherKey: 'departmentId', as: 'departments' });
+  Department.belongsToMany(TenantMember, { through: DepartmentMember, foreignKey: 'departmentId', otherKey: 'memberId', as: 'members' });
+  TenantMember.belongsToMany(Department, { through: DepartmentMember, foreignKey: 'memberId', otherKey: 'departmentId', as: 'departments' });
   Department.hasMany(DepartmentMember, { foreignKey: 'departmentId', as: 'departmentMembers', onDelete: 'CASCADE' });
   DepartmentMember.belongsTo(Department, { foreignKey: 'departmentId', as: 'department' });
-  User.hasMany(DepartmentMember, { foreignKey: 'userId', as: 'departmentMembers', onDelete: 'CASCADE' });
-  DepartmentMember.belongsTo(User, { foreignKey: 'userId', as: 'user' });
+  TenantMember.hasMany(DepartmentMember, { foreignKey: 'memberId', as: 'departmentMembers', onDelete: 'CASCADE' });
+  DepartmentMember.belongsTo(TenantMember, { foreignKey: 'memberId', as: 'member' });
 }
