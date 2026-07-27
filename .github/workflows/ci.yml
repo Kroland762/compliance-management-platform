@@ -60,7 +60,7 @@ jobs:
         run: |
           npm run migrate:up
           npm run seed
-          npx tsx -e "import {setupAssociations} from './src/models/associations'; import service from './src/services/tenant-provisioning.service'; import db from './src/config/database'; setupAssociations(); service.provision({name:'CI Tenant',slug:'ci'}).finally(()=>db.close())"
+          npx tsx -e "import {setupAssociations} from './src/models/associations'; import service from './src/services/tenant-provisioning.service'; import db from './src/config/database'; setupAssociations(); service.provision({name:'CI Tenant',slug:'ci',admin:{username:'ci_tenant_admin',displayName:'CI Tenant Admin',email:'ci-tenant-admin@example.com'}}).finally(()=>db.close())"
           npm run migrate:up
           npm run migrate:status
 

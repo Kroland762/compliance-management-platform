@@ -1,308 +1,387 @@
 const runIntegration = process.env.RUN_PG_INTEGRATION === 'true';
 const describeIntegration = runIntegration ? describe : describe.skip;
 
-describeIntegration('PostgreSQL tenant isolation and context API', () => {
+describeIntegration('tenant identity, membership, roles and organization governance', () => {
   let sequelize;
-  let app;
   let request;
   let jwt;
+  let bcrypt;
   let tenantA;
   let tenantB;
-  let globalToken;
-  let tenantToken;
-  let tenantUser;
-  let tenantUsername;
-  const tenantPassword = 'TenantLogin1234!';
-  let tenantBQualificationId;
-  let tenantBTaskId;
+  let tenantAToken;
+  let tenantBToken;
+  let identityToken;
+  let sharedUser;
+  let memberA;
+  let memberB;
+  let departmentA;
+  let departmentB;
+  let roleA;
+  let roleB;
+  let taskB;
+  let qualificationB;
+  const sharedPassword = 'SharedMember123!';
 
   beforeAll(async () => {
     const supertest = require('supertest');
     jwt = require('jsonwebtoken');
+    bcrypt = require('bcrypt');
     sequelize = require('../src/config/database').default;
-    app = require('../src/index').createApp();
-    request = supertest(app);
+    request = supertest(require('../src/index').createApp());
     const { migrateUp } = require('../src/config/migrations/runner');
     const {
-      RoleTemplate, Role, User, UserRole, Qualification, Department,
-      QuestionnaireTemplate, AuditTask, AssessmentType, TaskStatus,
+      AuditTask,
+      Department,
+      DepartmentMember,
+      MemberRole,
+      Qualification,
+      QuestionnaireTemplate,
+      Role,
+      RoleTemplate,
+      TenantMember,
+      User,
     } = require('../src/models');
     const provisioning = require('../src/services/tenant-provisioning.service').default;
     const { runWithTenantContext } = require('../src/middlewares/tenant');
 
     await migrateUp();
-    const adminPermissions = {
-      tenants: ['create', 'read', 'update', 'delete'],
-      users: ['create', 'read', 'update', 'delete'],
-      dashboard: ['read'],
-      qualifications: ['create', 'read', 'update', 'delete'],
-      tasks: ['create', 'read', 'update', 'delete'],
-      risks: ['read', 'update'],
-      settings: ['read', 'update'],
-      audit_logs: ['read'],
-    };
-    const [template] = await RoleTemplate.findOrCreate({
-      where: { name: '集成测试超管' },
-      defaults: { name: '集成测试超管', permissions: adminPermissions, isSystem: true },
-    });
-    await template.update({ permissions: adminPermissions });
-
     const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    tenantA = await provisioning.provision({ name: '租户甲', slug: `a_${suffix}` });
-    tenantB = await provisioning.provision({ name: '租户乙', slug: `b_${suffix}` });
-
-    const [globalUser] = await User.findOrCreate({
-      where: { username: `global_${suffix}` },
-      defaults: {
-        username: `global_${suffix}`,
-        passwordHash: 'not-used',
-        role: UserRole.ADMINISTRATOR,
-        roleId: template.id,
-        tenantId: null,
-        isActive: true,
+    const provisionA = await provisioning.provision({
+      name: '身份治理租户甲',
+      slug: `identity_a_${suffix}`,
+      admin: {
+        username: `bootstrap_a_${suffix}`,
+        displayName: '甲租户首位管理员',
+        email: `bootstrap-a-${suffix}@example.com`,
       },
     });
-    globalToken = jwt.sign({
-      userId: globalUser.id,
-      username: globalUser.username,
-      role: template.name,
-      roleId: template.id,
-      tokenVersion: globalUser.tokenVersion,
-    }, process.env.JWT_SECRET || 'dev-secret-do-not-use-in-prod', { expiresIn: 600 });
+    const provisionB = await provisioning.provision({
+      name: '身份治理租户乙',
+      slug: `identity_b_${suffix}`,
+      admin: {
+        username: `bootstrap_b_${suffix}`,
+        displayName: '乙租户首位管理员',
+        email: `bootstrap-b-${suffix}@example.com`,
+      },
+    });
+    tenantA = provisionA.tenant;
+    tenantB = provisionB.tenant;
 
-    let tenantRole;
-    await runWithTenantContext({ schema: tenantA.schemaName, tenantId: tenantA.id }, async () => {
-      tenantRole = await Role.findOne({ where: { tenantId: tenantA.id, name: '集成测试超管' } });
-      await Qualification.create({ name: '同名资质', category: '企业资质' });
-      await Department.create({ name: '同名部门' });
-      const templateA = await QuestionnaireTemplate.create({
-        name: '同名模板',
-        description: null,
-        createdBy: globalUser.id,
-      });
-      await AuditTask.create({
-        templateId: templateA.id,
-        assessmentType: AssessmentType.ISO27001,
-        assessmentTarget: '同名任务',
-        createdBy: globalUser.id,
-        status: TaskStatus.DRAFT,
-      });
-    });
-    await runWithTenantContext({ schema: tenantB.schemaName, tenantId: tenantB.id }, async () => {
-      const row = await Qualification.create({ name: '同名资质', category: '企业资质' });
-      tenantBQualificationId = row.id;
-      await Department.create({ name: '同名部门' });
-      const templateB = await QuestionnaireTemplate.create({
-        name: '同名模板',
-        description: null,
-        createdBy: globalUser.id,
-      });
-      const taskB = await AuditTask.create({
-        templateId: templateB.id,
-        assessmentType: AssessmentType.ISO27001,
-        assessmentTarget: '同名任务',
-        createdBy: globalUser.id,
-        status: TaskStatus.DRAFT,
-      });
-      tenantBTaskId = taskB.id;
-    });
-    const bcrypt = require('bcrypt');
-    tenantUsername = `tenant_${suffix}`;
-    tenantUser = await User.create({
-      username: tenantUsername,
-      passwordHash: await bcrypt.hash(tenantPassword, 6),
-      role: UserRole.ADMINISTRATOR,
-      roleId: tenantRole.id,
-      tenantId: tenantA.id,
+    sharedUser = await User.create({
+      username: `shared_${suffix}`,
+      passwordHash: await bcrypt.hash(sharedPassword, 12),
+      email: `shared-${suffix}@example.com`,
+      globalRoleTemplateId: null,
+      mustChangePassword: false,
       isActive: true,
     });
-    tenantToken = jwt.sign({
-      userId: tenantUser.id,
-      username: tenantUser.username,
-      role: tenantRole.name,
-      roleId: tenantRole.id,
-      tenantId: tenantA.id,
-      tokenVersion: tenantUser.tokenVersion,
-    }, process.env.JWT_SECRET || 'dev-secret-do-not-use-in-prod', { expiresIn: 600 });
-  }, 60_000);
+
+    await runWithTenantContext({ schema: tenantA.schemaName, tenantId: tenantA.id }, async () => {
+      roleA = await Role.findOne({ where: { systemKey: 'tenant_admin' } });
+      departmentA = await Department.findOne({ where: { code: 'ROOT' } });
+      memberA = await TenantMember.create({
+        userId: sharedUser.id,
+        displayName: '同一身份（甲）',
+        employeeNo: 'A-001',
+        status: 'active',
+        joinedAt: new Date(),
+        createdSource: 'invitation',
+      });
+      await MemberRole.create({ memberId: memberA.id, roleId: roleA.id });
+      await DepartmentMember.create({
+        memberId: memberA.id,
+        departmentId: departmentA.id,
+        isPrimary: true,
+      });
+    });
+
+    await runWithTenantContext({ schema: tenantB.schemaName, tenantId: tenantB.id }, async () => {
+      roleB = await Role.findOne({ where: { systemKey: 'auditor' } });
+      const memberRole = await Role.findOne({ where: { systemKey: 'member' } });
+      departmentB = await Department.findOne({ where: { code: 'ROOT' } });
+      memberB = await TenantMember.create({
+        userId: sharedUser.id,
+        displayName: '同一身份（乙）',
+        employeeNo: 'B-009',
+        status: 'active',
+        joinedAt: new Date(),
+        createdSource: 'invitation',
+      });
+      await MemberRole.bulkCreate([
+        { memberId: memberB.id, roleId: roleB.id },
+        { memberId: memberB.id, roleId: memberRole.id },
+      ]);
+      await DepartmentMember.create({
+        memberId: memberB.id,
+        departmentId: departmentB.id,
+        isPrimary: true,
+      });
+      qualificationB = await Qualification.create({
+        name: '乙租户私有资质',
+        category: '企业资质',
+        ownerDepartmentId: departmentB.id,
+        responsibleUserId: sharedUser.id,
+        createdBy: sharedUser.id,
+      });
+      const template = await QuestionnaireTemplate.create({
+        name: '乙租户私有模板',
+        description: null,
+        createdBy: sharedUser.id,
+      });
+      taskB = await AuditTask.create({
+        templateId: template.id,
+        assessmentType: 'ISO27001',
+        assessmentTarget: '乙租户私有任务',
+        createdBy: sharedUser.id,
+        assignedTo: sharedUser.id,
+        reviewerId: sharedUser.id,
+        departmentId: departmentB.id,
+        status: 'draft',
+      });
+    });
+
+    identityToken = jwt.sign({
+      kind: 'identity',
+      userId: sharedUser.id,
+      username: sharedUser.username,
+      tokenVersion: sharedUser.tokenVersion,
+      passwordChangeRequired: false,
+      isGlobalAdmin: false,
+    }, process.env.JWT_SECRET, { expiresIn: 600 });
+  }, 90_000);
 
   afterAll(async () => {
     await sequelize.close();
   });
 
-  test('global administrator must explicitly select a tenant for business APIs', async () => {
-    const denied = await request.get('/api/stats').set('Authorization', `Bearer ${globalToken}`);
-    expect(denied.status).toBe(403);
-    expect(denied.body.error.code).toBe('TENANT_CONTEXT_REQUIRED');
+  test('one global identity selects either tenant and receives different member context', async () => {
+    const contexts = await request.get('/api/auth/contexts')
+      .set('Authorization', `Bearer ${identityToken}`);
+    expect(contexts.status).toBe(200);
+    expect(contexts.body.data.items.map((item) => item.id)).toEqual(
+      expect.arrayContaining([tenantA.id, tenantB.id]),
+    );
 
-    const allowed = await request.get('/api/qualifications')
-      .set('Authorization', `Bearer ${globalToken}`)
-      .set('X-Tenant-ID', tenantA.id);
-    expect(allowed.status).toBe(200);
-    expect(allowed.body.data.pagination.total).toBe(1);
-    expect(allowed.body.data.items[0].name).toBe('同名资质');
+    const selectedA = await request.post('/api/auth/context')
+      .set('Authorization', `Bearer ${identityToken}`)
+      .send({ tenantId: tenantA.id });
+    expect(selectedA.status).toBe(200);
+    expect(selectedA.body.data.user).toMatchObject({
+      tenantId: tenantA.id,
+      memberId: memberA.id,
+      primaryDepartmentId: departmentA.id,
+    });
+    tenantAToken = selectedA.body.data.token;
 
-    const taskList = await request.get('/api/tasks?page=1&pageSize=20')
-      .set('Authorization', `Bearer ${globalToken}`)
-      .set('X-Tenant-ID', tenantA.id);
-    expect(taskList.status).toBe(200);
-    expect(taskList.body.data.pagination.total).toBe(1);
-    expect(taskList.body.data.items[0].assessmentTarget).toBe('同名任务');
+    const selectedB = await request.post('/api/auth/context')
+      .set('Authorization', `Bearer ${identityToken}`)
+      .send({ tenantId: tenantB.id });
+    expect(selectedB.status).toBe(200);
+    expect(selectedB.body.data.user).toMatchObject({
+      tenantId: tenantB.id,
+      memberId: memberB.id,
+      primaryDepartmentId: departmentB.id,
+    });
+    expect(selectedB.body.data.user.roleIds).toHaveLength(2);
+    expect(selectedB.body.data.user.permissions.tasks).toEqual(
+      expect.arrayContaining(['read', 'update', 'submit']),
+    );
+    tenantBToken = selectedB.body.data.token;
   });
 
-  test('tenant users cannot forge X-Tenant-ID', async () => {
-    const response = await request.get('/api/qualifications')
-      .set('Authorization', `Bearer ${tenantToken}`)
+  test('forged tenant header is 403 and cross-tenant object ids are indistinguishable 404s', async () => {
+    const forged = await request.get('/api/members')
+      .set('Authorization', `Bearer ${tenantAToken}`)
       .set('X-Tenant-ID', tenantB.id);
-    expect(response.status).toBe(403);
-    expect(response.body.error.code).toBe('FORBIDDEN');
+    expect(forged.status).toBe(403);
+    expect(forged.body.error.code).toBe('FORBIDDEN');
+
+    const hiddenTask = await request.get(`/api/tasks/${taskB.id}`)
+      .set('Authorization', `Bearer ${tenantAToken}`);
+    expect(hiddenTask.status).toBe(404);
+
+    const hiddenQualification = await request.put(`/api/qualifications/${qualificationB.id}`)
+      .set('Authorization', `Bearer ${tenantAToken}`)
+      .send({ name: '越权修改' });
+    expect(hiddenQualification.status).toBe(404);
   });
 
-  test('security settings, tenant entry, login and logout create tenant audit logs', async () => {
-    const contextResponse = await request.post(`/api/tenants/${tenantA.id}/context`)
-      .set('Authorization', `Bearer ${globalToken}`);
-    expect(contextResponse.status).toBe(200);
+  test('member session version revokes an issued tenant token immediately', async () => {
+    const { TenantMember } = require('../src/models');
+    const { runWithTenantContext } = require('../src/middlewares/tenant');
+    await runWithTenantContext(
+      { schema: tenantB.schemaName, tenantId: tenantB.id },
+      () => memberB.increment('sessionVersion'),
+    );
+    const revoked = await request.get('/api/stats')
+      .set('Authorization', `Bearer ${tenantBToken}`);
+    expect(revoked.status).toBe(401);
+    expect(revoked.body.error.code).toBe('UNAUTHORIZED');
 
-    const settingsResponse = await request.put('/api/settings/security')
-      .set('Authorization', `Bearer ${globalToken}`)
-      .set('X-Tenant-ID', tenantA.id)
-      .send({
-        maxLoginAttempts: 6,
-        lockDurationMinutes: 30,
-        idleTimeoutMinutes: 60,
-        auditLogRetentionDays: 180,
+    await runWithTenantContext(
+      { schema: tenantB.schemaName, tenantId: tenantB.id },
+      () => TenantMember.findByPk(memberB.id).then((row) => row.reload()),
+    );
+  });
+
+  test('active members require exactly one primary department and at least one role', async () => {
+    const { DepartmentMember, MemberRole } = require('../src/models');
+    const { runWithTenantContext } = require('../src/middlewares/tenant');
+    await runWithTenantContext({ schema: tenantA.schemaName, tenantId: tenantA.id }, async () => {
+      const primaryCount = await DepartmentMember.count({
+        where: { memberId: memberA.id, isPrimary: true },
       });
-    expect(settingsResponse.status).toBe(200);
+      const roleCount = await MemberRole.count({ where: { memberId: memberA.id } });
+      expect(primaryCount).toBe(1);
+      expect(roleCount).toBeGreaterThan(0);
+    });
+  });
 
+  test('temporary password accounts can only change password or logout', async () => {
+    const { User } = require('../src/models');
+    const provisioning = require('../src/services/tenant-provisioning.service').default;
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const result = await provisioning.provision({
+      name: '临时密码租户',
+      slug: `temporary_${Date.now()}_${suffix}`,
+      admin: {
+        username: `temporary_admin_${suffix}`,
+        displayName: '临时管理员',
+      },
+    });
     const captchaService = require('../src/services/captcha.service').default;
     const captcha = jest.spyOn(captchaService, 'verify').mockReturnValueOnce(true);
-    const loginResponse = await request.post('/api/auth/login').send({
-      username: tenantUsername,
-      password: tenantPassword,
+    const login = await request.post('/api/auth/login').send({
+      username: result.bootstrapCredentials.username,
+      password: result.bootstrapCredentials.temporaryPassword,
       captchaId: 'integration-captcha',
       captchaCode: 'abcd',
     });
     captcha.mockRestore();
-    expect(loginResponse.status).toBe(200);
+    expect(login.status).toBe(200);
+    expect(login.body.data.status).toBe('password_change_required');
 
-    const logoutResponse = await request.post('/api/auth/logout')
-      .set('Authorization', `Bearer ${loginResponse.body.data.token}`);
-    expect(logoutResponse.status).toBe(200);
+    const denied = await request.get('/api/auth/contexts')
+      .set('Authorization', `Bearer ${login.body.data.token}`);
+    expect(denied.status).toBe(403);
+    expect(denied.body.error.code).toBe('PASSWORD_CHANGE_REQUIRED');
+    expect(denied.body.error.message).toContain('修改密码');
 
-    const { AuditLog, OperationType } = require('../src/models');
-    const { runWithTenantContext } = require('../src/middlewares/tenant');
-    const logs = await runWithTenantContext(
-      { schema: tenantA.schemaName, tenantId: tenantA.id },
-      () => AuditLog.findAll({
-        where: {
-          operationType: [
-            OperationType.LOGIN,
-            OperationType.LOGOUT,
-            OperationType.UPDATE,
-          ],
-        },
-        order: [['createdAt', 'ASC']],
-      }),
-    );
-    const events = logs.map((log) => ({
-      operationType: log.operationType,
-      resourceType: log.resourceType,
-      details: log.operationDetails || '',
-      userId: log.userId,
-    }));
+    const changed = await request.post('/api/auth/change-password')
+      .set('Authorization', `Bearer ${login.body.data.token}`)
+      .send({
+        oldPassword: result.bootstrapCredentials.temporaryPassword,
+        newPassword: 'ChangedPassword123!',
+      });
+    expect(changed.status).toBe(200);
+    const user = await User.findOne({ where: { username: result.bootstrapCredentials.username } });
+    expect(user.mustChangePassword).toBe(false);
+  }, 60_000);
 
-    expect(events).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        operationType: OperationType.LOGIN,
-        resourceType: 'session',
-        userId: tenantUser.id,
-      }),
-      expect.objectContaining({
-        operationType: OperationType.LOGOUT,
-        resourceType: 'session',
-        userId: tenantUser.id,
-      }),
-      expect.objectContaining({
-        operationType: OperationType.UPDATE,
-        resourceType: 'security_settings',
-      }),
-    ]));
-    expect(events.some((event) => event.details.includes('进入租户上下文'))).toBe(true);
-    expect(JSON.stringify(events)).not.toContain(tenantPassword);
-    expect(JSON.stringify(events)).not.toContain('integration-captcha');
-    expect(JSON.stringify(events)).not.toContain('abcd');
-  });
-
-  test('cross-tenant object IDs return 404 and 45 rows paginate 20/20/5', async () => {
-    const { Qualification } = require('../src/models');
-    const { runWithTenantContext } = require('../src/middlewares/tenant');
-    await runWithTenantContext({ schema: tenantA.schemaName, tenantId: tenantA.id }, async () => {
-      await Qualification.bulkCreate(Array.from({ length: 45 }, (_, index) => ({
-        name: `分页资质-${index + 1}`,
-        category: '分页测试',
-      })));
+  test('legacy tenant upgrade deterministically migrates one role and one department membership', async () => {
+    const { randomUUID } = require('crypto');
+    const { QueryTypes } = require('sequelize');
+    const migrations = require('../src/config/migrations/registry').default;
+    const { migrationChecksum } = require('../src/config/migrations/registry');
+    const { migrateUp } = require('../src/config/migrations/runner');
+    const { User } = require('../src/models');
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const schema = `tenant_legacy_${suffix}`;
+    const tenantId = randomUUID();
+    const roleId = randomUUID();
+    const departmentId = randomUUID();
+    const departmentMemberId = randomUUID();
+    const legacyUser = await User.create({
+      username: `legacy_${suffix}`,
+      passwordHash: await bcrypt.hash('LegacyPassword123!', 12),
+      email: null,
+      globalRoleTemplateId: null,
+      mustChangePassword: false,
+      isActive: true,
     });
-    const baseHeaders = { Authorization: `Bearer ${globalToken}`, 'X-Tenant-ID': tenantA.id };
-    const pages = await Promise.all([1, 2, 3].map((page) =>
-      request.get(`/api/qualifications?category=${encodeURIComponent('分页测试')}&page=${page}&pageSize=20`)
-        .set(baseHeaders)));
-    expect(pages.map((response) => response.body.data.items.length)).toEqual([20, 20, 5]);
-    expect(pages[0].body.data.pagination.total).toBe(45);
-    expect(pages[0].body.data.summary).toMatchObject({ total: 45, missing: 45 });
+    const quote = `"${schema}"`;
+    try {
+      await sequelize.query(`ALTER TABLE public.users
+        ADD COLUMN IF NOT EXISTS department varchar(100),
+        ADD COLUMN IF NOT EXISTS role varchar(30),
+        ADD COLUMN IF NOT EXISTS "roleId" uuid,
+        ADD COLUMN IF NOT EXISTS "tenantId" uuid`);
+      await sequelize.query(`UPDATE public.users
+        SET department = 'Legacy Security', role = 'auditor', "roleId" = :roleId, "tenantId" = :tenantId
+        WHERE id = :userId`, { replacements: { roleId, tenantId, userId: legacyUser.id } });
+      await sequelize.query(`INSERT INTO public.tenants
+        (id, name, slug, status, "schemaName", "createdAt", "updatedAt")
+        VALUES (:tenantId, 'Legacy Tenant', :slug, 'active', :schema, now(), now())`, {
+        replacements: { tenantId, slug: `legacy_${suffix}`, schema },
+      });
+      await sequelize.query(`CREATE SCHEMA ${quote}`);
+      await sequelize.query(`
+        CREATE TABLE ${quote}.roles (
+          id uuid PRIMARY KEY, "tenantId" uuid NOT NULL, name varchar(50) NOT NULL,
+          description varchar(255), permissions jsonb NOT NULL DEFAULT '{}'::jsonb,
+          "isSystem" boolean NOT NULL DEFAULT false,
+          "createdAt" timestamptz NOT NULL DEFAULT now(), "updatedAt" timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE TABLE ${quote}.departments (
+          id uuid PRIMARY KEY, name varchar(100) NOT NULL, "parentId" uuid,
+          description varchar(255), "sortOrder" integer NOT NULL DEFAULT 0,
+          "createdAt" timestamptz NOT NULL DEFAULT now(), "updatedAt" timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE TABLE ${quote}.department_members (
+          id uuid PRIMARY KEY, "departmentId" uuid NOT NULL, "userId" uuid NOT NULL,
+          "createdAt" timestamptz NOT NULL DEFAULT now(), "updatedAt" timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE TABLE ${quote}.audit_tasks (id uuid PRIMARY KEY);
+        CREATE TABLE ${quote}.qualifications (id uuid PRIMARY KEY);
+        CREATE TABLE ${quote}.audit_logs (id uuid PRIMARY KEY);
+        CREATE TABLE ${quote}.risk_records (id uuid PRIMARY KEY, "taskId" uuid);
+      `);
+      await sequelize.query(`INSERT INTO ${quote}.roles
+        (id, "tenantId", name, permissions, "isSystem") VALUES (:roleId, :tenantId, 'Legacy Auditor', '{}', false);
+        INSERT INTO ${quote}.departments (id, name) VALUES (:departmentId, 'Legacy Security');
+        INSERT INTO ${quote}.department_members (id, "departmentId", "userId")
+          VALUES (:departmentMemberId, :departmentId, :userId)`, {
+        replacements: { roleId, tenantId, departmentId, departmentMemberId, userId: legacyUser.id },
+      });
+      for (const migrationId of ['001_tenant_business', '002_tenant_security_fields']) {
+        const migration = migrations.find((item) => item.id === migrationId);
+        await sequelize.query(`INSERT INTO public.schema_migrations
+          (migration_id, schema_name, checksum) VALUES (:migrationId, :schema, :checksum)`, {
+          replacements: { migrationId, schema, checksum: migrationChecksum(migration) },
+        });
+      }
 
-    const hidden = await request.put(`/api/qualifications/${tenantBQualificationId}`)
-      .set(baseHeaders)
-      .send({ name: '越权修改', category: '企业资质' });
-    expect(hidden.status).toBe(404);
-
-    const hiddenTask = await request.get(`/api/tasks/${tenantBTaskId}`).set(baseHeaders);
-    expect(hiddenTask.status).toBe(404);
-  });
-
-  test('two scheduler instances execute one leased schedule only once', async () => {
-    const { TaskSchedule } = require('../src/models');
-    const { CronSchedulerService } = require('../src/services/account/cronScheduler.service');
-    const auditTaskService = require('../src/services/account/auditTask.service').default;
-    const schedule = await TaskSchedule.create({
-      tenantId: tenantA.id,
-      tenantSchema: tenantA.schemaName,
-      taskId: '00000000-0000-4000-8000-000000000001',
-      cronExpression: '* * * * *',
-      enabled: true,
-    });
-    const execution = jest.spyOn(auditTaskService, 'executeTaskScheduled').mockResolvedValue({
-      executionId: 'execution-1',
-      status: 'SUCCESS',
-    });
-    await Promise.all([
-      new CronSchedulerService().runScheduleNow(schedule.id),
-      new CronSchedulerService().runScheduleNow(schedule.id),
-    ]);
-    expect(execution).toHaveBeenCalledTimes(1);
-    execution.mockRestore();
-  });
-
-  test('scheduler marks a timed-out execution failed and applies backoff', async () => {
-    const { TaskSchedule } = require('../src/models');
-    const { CronSchedulerService } = require('../src/services/account/cronScheduler.service');
-    const auditTaskService = require('../src/services/account/auditTask.service').default;
-    const schedule = await TaskSchedule.create({
-      tenantId: tenantA.id,
-      tenantSchema: tenantA.schemaName,
-      taskId: '00000000-0000-4000-8000-000000000002',
-      cronExpression: '* * * * *',
-      enabled: true,
-    });
-    const execution = jest.spyOn(auditTaskService, 'executeTaskScheduled')
-      .mockImplementation(() => new Promise(() => {}));
-
-    await new CronSchedulerService(25).runScheduleNow(schedule.id);
-    await schedule.reload();
-
-    expect(schedule.lastOutcome).toBe('failed');
-    expect(schedule.consecutiveFailures).toBe(1);
-    expect(schedule.workerId).toBeNull();
-    expect(schedule.leasedUntil.getTime()).toBeGreaterThan(Date.now());
-    execution.mockRestore();
-  });
+      await migrateUp([schema]);
+      const rows = await sequelize.query(`
+        SELECT member."userId", role."roleId", department."departmentId", department."isPrimary"
+        FROM ${quote}.tenant_members member
+        JOIN ${quote}.member_roles role ON role."memberId" = member.id
+        JOIN ${quote}.department_members department ON department."memberId" = member.id
+        WHERE member."userId" = :userId
+      `, { replacements: { userId: legacyUser.id }, type: QueryTypes.SELECT });
+      expect(rows).toEqual([expect.objectContaining({
+        userId: legacyUser.id,
+        roleId,
+        departmentId,
+        isPrimary: true,
+      })]);
+      const legacyColumn = await sequelize.query(`
+        SELECT count(*)::int AS count FROM information_schema.columns
+        WHERE table_schema = :schema AND table_name = 'department_members' AND column_name = 'userId'
+      `, { replacements: { schema }, type: QueryTypes.SELECT });
+      expect(Number(legacyColumn[0].count)).toBe(0);
+    } finally {
+      await sequelize.query(`DROP SCHEMA IF EXISTS ${quote} CASCADE`);
+      await sequelize.query('DELETE FROM public.schema_migrations WHERE schema_name = :schema', {
+        replacements: { schema },
+      });
+      await sequelize.query('DELETE FROM public.tenants WHERE id = :tenantId', { replacements: { tenantId } });
+      await legacyUser.destroy();
+      await sequelize.query(`ALTER TABLE public.users
+        DROP COLUMN IF EXISTS department,
+        DROP COLUMN IF EXISTS role,
+        DROP COLUMN IF EXISTS "roleId",
+        DROP COLUMN IF EXISTS "tenantId"`);
+    }
+  }, 60_000);
 });

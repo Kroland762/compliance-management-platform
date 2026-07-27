@@ -8,12 +8,8 @@ test('global administrator selects a tenant and completes core control flow', as
   await page.locator('button[type="submit"]').click();
 
   await expect(page).toHaveURL(/\/tenants$/);
-  const selector = page.getByRole('combobox', { name: '选择租户' });
-  await selector.click();
-  await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content')
-    .filter({ hasText: 'E2E Tenant' })
-    .click();
-  await expect(page).toHaveURL(/\/dashboard$/);
+  await page.getByRole('row', { name: /CI Tenant/ }).getByRole('button', { name: '查看用户' }).click();
+  await expect(page).toHaveURL(/\/users$/);
 
   const auth = await page.evaluate(() => (window as any).__authStore);
   expect(auth.selectedTenant?.id).toBeTruthy();
@@ -27,23 +23,34 @@ test('global administrator selects a tenant and completes core control flow', as
   expect(roleResponse.ok()).toBeTruthy();
   const roles = (await roleResponse.json()).data.items;
   const userRole = roles.find((role: any) => role.name === '普通用户') || roles[0];
+  const departmentsResponse = await page.request.get('http://127.0.0.1:3001/api/lookup/departments', { headers });
+  expect(departmentsResponse.ok()).toBeTruthy();
+  const rootDepartment = (await departmentsResponse.json()).data.find((department: any) => department.code === 'ROOT');
 
-  const userResponse = await page.request.post('http://127.0.0.1:3001/api/users', {
+  const userResponse = await page.request.post('http://127.0.0.1:3001/api/members', {
     headers,
     data: {
       username: `e2e_user_${suffix}`,
-      password: 'E2eUser1234!',
-      roleId: userRole.id,
-      department: '安全测试',
+      displayName: `E2E User ${suffix}`,
+      email: `e2e-${suffix}@example.com`,
+      roleIds: [userRole.id],
+      departments: [{ departmentId: rootDepartment.id, isPrimary: true }],
     },
   });
   expect(userResponse.status()).toBe(201);
-  const userId = (await userResponse.json()).data.id;
+  const memberPayload = (await userResponse.json()).data;
+  const userId = memberPayload.member.userId;
+  const temporaryPassword = memberPayload.temporaryPassword;
 
   const qualificationName = `E2E资质-${suffix}`;
   const qualificationResponse = await page.request.post('http://127.0.0.1:3001/api/qualifications', {
     headers,
-    data: { name: qualificationName, category: '企业资质', expiryDate: '2030-12-31' },
+    data: {
+      name: qualificationName,
+      category: '企业资质',
+      ownerDepartmentId: rootDepartment.id,
+      expiryDate: '2030-12-31',
+    },
   });
   expect(qualificationResponse.status()).toBe(201);
   await page.goto('/qualifications');
@@ -70,6 +77,7 @@ test('global administrator selects a tenant and completes core control flow', as
       templateId,
       assessmentType: 'ISO27001',
       assessmentTarget: `E2E任务-${suffix}`,
+      departmentId: rootDepartment.id,
     },
   });
   expect(taskResponse.status()).toBe(201);
@@ -85,7 +93,7 @@ test('global administrator selects a tenant and completes core control flow', as
       questionAssignments: [{
         questionId: question.id,
         assignedTo: userId,
-        responsibleDepartment: '安全测试',
+        responsibleDepartment: rootDepartment.name,
         responsiblePerson: `e2e_user_${suffix}`,
         referenceAnswer: '应定期复核',
       }],
@@ -96,12 +104,26 @@ test('global administrator selects a tenant and completes core control flow', as
   const userLoginResponse = await page.request.post('http://127.0.0.1:3001/api/auth/login', {
     data: {
       username: `e2e_user_${suffix}`,
-      password: 'E2eUser1234!',
+      password: temporaryPassword,
       captchaCode: '0000',
     },
   });
   expect(userLoginResponse.ok()).toBeTruthy();
-  const userToken = (await userLoginResponse.json()).data.token;
+  const temporaryToken = (await userLoginResponse.json()).data.token;
+  const changePasswordResponse = await page.request.post('http://127.0.0.1:3001/api/auth/change-password', {
+    headers: { Authorization: `Bearer ${temporaryToken}` },
+    data: { oldPassword: temporaryPassword, newPassword: 'E2eUserChanged1234!' },
+  });
+  expect(changePasswordResponse.ok()).toBeTruthy();
+  const changedLoginResponse = await page.request.post('http://127.0.0.1:3001/api/auth/login', {
+    data: {
+      username: `e2e_user_${suffix}`,
+      password: 'E2eUserChanged1234!',
+      captchaCode: '0000',
+    },
+  });
+  expect(changedLoginResponse.ok()).toBeTruthy();
+  const userToken = (await changedLoginResponse.json()).data.token;
   const userHeaders = {
     Authorization: `Bearer ${userToken}`,
     'X-Tenant-ID': auth.selectedTenant.id,

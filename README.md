@@ -19,7 +19,7 @@
 - 可视化概览（统计卡片、风险分布、问题排行、趋势图）
 
 ### 安全体系
-- **RBAC 权限系统**：自定义角色 + 13 个资源 × 多操作权限矩阵
+- **成员与 RBAC**：全局登录身份 + 租户成员，多角色权限并集，资源 × 操作 × 数据范围矩阵
 - **登录安全**：图形验证码、失败锁定（次数/时长可配）、密码复杂度强制（8 位 + 大小写 + 数字 + 特殊字符）
 - **会话管理**：JWT Access/Refresh Token + 空闲超时自动登出（可配）
 - **审计日志**：全操作留痕
@@ -60,7 +60,8 @@ cd frontend && npm run dev
 ```
 
 访问 http://localhost:5173。系统不再内置固定默认密码；控制面管理员仅在显式设置
-`SEED_ADMIN_PASSWORD` 时创建。全局管理员登录后必须先选择租户，业务 API 才会接受请求。
+`SEED_ADMIN_PASSWORD` 时创建。全局管理员和多租户成员通过租户选择页签发租户态令牌；
+没有租户上下文时，业务 API 不接受请求。
 
 ## 迁移与验证
 
@@ -71,6 +72,8 @@ npm run migrate:up
 npm run migrate:legacy-public          # 默认只生成 public 存量清单
 npm run migrate:legacy-public -- --apply --tenant=<tenant-id>
 npm run migrate:legacy-files -- --tenant=<tenant-id>  # 默认只生成文件清单
+npm run migrate:membership-plan       # 只读生成成员/角色/部门/对象归属清单
+npm run migrate:membership-plan -- --apply --mapping=/absolute/path/membership-map.json
 
 npm test
 cd ../frontend && npm test && npm run build
@@ -112,13 +115,19 @@ compliance-management-platform/
 └── README.md
 ```
 
-## 权限体系
+## 身份、成员与权限体系
 
-系统内置 3 个角色，管理员可自由创建自定义角色并配置权限矩阵：
+`public.users` 只保存用户名、密码哈希和认证状态。同一身份可通过不同的
+`tenant_members` 加入多个租户，并在每个租户拥有独立的姓名、状态、主/兼职部门和多个角色。
+任务、证据、通知与审计人仍引用稳定的全局 User ID。
+
+租户内置 3 个锁定角色。系统角色不可编辑或删除；管理员应先复制为自定义角色，再配置权限。
+多角色权限按资源/操作取并集，数据范围按
+`all > department_tree > department > assigned > self` 选择最宽范围：
 
 | 资源 | 可选操作 |
 |------|---------|
-| 用户管理 | 创建、查看、更新、删除 |
+| 成员管理 | 创建、查看、更新、删除 |
 | 模版管理 | 创建、查看、更新、删除 |
 | 合规任务 | 创建、查看、更新、删除、提交、退回 |
 | 风险管理 | 查看、更新 |
@@ -131,6 +140,10 @@ compliance-management-platform/
 | 审计任务 | 创建、查看、更新、删除、执行 |
 | 问题管理 | 查看、更新、导出 |
 | 审计概览 | 查看 |
+
+新本地成员由服务端生成一次性临时密码，成功响应只显示一次，首次登录必须改密。已有登录身份
+通过 72 小时、单次使用、数据库只存 SHA-256 哈希的邀请令牌加入其他租户。每个有效成员必须
+有且只有一个主部门，并至少绑定一个有效角色。
 
 ## 规则引擎
 

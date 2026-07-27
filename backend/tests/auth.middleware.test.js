@@ -25,8 +25,13 @@ function createUser(overrides = {}) {
     userId: 'user-1',
     username: 'tester',
     role: '测试角色',
-    roleId: 'role-1',
+    roleIds: ['role-1'],
     permissions: {},
+    permissionScopes: {},
+    departmentIds: [],
+    mustChangePassword: false,
+    isGlobalAdmin: false,
+    tokenKind: 'tenant',
     ...overrides,
   };
 }
@@ -65,7 +70,11 @@ describe('auth authorization middleware', () => {
 
   test('authorize allows requests after superAdminOnly sets the explicit bypass flag', () => {
     const req = {
-      user: createUser({ permissions: { tenants: ['create', 'read', 'update', 'delete'] } }),
+      user: createUser({
+        isGlobalAdmin: true,
+        tokenKind: 'control',
+        permissions: { tenants: ['create', 'read', 'update', 'delete'] },
+      }),
     };
     const res = createResponse();
     const next = jest.fn();
@@ -97,7 +106,7 @@ describe('auth authorization middleware', () => {
   });
 
   test('superAdminOnly rejects global users without full tenant management permissions', () => {
-    const req = { user: createUser({ permissions: { tenants: ['read'] } }) };
+    const req = { user: createUser({ isGlobalAdmin: true, tokenKind: 'control', permissions: { tenants: ['read'] } }) };
     const res = createResponse();
     const next = jest.fn();
 

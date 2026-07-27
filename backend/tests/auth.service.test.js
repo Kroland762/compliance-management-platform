@@ -7,7 +7,7 @@ jest.mock('../src/models/index', () => ({
   User: { findByPk: jest.fn() },
   Role: { findByPk: jest.fn() },
   RoleTemplate: { findByPk: jest.fn() },
-  Tenant: { findByPk: jest.fn() },
+  Tenant: { findByPk: jest.fn(), findAll: jest.fn().mockResolvedValue([]) },
   OperationType: { CREATE: 'CREATE', UPDATE: 'UPDATE' },
 }));
 
@@ -45,7 +45,7 @@ describe('auth service refresh token revocation', () => {
   test('rejects refresh tokens with stale tokenVersion', async () => {
     User.findByPk.mockResolvedValue({ id: 'user-1', isActive: true, tokenVersion: 2 });
 
-    await expect(authService.refreshToken('old-refresh-token')).rejects.toThrow('令牌已失效，请重新登录');
+    await expect(authService.refreshToken('old-refresh-token')).rejects.toThrow('刷新令牌已失效');
     expect(RoleTemplate.findByPk).not.toHaveBeenCalled();
   });
 
@@ -53,17 +53,16 @@ describe('auth service refresh token revocation', () => {
     User.findByPk.mockResolvedValue({
       id: 'user-1',
       username: 'admin',
-      roleId: 'role-1',
-      role: 'user',
-      tenantId: null,
+      globalRoleTemplateId: 'role-1',
       tokenVersion: 1,
       isActive: true,
-      department: 'IT',
       email: 'admin@example.com',
+      mustChangePassword: false,
     });
     RoleTemplate.findByPk.mockResolvedValue({
       name: '管理员',
       permissions: { dashboard: ['read'] },
+      permissionScopes: { dashboard: { read: 'all' } },
     });
 
     const result = await authService.refreshToken('current-refresh-token');
