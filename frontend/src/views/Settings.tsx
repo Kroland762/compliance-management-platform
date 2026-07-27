@@ -123,18 +123,8 @@ export default function Settings() {
     <Form form={form} layout="vertical" onFinish={handleSave} disabled={!isAdmin}
       initialValues={DEFAULT_SECURITY_SETTINGS}>
       <Card style={cardStyle} styles={{ body: { padding: 0 } }}>
-        <div style={{ padding: 24 }}>
-          <div style={{ ...headingStyle, fontSize: 17 }}>
-            <SecurityScanOutlined style={{ marginRight: 8, color: '#007AFF' }} />
-            安全设置
-          </div>
-          <div style={{ ...hintStyle, marginTop: 6 }}>
-            统一配置登录保护、会话有效期和审计数据保留规则
-          </div>
-        </div>
-
         {/* 登录锁定策略 */}
-        <section style={policySectionStyle}>
+        <section style={{ ...policySectionStyle, borderTop: 0 }}>
           <div style={{ ...headingStyle, marginBottom: 20 }}>
             <LockOutlined style={{ marginRight: 8, color: '#007AFF' }} />
             登录锁定策略
@@ -196,7 +186,7 @@ export default function Settings() {
             borderTop: '0.5px solid rgba(0,0,0,0.06)',
             background: 'rgba(0,0,0,0.015)',
             display: 'flex',
-            justifyContent: 'flex-end',
+            justifyContent: 'flex-start',
           }}>
             <Button type="primary" htmlType="submit" loading={saving} style={btnStyle}>保存设置</Button>
           </div>
