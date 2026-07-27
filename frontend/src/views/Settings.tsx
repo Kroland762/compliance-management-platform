@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Card, Form, InputNumber, Input, Button, App, Spin } from 'antd';
+import { useState, useEffect, type CSSProperties } from 'react';
+import { Card, Form, InputNumber, Input, Button, App, Spin, Space } from 'antd';
 import { SecurityScanOutlined, ClockCircleOutlined, LockOutlined, KeyOutlined, FileTextOutlined } from '@ant-design/icons';
 import apiClient from '../api/client';
 import { useAuthStore } from '../store/auth';
@@ -9,6 +9,65 @@ interface SecuritySettings {
   lockDurationMinutes: number;
   idleTimeoutMinutes: number;
   auditLogRetentionDays: number;
+}
+
+const DEFAULT_SECURITY_SETTINGS: SecuritySettings = {
+  maxLoginAttempts: 5,
+  lockDurationMinutes: 15,
+  idleTimeoutMinutes: 180,
+  auditLogRetentionDays: 365,
+};
+
+const cardStyle: CSSProperties = {
+  borderRadius: 16,
+  border: '0.5px solid rgba(0,0,0,0.08)',
+  boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+};
+const btnStyle: CSSProperties = {
+  height: 40,
+  borderRadius: 10,
+  fontWeight: 500,
+  paddingLeft: 28,
+  paddingRight: 28,
+};
+const hintStyle: CSSProperties = { fontSize: 13, color: '#8E8E93' };
+const rowStyle: CSSProperties = { display: 'flex', alignItems: 'center', gap: 10 };
+const headingStyle: CSSProperties = { fontSize: 15, fontWeight: 600, color: '#1D1D1F' };
+const policySectionStyle: CSSProperties = {
+  padding: '24px 24px 4px',
+  borderTop: '0.5px solid rgba(0,0,0,0.06)',
+};
+const fieldWidth = 200;
+
+interface SettingFieldProps {
+  name: keyof SecuritySettings;
+  label: string;
+  min: number;
+  max: number;
+  unit: string;
+  hint: string;
+}
+
+function SettingField({ name, label, min, max, unit, hint }: SettingFieldProps) {
+  return (
+    <Form.Item label={label}>
+      <div className="settings-field-row" style={rowStyle}>
+        <Space.Compact style={{ width: fieldWidth, maxWidth: '100%' }}>
+          <Form.Item name={name} noStyle rules={[{ required: true, message: `请设置${label}` }]}>
+            <InputNumber min={min} max={max} style={{ width: 142 }} />
+          </Form.Item>
+          <Input
+            aria-label={`${label}单位`}
+            value={unit}
+            readOnly
+            tabIndex={-1}
+            style={{ width: 58, textAlign: 'center', pointerEvents: 'none', color: '#636366' }}
+          />
+        </Space.Compact>
+        <span style={hintStyle}>{hint}</span>
+      </div>
+    </Form.Item>
+  );
 }
 
 export default function Settings() {
@@ -25,7 +84,7 @@ export default function Settings() {
     setLoading(true);
     try {
       const res: any = await apiClient.get('/settings/security');
-      form.setFieldsValue(res.data);
+      form.setFieldsValue({ ...DEFAULT_SECURITY_SETTINGS, ...(res.data || {}) });
     } catch {
       message.error('加载设置失败');
     } finally { setLoading(false); }
@@ -58,77 +117,96 @@ export default function Settings() {
     } finally { setChangingPwd(false); }
   };
 
-  if (loading) {
-    return <div style={{ display: 'flex', justifyContent: 'center', padding: 120 }}><Spin size="large" /></div>;
-  }
-
-  const cardStyle: React.CSSProperties = { borderRadius: 16, border: '0.5px solid rgba(0,0,0,0.08)', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' };
-  const btnStyle: React.CSSProperties = { height: 40, borderRadius: 10, fontWeight: 500, paddingLeft: 28, paddingRight: 28 };
-  const hintStyle: React.CSSProperties = { fontSize: 13, color: '#8E8E93' };
-  const rowStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10 };
-  const fieldWidth = 200;
-  const headingStyle: React.CSSProperties = { fontSize: 15, fontWeight: 600, marginBottom: 20, color: '#1D1D1F' };
-
   return (
-    <>
+    <Spin spinning={loading}>
+    <div>
     <Form form={form} layout="vertical" onFinish={handleSave} disabled={!isAdmin}
-      initialValues={{ maxLoginAttempts: 5, lockDurationMinutes: 15, idleTimeoutMinutes: 180, auditLogRetentionDays: 365 }}>
-      <div>
+      initialValues={DEFAULT_SECURITY_SETTINGS}>
+      <Card style={cardStyle} styles={{ body: { padding: 0 } }}>
+        <div style={{ padding: 24 }}>
+          <div style={{ ...headingStyle, fontSize: 17 }}>
+            <SecurityScanOutlined style={{ marginRight: 8, color: '#007AFF' }} />
+            安全设置
+          </div>
+          <div style={{ ...hintStyle, marginTop: 6 }}>
+            统一配置登录保护、会话有效期和审计数据保留规则
+          </div>
+        </div>
+
         {/* 登录锁定策略 */}
-        <Card style={cardStyle}>
-          <div style={headingStyle}><LockOutlined style={{ marginRight: 8, color: '#007AFF' }} />登录锁定策略</div>
-
-          <Form.Item name="maxLoginAttempts" label="最大登录失败次数" rules={[{ required: true }]}>
-            <div className="settings-field-row" style={rowStyle}>
-              <InputNumber min={1} max={20} style={{ width: fieldWidth, maxWidth: '100%' }} addonAfter={<span style={{ display: 'inline-block', minWidth: 42, textAlign: 'center' }}>次</span>} />
-              <span style={hintStyle}>连续失败达到此次数后，账户将被临时锁定</span>
-            </div>
-          </Form.Item>
-
-          <Form.Item name="lockDurationMinutes" label="锁定时长" rules={[{ required: true }]}>
-            <div className="settings-field-row" style={rowStyle}>
-              <InputNumber min={1} max={1440} style={{ width: fieldWidth, maxWidth: '100%' }} addonAfter={<span style={{ display: 'inline-block', minWidth: 42, textAlign: 'center' }}>分钟</span>} />
-              <span style={hintStyle}>账户被锁定后的自动解锁时间</span>
-            </div>
-          </Form.Item>
-        </Card>
+        <section style={policySectionStyle}>
+          <div style={{ ...headingStyle, marginBottom: 20 }}>
+            <LockOutlined style={{ marginRight: 8, color: '#007AFF' }} />
+            登录锁定策略
+          </div>
+          <SettingField
+            name="maxLoginAttempts"
+            label="最大登录失败次数"
+            min={1}
+            max={20}
+            unit="次"
+            hint="连续失败达到此次数后，账户将被临时锁定"
+          />
+          <SettingField
+            name="lockDurationMinutes"
+            label="锁定时长"
+            min={1}
+            max={1440}
+            unit="分钟"
+            hint="账户被锁定后的自动解锁时间"
+          />
+        </section>
 
         {/* 会话超时 */}
-        <Card style={{ marginTop: 24, ...cardStyle }}>
-          <div style={headingStyle}><ClockCircleOutlined style={{ marginRight: 8, color: '#007AFF' }} />会话超时</div>
-
-          <Form.Item name="idleTimeoutMinutes" label="空闲自动登出" rules={[{ required: true }]}>
-            <div className="settings-field-row" style={rowStyle}>
-              <InputNumber min={5} max={1440} style={{ width: fieldWidth, maxWidth: '100%' }} addonAfter={<span style={{ display: 'inline-block', minWidth: 42, textAlign: 'center' }}>分钟</span>} />
-              <span style={hintStyle}>用户无操作超过此时间后将自动退出登录</span>
-            </div>
-          </Form.Item>
-        </Card>
+        <section style={policySectionStyle}>
+          <div style={{ ...headingStyle, marginBottom: 20 }}>
+            <ClockCircleOutlined style={{ marginRight: 8, color: '#007AFF' }} />
+            会话超时
+          </div>
+          <SettingField
+            name="idleTimeoutMinutes"
+            label="空闲自动登出"
+            min={5}
+            max={1440}
+            unit="分钟"
+            hint="用户无操作超过此时间后将自动退出登录"
+          />
+        </section>
 
         {/* 日志保留 */}
-        <Card style={{ marginTop: 24, ...cardStyle }}>
-          <div style={headingStyle}><FileTextOutlined style={{ marginRight: 8, color: '#007AFF' }} />审计日志保留策略</div>
-
-          <Form.Item name="auditLogRetentionDays" label="日志保留天数" rules={[{ required: true }]}>
-            <div className="settings-field-row" style={rowStyle}>
-              <InputNumber min={0} max={3650} style={{ width: fieldWidth, maxWidth: '100%' }} addonAfter={<span style={{ display: 'inline-block', minWidth: 42, textAlign: 'center' }}>天</span>} />
-              <span style={hintStyle}>超过保留天数的日志将在每日凌晨自动清理。设为 0 表示永久保留</span>
-            </div>
-          </Form.Item>
-        </Card>
+        <section style={policySectionStyle}>
+          <div style={{ ...headingStyle, marginBottom: 20 }}>
+            <FileTextOutlined style={{ marginRight: 8, color: '#007AFF' }} />
+            审计日志保留策略
+          </div>
+          <SettingField
+            name="auditLogRetentionDays"
+            label="日志保留天数"
+            min={0}
+            max={3650}
+            unit="天"
+            hint="超过保留天数的日志将在每日凌晨自动清理。设为 0 表示永久保留"
+          />
+        </section>
 
         {/* 保存按钮 */}
         {isAdmin && (
-          <div style={{ marginTop: 24 }}>
+          <div style={{
+            padding: '16px 24px',
+            borderTop: '0.5px solid rgba(0,0,0,0.06)',
+            background: 'rgba(0,0,0,0.015)',
+            display: 'flex',
+            justifyContent: 'flex-end',
+          }}>
             <Button type="primary" htmlType="submit" loading={saving} style={btnStyle}>保存设置</Button>
           </div>
         )}
-      </div>
+      </Card>
     </Form>
 
     {/* 修改密码 + 密码复杂度 */}
     <Card style={{ marginTop: 24, ...cardStyle }}>
-      <div style={headingStyle}><KeyOutlined style={{ marginRight: 8, color: '#007AFF' }} />修改密码</div>
+      <div style={{ ...headingStyle, marginBottom: 20 }}><KeyOutlined style={{ marginRight: 8, color: '#007AFF' }} />修改密码</div>
 
       <Form form={pwdForm} layout="vertical" onFinish={handleChangePassword}>
         <Form.Item name="oldPassword" label="当前密码" rules={[{ required: true, message: '请输入当前密码' }]}>
@@ -177,6 +255,7 @@ export default function Settings() {
         </ul>
       </div>
     </Card>
-    </>
+    </div>
+    </Spin>
   );
 }
