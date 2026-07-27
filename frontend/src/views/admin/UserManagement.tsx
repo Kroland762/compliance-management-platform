@@ -34,7 +34,7 @@ export default function UserManagement() {
   const fetchRoles = async () => {
     try {
       const res: any = await apiClient.get('/roles');
-      setRoles(res.data || []);
+      setRoles(res.data?.items || []);
     } catch {}
   };
 

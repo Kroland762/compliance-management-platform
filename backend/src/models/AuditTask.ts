@@ -47,7 +47,7 @@ AuditTask.init(
     createdBy: { type: DataTypes.UUID, allowNull: false, references: { model: User, key: 'id' } },
     assignedTo: { type: DataTypes.UUID, allowNull: true, references: { model: User, key: 'id' } },
     reviewerId: { type: DataTypes.UUID, allowNull: true, references: { model: User, key: 'id' } },
-    status: { type: DataTypes.ENUM(...Object.values(TaskStatus)), allowNull: false, defaultValue: TaskStatus.DRAFT },
+    status: { type: DataTypes.STRING(30), allowNull: false, defaultValue: TaskStatus.DRAFT, validate: { isIn: [Object.values(TaskStatus)] } },
     returnReason: { type: DataTypes.TEXT, allowNull: true },
     returnedAssignees: { type: DataTypes.JSONB, allowNull: true, defaultValue: null },
     createdAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },

@@ -24,7 +24,7 @@ router.use(authenticate);
  * - 无 tenantId → 全局操作（超管）
  */
 function getTenantScope(req: Request): string | null {
-  return (req.user as any)?.tenantId || null;
+  return req.tenant?.id || null;
 }
 
 /**
@@ -69,7 +69,7 @@ async function findUserOrThrow(id: string) {
 function assertTenantCanOperateUser(req: Request, user: User): void {
   const tenantId = getTenantScope(req);
   if (tenantId && user.tenantId !== tenantId) {
-    throw new AppError(403, 'FORBIDDEN', '不能操作其他租户的用户');
+    throw new AppError(404, 'NOT_FOUND', '用户不存在');
   }
 }
 

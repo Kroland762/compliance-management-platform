@@ -35,7 +35,7 @@ AuditLog.init(
   {
     id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
     userId: { type: DataTypes.UUID, allowNull: false, references: { model: User, key: 'id' } },
-    operationType: { type: DataTypes.ENUM(...Object.values(OperationType)), allowNull: false },
+    operationType: { type: DataTypes.STRING(30), allowNull: false, validate: { isIn: [Object.values(OperationType)] } },
     resourceType: { type: DataTypes.STRING(50), allowNull: false },
     resourceId: { type: DataTypes.UUID, allowNull: true },
     operationDetails: { type: DataTypes.TEXT, allowNull: true },

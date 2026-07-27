@@ -1,6 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import authService from '../services/auth.service';
 import type { PermissionMatrix, PermissionResource, PermissionAction } from '../models/Role';
+import { AppError } from '../utils/http';
+import { enterResolvedTenant, resolveTenantForUser } from './tenant';
 
 // 扩展 Express Request 类型
 declare global {
@@ -34,21 +36,27 @@ function isGlobalSuperAdmin(user: Express.Request['user']): boolean {
  * JWT 认证中间件 - 验证请求是否携带有效令牌
  * 同时从 DB 加载用户角色和权限
  */
-export function authenticate(req: Request, res: Response, next: NextFunction): void {
+export function authenticate(req: Request, _res: Response, next: NextFunction): void {
+  if (req.user) {
+    next();
+    return;
+  }
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: '未提供认证令牌' } });
+    next(new AppError(401, 'UNAUTHORIZED', '未提供认证令牌'));
     return;
   }
 
   const token = authHeader.split(' ')[1];
   authService.verifyTokenAndLoadUser(token)
-    .then((user) => {
+    .then(async (user) => {
+      if (!user) throw new AppError(401, 'UNAUTHORIZED', '令牌对应的用户不存在');
       req.user = user;
-      next();
+      const tenant = await resolveTenantForUser(req, user);
+      enterResolvedTenant(req, tenant, next);
     })
     .catch((err) => {
-      res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: err.message || '令牌无效或已过期' } });
+      next(err instanceof AppError ? err : new AppError(401, 'UNAUTHORIZED', '令牌无效或已过期'));
     });
 }
 
@@ -58,7 +66,7 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
 export function authorize(resource: PermissionResource, action: PermissionAction) {
   return (req: Request, res: Response, next: NextFunction): void => {
     if (!req.user) {
-      res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: '未认证' } });
+      next(new AppError(401, 'UNAUTHORIZED', '未认证'));
       return;
     }
 
@@ -69,12 +77,12 @@ export function authorize(resource: PermissionResource, action: PermissionAction
     }
 
     if (!req.user.permissions) {
-      res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: '无权限配置' } });
+      next(new AppError(403, 'FORBIDDEN', '无权限配置'));
       return;
     }
 
     if (!hasPermission(req.user.permissions, resource, action)) {
-      res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: `缺少权限: ${resource}.${action}` } });
+      next(new AppError(403, 'FORBIDDEN', `缺少权限: ${resource}.${action}`));
       return;
     }
 
@@ -86,13 +94,13 @@ export function authorize(resource: PermissionResource, action: PermissionAction
  * 超管中间件 - 仅无 tenantId 且具备租户管理全权限的全局管理员可访问
  * 通过后设置 req._isSuperAdmin = true，使后续 authorize() 全部放行
  */
-export function superAdminOnly(req: Request, res: Response, next: NextFunction): void {
+export function superAdminOnly(req: Request, _res: Response, next: NextFunction): void {
   if (!req.user) {
-    res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: '未认证' } });
+    next(new AppError(401, 'UNAUTHORIZED', '未认证'));
     return;
   }
   if (!isGlobalSuperAdmin(req.user)) {
-    res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: '仅全局超管可操作' } });
+    next(new AppError(403, 'FORBIDDEN', '仅全局超管可操作'));
     return;
   }
   (req as any)._isSuperAdmin = true;
@@ -105,7 +113,7 @@ export function superAdminOnly(req: Request, res: Response, next: NextFunction):
 export function authorizeAny(...checks: Array<[PermissionResource, PermissionAction]>) {
   return (req: Request, res: Response, next: NextFunction): void => {
     if (!req.user) {
-      res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: '未认证' } });
+      next(new AppError(401, 'UNAUTHORIZED', '未认证'));
       return;
     }
 
@@ -119,7 +127,7 @@ export function authorizeAny(...checks: Array<[PermissionResource, PermissionAct
     const hasAnyPermission = checks.some(([resource, action]) => hasPermission(permissions, resource, action));
 
     if (!hasAnyPermission) {
-      res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: '权限不足' } });
+      next(new AppError(403, 'FORBIDDEN', '权限不足'));
       return;
     }
 

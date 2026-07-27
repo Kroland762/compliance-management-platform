@@ -48,7 +48,7 @@ User.init(
     passwordHash: { type: DataTypes.STRING(255), allowNull: false },
     department: { type: DataTypes.STRING(100), allowNull: true },
     email: { type: DataTypes.STRING(200), allowNull: true },
-    role: { type: DataTypes.ENUM(...Object.values(UserRole)), allowNull: false },
+    role: { type: DataTypes.STRING(30), allowNull: false, validate: { isIn: [Object.values(UserRole)] } },
     roleId: { type: DataTypes.UUID, allowNull: true },
     tenantId: { type: DataTypes.UUID, allowNull: true },
     lastLogin: { type: DataTypes.DATE, allowNull: true },

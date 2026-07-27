@@ -35,7 +35,7 @@ Notification.init(
     id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
     userId: { type: DataTypes.UUID, allowNull: false, references: { model: User, key: 'id' } },
     taskId: { type: DataTypes.UUID, allowNull: false, references: { model: AuditTask, key: 'id' } },
-    notificationType: { type: DataTypes.ENUM(...Object.values(NotificationType)), allowNull: false },
+    notificationType: { type: DataTypes.STRING(30), allowNull: false, validate: { isIn: [Object.values(NotificationType)] } },
     title: { type: DataTypes.STRING(200), allowNull: false },
     content: { type: DataTypes.TEXT, allowNull: false },
     isRead: { type: DataTypes.BOOLEAN, defaultValue: false },

@@ -28,7 +28,6 @@ DepartmentMember.init({
 }, {
   sequelize,
   tableName: 'department_members',
-  schema: 'public',
   timestamps: true,
   createdAt: 'createdAt',
   updatedAt: 'updatedAt',

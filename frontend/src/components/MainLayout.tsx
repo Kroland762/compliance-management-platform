@@ -1,4 +1,4 @@
-import { Button, Badge, Typography, Dropdown, Space, Avatar, Popover, List, Tag, Menu, Layout } from 'antd';
+import { Button, Badge, Typography, Dropdown, Space, Avatar, Popover, List, Tag, Menu, Layout, Select, message } from 'antd';
 import {
   DashboardOutlined, FileTextOutlined, UserOutlined,
   AuditOutlined, FormOutlined, WarningOutlined,
@@ -25,6 +25,8 @@ export default function MainLayout() {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const can = useAuthStore((s) => s.hasPermission);
+  const selectedTenant = useAuthStore((s) => s.selectedTenant);
+  const selectTenant = useAuthStore((s) => s.selectTenant);
   useIdleTimeout();
   const [collapsed, setCollapsed] = useState(false);
   const [activeNav, setActiveNav] = useState<'compliance' | 'account-audit' | 'system'>('compliance');
@@ -33,6 +35,30 @@ export default function MainLayout() {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [profileOpen, setProfileOpen] = useState(false);
   const [isCompact, setIsCompact] = useState(false);
+  const [tenantOptions, setTenantOptions] = useState<Array<{ label: string; value: string }>>([]);
+
+  useEffect(() => {
+    if (user?.tenantId || !can('tenants', 'read')) return;
+    apiClient.get('/tenants?page=1&pageSize=100')
+      .then((res: any) => setTenantOptions(
+        (res.data?.items || []).filter((tenant: any) => tenant.status === 'active')
+          .map((tenant: any) => ({ label: tenant.name, value: tenant.id })),
+      ))
+      .catch(() => message.error('租户列表加载失败'));
+  }, [user?.tenantId]);
+
+  const handleTenantChange = async (tenantId: string) => {
+    const option = tenantOptions.find((item) => item.value === tenantId);
+    if (!option) return;
+    try {
+      await apiClient.post(`/tenants/${tenantId}/context`);
+      selectTenant({ id: tenantId, name: option.label });
+      navigate('/dashboard');
+    } catch {
+      selectTenant(null);
+      message.error('租户上下文切换失败');
+    }
+  };
 
   useEffect(() => {
     const updateCompact = () => setIsCompact(window.innerWidth <= 900);
@@ -88,21 +114,24 @@ export default function MainLayout() {
       { key: '/dashboard', icon: <DashboardOutlined />, label: '工作台' },
     ] : []),
     ...(can('templates', 'read') ? [
-      { key: '/templates', icon: <FileTextOutlined />, label: '模版' },
+      { key: '/templates', icon: <FileTextOutlined />, label: '合规模板' },
+    ] : []),
+    ...(can('qualifications', 'read') ? [
+      { key: '/qualifications', icon: <SafetyCertificateOutlined />, label: '资质台账' },
     ] : []),
     ...(can('tasks', 'read') ? [
-      { key: '/tasks/review', icon: <AuditOutlined />, label: '任务列表' },
+      { key: '/tasks/review', icon: <AuditOutlined />, label: '合规检查' },
     ] : []),
     ...(can('tasks', 'read') ? [
       { key: '/my-tasks', icon: <FormOutlined />, label: '我的任务' },
     ] : []),
     ...(can('risks', 'read') ? [
-      { key: '/risks', icon: <WarningOutlined />, label: '风险' },
+      { key: '/risks', icon: <WarningOutlined />, label: '合规风险' },
     ] : []),
   ];
 
   const accountAuditMenuItems: any[] = [
-    ...(can('dashboard', 'read') ? [
+    ...(can('account_dashboard', 'read') ? [
       { key: '/account-audit', icon: <DashboardOutlined />, label: '概览' },
     ] : []),
     ...(can('data_sources', 'read') ? [
@@ -170,6 +199,7 @@ export default function MainLayout() {
   const activeSideKey = (() => {
     if (location.pathname.startsWith('/tasks/review') || location.pathname.startsWith('/tasks/configure')) return '/tasks/review';
     if (location.pathname.startsWith('/my-tasks')) return '/my-tasks';
+    if (location.pathname.startsWith('/qualifications')) return '/qualifications';
     if (location.pathname.startsWith('/dashboard')) return '/dashboard';
     if (location.pathname.startsWith('/account-audit')) {
       if (location.pathname.startsWith('/account-audit/data-sources')) return '/account-audit/data-sources';
@@ -225,6 +255,18 @@ export default function MainLayout() {
               onClick={() => { setActiveNav('system'); navigate(firstSystemPath); }}>系统设置</button>
           </nav>
           <Space size={16} className="app-topbar-actions">
+            {!user?.tenantId && can('tenants', 'read') && (
+              <Select
+                aria-label="选择租户"
+                placeholder="选择租户"
+                value={selectedTenant?.id}
+                options={tenantOptions}
+                onChange={handleTenantChange}
+                style={{ width: 160 }}
+                showSearch
+                optionFilterProp="label"
+              />
+            )}
             <Popover open={notifOpen} onOpenChange={(open) => { setNotifOpen(open); if (open) fetchNotifications(); }}
               trigger="click" placement="bottomRight"
               content={

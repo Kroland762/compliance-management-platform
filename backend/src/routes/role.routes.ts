@@ -4,6 +4,8 @@ import Role, { PERMISSION_DEFINITIONS } from '../models/Role';
 import { User } from '../models';
 import auditLogService from '../services/audit-log.service';
 import { OperationType } from '../models';
+import { asyncHandler } from '../utils/http';
+import { pagination, parsePagination } from '../utils/pagination';
 
 const router = Router();
 router.use(authenticate);
@@ -12,14 +14,16 @@ router.use(authenticate);
  * GET /api/roles
  * 角色列表
  */
-router.get('/', authorize('users', 'read'), async (_req: Request, res: Response) => {
-  try {
-    const roles = await Role.findAll({ order: [['createdAt', 'ASC']] });
-    res.json({ success: true, data: roles });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: { code: 'QUERY_FAILED', message: error.message } });
-  }
-});
+router.get('/', authorize('users', 'read'), asyncHandler(async (req: Request, res: Response) => {
+  const { page, pageSize } = parsePagination(req.query);
+  const { count, rows } = await Role.findAndCountAll({
+    where: { tenantId: req.tenant!.id },
+    order: [['createdAt', 'ASC']],
+    limit: pageSize,
+    offset: (page - 1) * pageSize,
+  });
+  res.json({ success: true, data: { items: rows, pagination: pagination(page, pageSize, count) } });
+}));
 
 /**
  * GET /api/roles/permission-defs
@@ -35,7 +39,7 @@ router.get('/permission-defs', authorize('users', 'read'), async (_req: Request,
  */
 router.get('/:id', authorize('users', 'read'), async (req: Request, res: Response) => {
   try {
-    const role = await Role.findByPk(req.params.id);
+    const role = await Role.findOne({ where: { id: req.params.id, tenantId: req.tenant!.id } });
     if (!role) { res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '角色不存在' } }); return; }
     res.json({ success: true, data: role });
   } catch (error: any) {
@@ -52,10 +56,10 @@ router.post('/', authorize('users', 'create'), async (req: Request, res: Respons
     const { name, description, permissions } = req.body;
     if (!name) { res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: '角色名称不能为空' } }); return; }
 
-    const existing = await Role.findOne({ where: { name } });
-    if (existing) { res.status(400).json({ success: false, error: { code: 'DUPLICATE', message: '角色名称已存在' } }); return; }
+    const existing = await Role.findOne({ where: { tenantId: req.tenant!.id, name } });
+    if (existing) { res.status(409).json({ success: false, error: { code: 'CONFLICT', message: '角色名称已存在' } }); return; }
 
-    const role = await Role.create({ name, description: description || null, permissions: permissions || {}, isSystem: false });
+    const role = await Role.create({ tenantId: req.tenant!.id, name, description: description || null, permissions: permissions || {}, isSystem: false });
 
     await auditLogService.log({
       userId: req.user!.userId,
@@ -78,14 +82,14 @@ router.post('/', authorize('users', 'create'), async (req: Request, res: Respons
  */
 router.put('/:id', authorize('users', 'update'), async (req: Request, res: Response) => {
   try {
-    const role = await Role.findByPk(req.params.id);
+    const role = await Role.findOne({ where: { id: req.params.id, tenantId: req.tenant!.id } });
     if (!role) { res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '角色不存在' } }); return; }
 
     const { name, description, permissions } = req.body;
 
     if (name !== undefined && name !== role.name) {
-      const existing = await Role.findOne({ where: { name } });
-      if (existing) { res.status(400).json({ success: false, error: { code: 'DUPLICATE', message: '角色名称已存在' } }); return; }
+      const existing = await Role.findOne({ where: { tenantId: req.tenant!.id, name } });
+      if (existing) { res.status(409).json({ success: false, error: { code: 'CONFLICT', message: '角色名称已存在' } }); return; }
       role.name = name;
     }
     if (description !== undefined) role.description = description;
@@ -114,7 +118,7 @@ router.put('/:id', authorize('users', 'update'), async (req: Request, res: Respo
  */
 router.delete('/:id', authorize('users', 'delete'), async (req: Request, res: Response) => {
   try {
-    const role = await Role.findByPk(req.params.id);
+    const role = await Role.findOne({ where: { id: req.params.id, tenantId: req.tenant!.id } });
     if (!role) { res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '角色不存在' } }); return; }
 
     if (role.isSystem) {
@@ -122,7 +126,7 @@ router.delete('/:id', authorize('users', 'delete'), async (req: Request, res: Re
       return;
     }
 
-    const userCount = await User.count({ where: { roleId: role.id } });
+    const userCount = await User.count({ where: { roleId: role.id, tenantId: req.tenant!.id } });
     if (userCount > 0) {
       res.status(400).json({ success: false, error: { code: 'ROLE_IN_USE', message: `该角色下还有 ${userCount} 个用户，请先转移用户` } });
       return;

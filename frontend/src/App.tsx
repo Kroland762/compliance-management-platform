@@ -8,6 +8,7 @@ import Login from './views/Login';
 
 const Dashboard = lazy(() => import('./views/Dashboard'));
 const TemplateManagement = lazy(() => import('./views/admin/TemplateManagement'));
+const QualificationLedger = lazy(() => import('./views/QualificationLedger'));
 const UserManagement = lazy(() => import('./views/admin/UserManagement'));
 const RoleManagement = lazy(() => import('./views/RoleManagement'));
 const AuditLogViewer = lazy(() => import('./views/admin/AuditLogViewer'));
@@ -54,6 +55,7 @@ function App() {
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="templates" element={<PrivateRoute permission={['templates', 'read']}><TemplateManagement /></PrivateRoute>} />
+          <Route path="qualifications" element={<PrivateRoute permission={['qualifications', 'read']}><QualificationLedger /></PrivateRoute>} />
           <Route path="users" element={<PrivateRoute permission={['users', 'read']}><UserManagement /></PrivateRoute>} />
           <Route path="roles" element={<PrivateRoute permission={['users', 'read']}><RoleManagement /></PrivateRoute>} />
           <Route path="tenants" element={<PrivateRoute permission={['tenants', 'read']}><TenantManagement /></PrivateRoute>} />
@@ -66,7 +68,7 @@ function App() {
           <Route path="my-tasks/:id" element={<PrivateRoute permission={['tasks', 'submit']}><FillQuestionnaire /></PrivateRoute>} />
           <Route path="risks" element={<PrivateRoute permission={['risks', 'read']}><RiskManagement /></PrivateRoute>} />
           <Route path="settings" element={<Settings />} />
-          <Route path="account-audit" element={<PrivateRoute permission={['dashboard', 'read']}><AccountAudit /></PrivateRoute>}>
+          <Route path="account-audit" element={<PrivateRoute permission={['account_dashboard', 'read']}><AccountAudit /></PrivateRoute>}>
             <Route index element={<AccountDashboard />} />
             <Route path="data-sources" element={<DataSourceList />} />
             <Route path="data-sources/new" element={<PrivateRoute permission={['data_sources', 'create']}><DataSourceForm /></PrivateRoute>} />

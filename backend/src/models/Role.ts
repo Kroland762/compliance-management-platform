@@ -6,6 +6,7 @@ export const PERMISSION_DEFINITIONS = {
   tenants:         ['create', 'read', 'update', 'delete'],
   users:           ['create', 'read', 'update', 'delete'],
   templates:       ['create', 'read', 'update', 'delete'],
+  qualifications:  ['create', 'read', 'update', 'delete'],
   tasks:           ['create', 'read', 'update', 'delete', 'submit', 'return'],
   risks:           ['read', 'update'],
   audit_logs:      ['read', 'export'],
@@ -18,6 +19,7 @@ export const PERMISSION_DEFINITIONS = {
   account_tasks:   ['create', 'read', 'update', 'delete', 'execute'],
   problems:        ['read', 'update', 'export'],
   dashboard:       ['read'],
+  account_dashboard:['read'],
 } as const;
 
 export type PermissionResource = keyof typeof PERMISSION_DEFINITIONS;
@@ -32,6 +34,7 @@ const DEFAULT_PERMISSIONS: PermissionMatrix = {};
 
 interface RoleAttributes {
   id: string;
+  tenantId: string;
   name: string;
   description: string | null;
   permissions: PermissionMatrix;
@@ -44,6 +47,7 @@ type CreationAttributes = Optional<RoleAttributes, 'id' | 'description' | 'creat
 
 class Role extends Model<RoleAttributes, CreationAttributes> implements RoleAttributes {
   declare id: string;
+  declare tenantId: string;
   declare name: string;
   declare description: string | null;
   declare permissions: PermissionMatrix;
@@ -61,7 +65,8 @@ class Role extends Model<RoleAttributes, CreationAttributes> implements RoleAttr
 
 Role.init({
   id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
-  name: { type: DataTypes.STRING(50), allowNull: false, unique: true },
+  tenantId: { type: DataTypes.UUID, allowNull: false },
+  name: { type: DataTypes.STRING(50), allowNull: false },
   description: { type: DataTypes.STRING(255), allowNull: true },
   permissions: { type: DataTypes.JSONB, allowNull: false, defaultValue: DEFAULT_PERMISSIONS },
   isSystem: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
@@ -70,7 +75,6 @@ Role.init({
 }, {
   sequelize,
   tableName: 'roles',
-  schema: 'public',
   timestamps: true,
   createdAt: 'createdAt',
   updatedAt: 'updatedAt',

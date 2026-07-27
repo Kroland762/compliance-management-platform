@@ -7,6 +7,7 @@ import { config } from '../config';
 import { UserRole } from '../models';
 import auditLogService from '../services/audit-log.service';
 import { OperationType } from '../models';
+import { loginFailures } from '../services/metrics.service';
 
 const router = Router();
 
@@ -51,6 +52,7 @@ router.post('/login', loginLimiter, async (req: Request, res: Response) => {
       data: { token: result.token, expiresIn: result.expiresIn, user: result.user },
     });
   } catch (error: any) {
+    loginFailures.inc();
     res.status(401).json({
       success: false,
       error: { code: 'AUTH_FAILED', message: error.message },

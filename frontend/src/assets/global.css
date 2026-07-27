@@ -146,6 +146,10 @@ body {
   .settings-password-rules {
     columns: 1 !important;
   }
+
+  .qualification-stat-grid {
+    grid-template-columns: 1fr 1fr !important;
+  }
 }
 
 @media (max-width: 640px) {
@@ -155,6 +159,10 @@ body {
 
   .ant-card .ant-card-body {
     padding: 16px !important;
+  }
+
+  .qualification-stat-grid {
+    grid-template-columns: 1fr !important;
   }
 
 }

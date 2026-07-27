@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Table, Button, Modal, Form, Input, Select, Space, Tag, Popconfirm, App, Typography } from 'antd';
 import { PlusOutlined, ReloadOutlined, TeamOutlined, DeleteOutlined, StopOutlined, CheckCircleOutlined, UserOutlined } from '@ant-design/icons';
 import apiClient from '../../api/client';
+import { useAuthStore } from '../../store/auth';
 
 const { Text, Title } = Typography;
 
@@ -24,12 +25,24 @@ export default function TenantManagement() {
   const [editingTenant, setEditingTenant] = useState<Tenant | null>(null);
   const [form] = Form.useForm();
   const { message } = App.useApp();
+  const selectTenant = useAuthStore((state) => state.selectTenant);
+
+  const enterTenant = async (tenant: Tenant) => {
+    try {
+      await apiClient.post(`/tenants/${tenant.id}/context`);
+      selectTenant({ id: tenant.id, name: tenant.name });
+      navigate('/users');
+    } catch {
+      selectTenant(null);
+      message.error('租户上下文切换失败');
+    }
+  };
 
   const fetchTenants = async () => {
     setLoading(true);
     try {
       const res: any = await apiClient.get('/tenants');
-      setTenants(res.data || []);
+      setTenants(res.data?.items || []);
     } catch {
       message.error('加载租户列表失败');
     } finally {
@@ -135,19 +148,19 @@ export default function TenantManagement() {
       render: (_: any, record: Tenant) => (
         <Space>
           <Button type="primary" size="small" icon={<UserOutlined />}
-            onClick={() => navigate(`/users?tenantId=${record.id}&tenantName=${encodeURIComponent(record.name)}`)}>
+            onClick={() => enterTenant(record)}>
             查看用户
           </Button>
           <Button type="link" size="small" onClick={() => openEdit(record)}>编辑</Button>
           <Popconfirm
             title="确定删除此租户？"
-            description="将级联删除该租户的所有数据（schema + 表），不可恢复！"
+            description="将停用该租户并保留数据 schema；停用用户会被拒绝访问。"
             onConfirm={() => handleDelete(record.id)}
             okText="确认删除"
             cancelText="取消"
             okButtonProps={{ danger: true }}
           >
-            <Button type="link" size="small" danger icon={<DeleteOutlined />}>删除</Button>
+            <Button type="link" size="small" danger icon={<DeleteOutlined />}>停用</Button>
           </Popconfirm>
         </Space>
       ),

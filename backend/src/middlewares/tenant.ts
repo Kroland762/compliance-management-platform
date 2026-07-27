@@ -1,12 +1,11 @@
 import { Request, Response, NextFunction } from 'express';
-import jwt from 'jsonwebtoken';
 import { AsyncLocalStorage } from 'async_hooks';
 import sequelize from '../config/database';
-import { config } from '../config';
 import Tenant, { TenantStatus } from '../models/Tenant';
+import { AppError } from '../utils/http';
 
 // 请求级租户上下文存储（Node.js 内置 AsyncLocalStorage，替代 cls-hooked）
-interface TenantStore {
+export interface TenantStore {
   schema: string;
   tenantId: string | null;
 }
@@ -14,7 +13,7 @@ const tenantAls = new AsyncLocalStorage<TenantStore>();
 
 // Patch Sequelize 连接池 —— 每次取连接时根据当前请求上下文设 search_path + RLS
 let poolPatched = false;
-function patchConnectionPool() {
+export function initializeTenantConnectionIsolation(): void {
   if (poolPatched) return;
   poolPatched = true;
 
@@ -27,14 +26,17 @@ function patchConnectionPool() {
     const store = tenantAls.getStore();
     const schema = store?.schema;
     const tenantId = store?.tenantId;
-    if (schema && schema !== 'public') {
-      await conn.query('RESET app.current_tenant_id');
-      await conn.query(`SET app.current_tenant_id = '${tenantId || ''}'`);
-      await conn.query(`SET search_path TO "${schema}", public`);
-    } else {
-      await conn.query('RESET app.current_tenant_id');
-      await conn.query('SET search_path TO public');
-    }
+    const searchPath = schema && schema !== 'public'
+      ? `"${schema.replace(/"/g, '""')}", public`
+      : 'public';
+    await new Promise<void>((resolve, reject) => {
+      conn.query(
+        `SELECT set_config('app.current_tenant_id', $1, false),
+                set_config('search_path', $2, false)`,
+        [tenantId || '', searchPath],
+        (error: Error | null) => error ? reject(error) : resolve(),
+      );
+    });
     return conn;
   };
 }
@@ -53,52 +55,72 @@ declare global {
   }
 }
 
-function getTenantIdFromHeader(req: Request): string | null {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
-  try {
-    const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, config.jwt.secret) as any;
-    return decoded.tenantId || null;
-  } catch {
-    return null;
-  }
+export function getTenantStore(): TenantStore | undefined {
+  return tenantAls.getStore();
 }
 
-export function tenantContext(req: Request, res: Response, next: NextFunction): void {
-  patchConnectionPool();
+export function runWithTenantContext<T>(
+  context: TenantStore,
+  callback: () => T,
+): T {
+  initializeTenantConnectionIsolation();
+  return tenantAls.run(context, callback);
+}
 
-  const tenantId = (req.user as any)?.tenantId || getTenantIdFromHeader(req);
+function requestedTenantId(req: Request): string | null {
+  const value = req.header('X-Tenant-ID');
+  return value?.trim() || null;
+}
 
-  if (!tenantId) {
-    tenantAls.run({ schema: 'public', tenantId: null }, () => next());
-    return;
+export async function resolveTenantForUser(
+  req: Request,
+  user: NonNullable<Express.Request['user']>,
+): Promise<Tenant | null> {
+  const headerTenantId = requestedTenantId(req);
+
+  if (user.tenantId) {
+    if (headerTenantId && headerTenantId !== user.tenantId) {
+      throw new AppError(403, 'FORBIDDEN', '普通租户用户不能切换或伪造租户上下文');
+    }
+    const tenant = await Tenant.findByPk(user.tenantId);
+    if (!tenant) throw new AppError(403, 'TENANT_NOT_FOUND', '所属租户不存在');
+    if (tenant.status !== TenantStatus.ACTIVE) {
+      throw new AppError(403, 'TENANT_INACTIVE', '所属租户已停用');
+    }
+    return tenant;
   }
 
-  Tenant.findByPk(tenantId)
-    .then((tenant) => {
-      if (!tenant) {
-        res.status(403).json({ success: false, error: { code: 'TENANT_NOT_FOUND', message: '租户不存在' } });
-        return;
-      }
-      if (tenant.status === TenantStatus.SUSPENDED) {
-        res.status(403).json({ success: false, error: { code: 'TENANT_SUSPENDED', message: '租户已停用' } });
-        return;
-      }
+  if (!headerTenantId) return null;
+  const tenant = await Tenant.findByPk(headerTenantId);
+  if (!tenant) throw new AppError(403, 'TENANT_NOT_FOUND', '选择的租户不存在');
+  if (tenant.status !== TenantStatus.ACTIVE) {
+    throw new AppError(403, 'TENANT_INACTIVE', '选择的租户已停用');
+  }
+  return tenant;
+}
 
-      req.tenant = {
-        id: tenant.id,
-        name: tenant.name,
-        slug: tenant.slug,
-        schemaName: tenant.schemaName,
-      };
+export function enterResolvedTenant(
+  req: Request,
+  tenant: Tenant | null,
+  next: NextFunction,
+): void {
+  if (!tenant) {
+    runWithTenantContext({ schema: 'public', tenantId: null }, next);
+    return;
+  }
+  req.tenant = {
+    id: tenant.id,
+    name: tenant.name,
+    slug: tenant.slug,
+    schemaName: tenant.schemaName,
+  };
+  runWithTenantContext({ schema: tenant.schemaName, tenantId: tenant.id }, next);
+}
 
-      tenantAls.run(
-        { schema: tenant.schemaName, tenantId: tenant.id },
-        () => next()
-      );
-    })
-    .catch((err) => {
-      res.status(500).json({ success: false, error: { code: 'TENANT_ERROR', message: err.message } });
-    });
+export function requireTenantContext(req: Request, _res: Response, next: NextFunction): void {
+  if (!req.tenant) {
+    next(new AppError(403, 'TENANT_CONTEXT_REQUIRED', '请先选择租户后再访问业务数据'));
+    return;
+  }
+  next();
 }

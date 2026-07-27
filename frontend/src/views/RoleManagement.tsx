@@ -20,7 +20,8 @@ interface PermDef {
 
 const RESOURCE_LABELS: Record<string, string> = {
   users: '用户管理',
-  templates: '模版管理',
+  templates: '合规模板',
+  qualifications: '资质台账',
   tasks: '合规任务',
   risks: '风险管理',
   audit_logs: '操作日志',
@@ -32,7 +33,8 @@ const RESOURCE_LABELS: Record<string, string> = {
   rules: '规则管理',
   account_tasks: '账户审计任务',
   problems: '问题管理',
-  dashboard: '审计概览',
+  dashboard: '工作台',
+  account_dashboard: '账户审计概览',
 };
 
 const ACTION_LABELS: Record<string, string> = {
@@ -60,7 +62,7 @@ export default function RoleManagement() {
         apiClient.get('/roles'),
         apiClient.get('/roles/permission-defs'),
       ]);
-      setRoles(rolesRes.data);
+      setRoles(rolesRes.data.items);
       setPermDefs(defsRes.data);
     } catch {
       message.error('加载角色数据失败');

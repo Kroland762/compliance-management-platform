@@ -34,7 +34,6 @@ Department.init({
 }, {
   sequelize,
   tableName: 'departments',
-  schema: 'public',
   timestamps: true,
   createdAt: 'createdAt',
   updatedAt: 'updatedAt',

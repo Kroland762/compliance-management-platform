@@ -19,6 +19,7 @@ let refreshPromise: Promise<{ token: string; user: unknown }> | null = null;
 
 const clearAuthState = () => {
   localStorage.removeItem('user');
+  sessionStorage.removeItem('selectedTenant');
   try {
     const setState = (window as any).__authSetState;
     if (setState) setState({ token: null, user: null, isAuthenticated: false, refreshPending: null });
@@ -54,6 +55,7 @@ apiClient.interceptors.request.use((config) => {
   try {
     const store = (window as any).__authStore;
     if (store?.token) config.headers.Authorization = `Bearer ${store.token}`;
+    if (store?.selectedTenant?.id) config.headers['X-Tenant-ID'] = store.selectedTenant.id;
   } catch {}
   return config;
 });
@@ -83,6 +85,13 @@ apiClient.interceptors.response.use(
       }
     }
 
+    const code = error.response?.data?.error?.code;
+    if (['TENANT_INACTIVE', 'TENANT_NOT_FOUND'].includes(code)) {
+      sessionStorage.removeItem('selectedTenant');
+      const setState = (window as any).__authSetState;
+      if (setState) setState({ selectedTenant: null });
+      if (window.location.pathname !== '/tenants') window.location.replace('/tenants');
+    }
     return Promise.reject(error.response?.data || error);
   },
 );
