@@ -1,6 +1,16 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+function resolveBusinessTimeZone(): string {
+  const timeZone = process.env.BUSINESS_TIME_ZONE || 'Asia/Shanghai';
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone }).format();
+    return timeZone;
+  } catch {
+    throw new Error(`无效的 BUSINESS_TIME_ZONE: ${timeZone}`);
+  }
+}
+
 export const config = {
   port: parseInt(process.env.PORT || '3001', 10),
   nodeEnv: process.env.NODE_ENV || 'development',
@@ -33,6 +43,7 @@ export const config = {
     },
   },
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
+  businessTimeZone: resolveBusinessTimeZone(),
   security: {
     allowPrivateDataSourceHosts: process.env.ALLOW_PRIVATE_DATASOURCE_HOSTS === 'true',
     scheduleTaskTimeoutMs: parseInt(process.env.SCHEDULE_TASK_TIMEOUT_MS || '600000', 10),

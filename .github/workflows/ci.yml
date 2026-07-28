@@ -36,6 +36,7 @@ jobs:
       E2E_ADMIN_PASSWORD: Admin1234!
       RUN_PG_INTEGRATION: "true"
       ALLOW_PRIVATE_DATASOURCE_HOSTS: "true"
+      BUSINESS_TIME_ZONE: Asia/Shanghai
     steps:
       - uses: actions/checkout@v4
 

@@ -31,8 +31,34 @@ interface UpdateDataSourceInput {
 }
 
 class DataSourceService {
+  private normalizeIp(ip: string): { address: string; isIpv4Mapped: boolean } {
+    const input = ip.trim().toLowerCase().replace(/^\[|\]$/g, '');
+    if (net.isIPv4(input)) return { address: input, isIpv4Mapped: false };
+    if (!net.isIPv6(input)) return { address: input, isIpv4Mapped: false };
+
+    try {
+      const canonical = new URL(`http://[${input}]/`).hostname.slice(1, -1);
+      const mapped = canonical.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+      if (!mapped) return { address: canonical, isIpv4Mapped: false };
+
+      const high = parseInt(mapped[1], 16);
+      const low = parseInt(mapped[2], 16);
+      return {
+        address: [
+          high >> 8,
+          high & 0xff,
+          low >> 8,
+          low & 0xff,
+        ].join('.'),
+        isIpv4Mapped: true,
+      };
+    } catch {
+      return { address: input, isIpv4Mapped: false };
+    }
+  }
+
   private isMetadataIp(ip: string): boolean {
-    const normalized = ip.toLowerCase();
+    const normalized = this.normalizeIp(ip).address;
     return normalized === '169.254.169.254'
       || normalized === 'fd00:ec2::254'
       || normalized === 'fe80::a9fe:a9fe';
@@ -61,11 +87,20 @@ class DataSourceService {
     }
   }
 
-  private isBlockedIp(ip: string): boolean {
-    if (appConfig.security.allowPrivateDataSourceHosts) return false;
+  private isBlockedIp(
+    ip: string,
+    allowPrivateHosts = appConfig.security.allowPrivateDataSourceHosts,
+  ): boolean {
+    const normalizedIp = this.normalizeIp(ip);
 
-    if (net.isIPv4(ip)) {
-      const parts = ip.split('.').map(Number);
+    // IPv4-mapped IPv6 can bypass IPv4-only allow/deny checks. DNS lookup returns
+    // ordinary IPv4 addresses, so rejecting this ambiguous direct form preserves
+    // legitimate private PostgreSQL hosts without weakening metadata protection.
+    if (normalizedIp.isIpv4Mapped || this.isMetadataIp(normalizedIp.address)) return true;
+    if (allowPrivateHosts) return false;
+
+    if (net.isIPv4(normalizedIp.address)) {
+      const parts = normalizedIp.address.split('.').map(Number);
       const [a, b] = parts;
       return (
         a === 0 ||
@@ -78,11 +113,8 @@ class DataSourceService {
       );
     }
 
-    if (net.isIPv6(ip)) {
-      const normalized = ip.toLowerCase();
-      if (normalized.startsWith('::ffff:')) {
-        return this.isBlockedIp(normalized.slice('::ffff:'.length));
-      }
+    if (net.isIPv6(normalizedIp.address)) {
+      const normalized = normalizedIp.address;
       return (
         normalized === '::1' ||
         normalized === '::' ||

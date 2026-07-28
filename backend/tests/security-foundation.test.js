@@ -49,11 +49,32 @@ describe('P0 security foundations', () => {
         sql: 'DELETE FROM users',
       },
     })).rejects.toThrow('不允许配置任意 SQL');
-    expect(dataSourceService.isBlockedIp('::ffff:169.254.169.254')).toBe(true);
-    expect(dataSourceService.isBlockedIp('::ffff:127.0.0.1')).toBe(true);
+
+    await expect(dataSourceService.createDataSource({
+      name: 'metadata',
+      sourceType: 'DATABASE',
+      connectionConfig: {
+        dbType: 'postgres',
+        host: '::ffff:169.254.169.254',
+        port: 5432,
+        database: 'accounts',
+        username: 'reader',
+        table: 'users',
+        allowedColumns: ['id'],
+      },
+    })).rejects.toThrow('不允许连接云元数据服务地址');
+
+    expect(dataSourceService.isBlockedIp('169.254.169.254', true)).toBe(true);
+    expect(dataSourceService.isBlockedIp('::ffff:169.254.169.254', true)).toBe(true);
+    expect(dataSourceService.isBlockedIp('0:0:0:0:0:ffff:a9fe:a9fe', true)).toBe(true);
+    expect(dataSourceService.isBlockedIp('fd00:ec2::254', true)).toBe(true);
+    expect(dataSourceService.isBlockedIp('fe80::a9fe:a9fe', true)).toBe(true);
+    expect(dataSourceService.isBlockedIp('::ffff:127.0.0.1', true)).toBe(true);
+    expect(dataSourceService.isBlockedIp('10.0.0.10', true)).toBe(false);
+    expect(dataSourceService.isBlockedIp('10.0.0.10', false)).toBe(true);
   });
 
-  test('qualification status uses the local calendar date without UTC rollover', () => {
+  test('qualification status uses the configured business calendar without host timezone rollover', () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-07-27T00:30:00+08:00'));
     expect(getQualificationStatus('2026-07-26')).toBe('expired');
     expect(getQualificationStatus('2026-07-27')).toBe('expiring');

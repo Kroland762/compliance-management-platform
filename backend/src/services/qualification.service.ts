@@ -1,6 +1,7 @@
 import { Op, type WhereOptions } from 'sequelize';
 import { Department, OperationType, Qualification, TenantMember, TenantMemberStatus } from '../models';
 import { QualificationStatus } from '../models/Qualification';
+import { config as appConfig } from '../config';
 import { pagination, parsePagination } from '../utils/pagination';
 import auditLogService from './audit-log.service';
 
@@ -37,27 +38,28 @@ function normalizeDate(value?: string | null): string | null {
   return parsed.toISOString().slice(0, 10);
 }
 
-function addDays(date: Date, days: number): Date {
-  const result = new Date(date);
-  result.setDate(result.getDate() + days);
-  return result;
+function businessDateText(date: Date): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: appConfig.businessTimeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
 }
 
-function localDateText(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+function addCalendarDays(dateText: string, days: number): string {
+  const [year, month, day] = dateText.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
 }
 
 export function getQualificationStatus(expiryDate?: string | null): QualificationStatus {
   if (!expiryDate) return QualificationStatus.MISSING;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const todayText = localDateText(today);
+  const todayText = businessDateText(new Date());
   const expiryText = String(expiryDate).slice(0, 10);
   if (expiryText < todayText) return QualificationStatus.EXPIRED;
-  if (expiryText <= localDateText(addDays(today, EXPIRING_DAYS))) return QualificationStatus.EXPIRING;
+  if (expiryText <= addCalendarDays(todayText, EXPIRING_DAYS)) return QualificationStatus.EXPIRING;
   return QualificationStatus.VALID;
 }
 
@@ -152,10 +154,8 @@ class QualificationService {
 
   private applyStatusFilter(where: any, status?: QualificationStatus) {
     if (!status) return;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayText = localDateText(today);
-    const expiringText = localDateText(addDays(today, EXPIRING_DAYS));
+    const todayText = businessDateText(new Date());
+    const expiringText = addCalendarDays(todayText, EXPIRING_DAYS);
 
     if (status === QualificationStatus.MISSING) where.expiryDate = { [Op.is]: null };
     if (status === QualificationStatus.EXPIRED) where.expiryDate = { [Op.lt]: todayText };
