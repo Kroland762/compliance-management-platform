@@ -32,9 +32,14 @@ interface TaskExecutionAttributes {
   errorMessage: string | null;
   triggerType: TriggerType;
   triggeredBy: string | null;
+  heartbeatAt: Date | null;
+  workerId: string | null;
+  idempotencyKey: string | null;
+  attempt: number;
+  nextRetryAt: Date | null;
 }
 
-type CreationAttributes = Optional<TaskExecutionAttributes, 'id' | 'endTime' | 'accountsProcessed' | 'problemsFound' | 'errorMessage' | 'currentPhase' | 'phaseProgress'>;
+type CreationAttributes = Optional<TaskExecutionAttributes, 'id' | 'endTime' | 'accountsProcessed' | 'problemsFound' | 'errorMessage' | 'currentPhase' | 'phaseProgress' | 'heartbeatAt' | 'workerId' | 'idempotencyKey' | 'attempt' | 'nextRetryAt'>;
 
 class TaskExecution extends Model<TaskExecutionAttributes, CreationAttributes> implements TaskExecutionAttributes {
   declare id: string;
@@ -49,6 +54,11 @@ class TaskExecution extends Model<TaskExecutionAttributes, CreationAttributes> i
   declare errorMessage: string | null;
   declare triggerType: TriggerType;
   declare triggeredBy: string | null;
+  declare heartbeatAt: Date | null;
+  declare workerId: string | null;
+  declare idempotencyKey: string | null;
+  declare attempt: number;
+  declare nextRetryAt: Date | null;
 }
 
 TaskExecution.init({
@@ -64,6 +74,11 @@ TaskExecution.init({
   errorMessage: { type: DataTypes.TEXT, allowNull: true },
   triggerType: { type: DataTypes.STRING(20), allowNull: false },
   triggeredBy: { type: DataTypes.UUID, allowNull: true },
+  heartbeatAt: { type: DataTypes.DATE, allowNull: true },
+  workerId: { type: DataTypes.STRING(100), allowNull: true },
+  idempotencyKey: { type: DataTypes.STRING(180), allowNull: true },
+  attempt: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+  nextRetryAt: { type: DataTypes.DATE, allowNull: true },
 }, {
   sequelize,
   tableName: 'account_task_executions',

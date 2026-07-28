@@ -8,12 +8,14 @@ const { Title } = Typography;
 
 export default function CreateTask() {
   const [templates, setTemplates] = useState<any[]>([]);
+  const [departments, setDepartments] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [form] = Form.useForm();
   const navigate = useNavigate();
 
   useEffect(() => {
     apiClient.get('/templates').then((res: any) => setTemplates(res.data?.items || []));
+    apiClient.get('/lookup/departments').then((res: any) => setDepartments(res.data || []));
   }, []);
 
   const handleSubmit = async (values: any) => {
@@ -23,6 +25,7 @@ export default function CreateTask() {
         templateId: values.templateId,
         assessmentType: values.assessmentType,
         assessmentTarget: values.assessmentTarget,
+        departmentId: values.departmentId,
       });
       message.success('审计任务已创建，请配置问题和指派普通用户');
       form.resetFields();
@@ -47,9 +50,19 @@ export default function CreateTask() {
           <Form.Item name="assessmentTarget" label="评估对象" rules={[{ required: true, message: '请输入评估对象' }]}>
             <Input placeholder="例如：核心业务系统、财务管理系统" size="large" />
           </Form.Item>
-          <Form.Item name="templateId" label="问卷模版" rules={[{ required: true, message: '请选择问卷模版' }]}>
+          <Form.Item name="templateId" label="合规模板" rules={[{ required: true, message: '请选择合规模板' }]}>
             <Select placeholder="选择审计问卷" size="large"
               options={templates.map((t: any) => ({ value: t.id, label: `${t.name}（${t.questionCount}题）` }))} />
+          </Form.Item>
+          <Form.Item name="departmentId" label="任务归属部门" rules={[{ required: true, message: '请选择归属部门' }]}>
+            <Select
+              placeholder="选择稳定归属部门"
+              size="large"
+              options={departments.map((department: any) => ({
+                value: department.id,
+                label: `${department.name} (${department.code})`,
+              }))}
+            />
           </Form.Item>
           <Button type="primary" htmlType="submit" loading={loading} block size="large"
             style={{ borderRadius: 12, fontWeight: 500, marginTop: 8 }}>

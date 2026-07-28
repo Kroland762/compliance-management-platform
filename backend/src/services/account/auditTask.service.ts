@@ -19,6 +19,7 @@ import cronSchedulerService from './cronScheduler.service';
 import { v4 as uuidv4 } from 'uuid';
 import auditLogService from '../audit-log.service';
 import { OperationType } from '../../models';
+import { parsePagination, pagination } from '../../utils/pagination';
 
 interface ListQuery {
   page?: number;
@@ -49,7 +50,8 @@ class AuditTaskService {
    * 分页列出审计任务
    */
   async listTasks(query: ListQuery) {
-    const { page = 1, pageSize = 20, status, scheduleType, search } = query;
+    const { page, pageSize } = parsePagination(query);
+    const { status, scheduleType, search } = query;
     const where: any = {};
 
     if (status) where.status = status;
@@ -81,7 +83,7 @@ class AuditTaskService {
 
     return {
       items,
-      pagination: { page, pageSize, total: count, totalPages: Math.ceil(count / pageSize) },
+      pagination: pagination(page, pageSize, count),
     };
   }
 
@@ -135,7 +137,7 @@ class AuditTaskService {
 
     // Register cron job for non-MANUAL tasks
     if (task.scheduleType !== ScheduleType.MANUAL && task.status === TaskStatus.ACTIVE) {
-      cronSchedulerService.registerJob(task.id, task.scheduleType, task.scheduleConfig as any);
+      await cronSchedulerService.registerJob(task.id, task.scheduleType, task.scheduleConfig as any);
     }
 
     if (userId) {
@@ -180,9 +182,9 @@ class AuditTaskService {
     // Re-register cron job based on new schedule
     const updated = await task.reload();
     if (updated.scheduleType !== ScheduleType.MANUAL && updated.status === TaskStatus.ACTIVE) {
-      cronSchedulerService.registerJob(updated.id, updated.scheduleType, updated.scheduleConfig as any);
+      await cronSchedulerService.registerJob(updated.id, updated.scheduleType, updated.scheduleConfig as any);
     } else {
-      cronSchedulerService.unregisterJob(updated.id);
+      await cronSchedulerService.unregisterJob(updated.id);
     }
 
     if (userId) {
@@ -207,7 +209,7 @@ class AuditTaskService {
     if (!task) throw new Error('审计任务不存在');
 
     // Unregister cron job
-    cronSchedulerService.unregisterJob(id);
+    await cronSchedulerService.unregisterJob(id);
 
     // 删除执行记录
     await TaskExecution.destroy({ where: { taskId: id } });
@@ -232,8 +234,8 @@ class AuditTaskService {
   /**
    * 执行审计任务（通过 cron 调度触发，triggerType=SCHEDULED，无需 userId）
    */
-  async executeTaskScheduled(id: string) {
-    return this.executeTaskInternal(id, undefined, TriggerType.SCHEDULED);
+  async executeTaskScheduled(id: string, idempotencyKey: string, workerId: string) {
+    return this.executeTaskInternal(id, undefined, TriggerType.SCHEDULED, idempotencyKey, workerId);
   }
 
   /**
@@ -246,11 +248,45 @@ class AuditTaskService {
   /**
    * 执行审计任务：完整的执行流水线
    */
-  private async executeTaskInternal(id: string, userId: string | undefined, triggerType: TriggerType) {
+  private async executeTaskInternal(
+    id: string,
+    userId: string | undefined,
+    triggerType: TriggerType,
+    idempotencyKey?: string,
+    workerId?: string,
+  ) {
     const task = await AccountAuditTask.findByPk(id);
     if (!task) throw new Error('审计任务不存在');
 
-    // 并发保护：检查是否有正在运行的执行
+    if (idempotencyKey) {
+      const existing = await TaskExecution.findOne({ where: { idempotencyKey } });
+      if (existing) {
+        if (existing.status === ExecutionStatus.SUCCESS) {
+          return {
+            executionId: existing.id,
+            status: existing.status,
+            accountsProcessed: existing.accountsProcessed || 0,
+            problemsFound: existing.problemsFound || 0,
+            idempotentReplay: true,
+          };
+        }
+        throw new Error('相同调度窗口已经执行或正在执行');
+      }
+    }
+
+    const staleBefore = new Date(Date.now() - 5 * 60 * 1000);
+    await TaskExecution.update({
+      status: ExecutionStatus.FAILED,
+      endTime: new Date(),
+      errorMessage: 'worker heartbeat expired',
+    }, {
+      where: {
+        taskId: id,
+        status: ExecutionStatus.RUNNING,
+        [Op.or]: [{ heartbeatAt: null }, { heartbeatAt: { [Op.lt]: staleBefore } }],
+      },
+    });
+
     const runningExecution = await TaskExecution.findOne({
       where: { taskId: id, status: ExecutionStatus.RUNNING },
     });
@@ -275,11 +311,16 @@ class AuditTaskService {
       startTime: new Date(),
       triggerType,
       triggeredBy: userId || null,
+      heartbeatAt: new Date(),
+      workerId: workerId || null,
+      idempotencyKey: idempotencyKey || null,
+      attempt: 1,
+      nextRetryAt: null,
     } as any);
 
     try {
       // === 阶段1: 同步数据 ===
-      await execution.update({ currentPhase: ExecutionPhase.SYNCING, phaseProgress: 10 });
+      await execution.update({ currentPhase: ExecutionPhase.SYNCING, phaseProgress: 10, heartbeatAt: new Date() });
 
       // 检查是否需要同步（如果数据源上次同步时间较久或没有HOT数据）
       const hotCount = await AccountData.count({
@@ -292,10 +333,10 @@ class AuditTaskService {
       }
 
       // === 阶段2: 字段映射 ===
-      await execution.update({ currentPhase: ExecutionPhase.MAPPING, phaseProgress: 30 });
+      await execution.update({ currentPhase: ExecutionPhase.MAPPING, phaseProgress: 30, heartbeatAt: new Date() });
 
       // === 阶段3: 规则匹配 ===
-      await execution.update({ currentPhase: ExecutionPhase.MATCHING, phaseProgress: 50 });
+      await execution.update({ currentPhase: ExecutionPhase.MATCHING, phaseProgress: 50, heartbeatAt: new Date() });
 
       // 查询本数据源的 HOT 数据
       const hotAccounts = await AccountData.findAll({
@@ -321,7 +362,7 @@ class AuditTaskService {
       const matchedResults = evaluationResults.filter(r => r.matched);
 
       // === 阶段4: 去重 & 自动解决 ===
-      await execution.update({ currentPhase: ExecutionPhase.SAVING, phaseProgress: 80 });
+      await execution.update({ currentPhase: ExecutionPhase.SAVING, phaseProgress: 80, heartbeatAt: new Date() });
 
       // 4a. 去重：accountId + ruleId 唯一
       const newProblems = new Map<string, typeof matchedResults[0]>();
@@ -426,6 +467,7 @@ class AuditTaskService {
         batchId,
         accountsProcessed: accountIds.length,
         problemsFound: newProblems.size,
+        heartbeatAt: new Date(),
         newProblems: newProblemCount,
         autoResolved: autoResolvedCount,
         skippedSameTask,
@@ -471,6 +513,10 @@ class AuditTaskService {
         phaseProgress: 0,
         endTime: new Date(),
         errorMessage: error.message,
+        heartbeatAt: new Date(),
+        nextRetryAt: triggerType === TriggerType.SCHEDULED
+          ? new Date(Date.now() + Math.min(60 * 60 * 1000, 2 ** execution.attempt * 30_000))
+          : null,
       });
 
       throw error;
@@ -481,8 +527,7 @@ class AuditTaskService {
    * 获取任务的执行历史
    */
   async getExecutionHistory(taskId: string, query?: { page?: number; pageSize?: number }) {
-    const page = query?.page || 1;
-    const pageSize = query?.pageSize || 20;
+    const { page, pageSize } = parsePagination(query || {});
 
     const { count, rows } = await TaskExecution.findAndCountAll({
       where: { taskId },
@@ -493,7 +538,7 @@ class AuditTaskService {
 
     return {
       items: rows.map(r => r.toJSON()),
-      pagination: { page, pageSize, total: count, totalPages: Math.ceil(count / pageSize) },
+      pagination: pagination(page, pageSize, count),
     };
   }
 }

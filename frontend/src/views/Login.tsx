@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Input, Button, Typography, App } from 'antd';
 import { UserOutlined, LockOutlined, SafetyOutlined, ReloadOutlined } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/auth';
 import { getApiErrorMessage } from '../utils/error';
 import apiClient from '../api/client';
@@ -10,6 +10,7 @@ const { Text } = Typography;
 
 export default function Login() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { message } = App.useApp();
   const login = useAuthStore((s) => s.login);
   const [username, setUsername] = useState('');
@@ -48,9 +49,18 @@ export default function Login() {
     }
     setLoading(true);
     try {
-      await login(username, password, captchaId, captchaCode);
+      const status = await login(username, password, captchaId, captchaCode);
       message.success('登录成功');
-      navigate('/dashboard');
+      const requestedPath = typeof location.state?.from === 'string' && location.state.from.startsWith('/')
+        ? location.state.from
+        : null;
+      if (status === 'password_change_required') navigate('/change-password');
+      else if (requestedPath) navigate(requestedPath);
+      else if (status === 'tenant_selection_required') navigate('/tenant-select');
+      else {
+        const state = useAuthStore.getState();
+        navigate(state.user?.tenantId ? '/dashboard' : '/tenants');
+      }
     } catch (err: any) {
       message.error(getApiErrorMessage(err, '登录失败'));
       fetchCaptcha(); // 登录失败刷新验证码
@@ -94,7 +104,7 @@ export default function Login() {
             合规管理平台
           </div>
           <Text style={{ fontSize: 14, color: '#8E8E93' }}>
-            Compliance Audit Platform
+            Compliance Management Platform
           </Text>
         </div>
 

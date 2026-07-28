@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Typography, Row, Col, Card } from 'antd';
 import {
   AuditOutlined, FileTextOutlined, CheckCircleOutlined, WarningOutlined,
+  SafetyCertificateOutlined,
 } from '@ant-design/icons';
 import { useNavigate, Navigate } from 'react-router-dom';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
@@ -65,7 +66,7 @@ export default function Dashboard() {
   const user = useAuthStore((s) => s.user);
   const can = useAuthStore((s) => s.hasPermission);
   const navigate = useNavigate();
-  const [stats, setStats] = useState({ tasks: 0, templates: 0, completed: 0, risks: 0 });
+  const [stats, setStats] = useState({ tasks: 0, templates: 0, qualifications: 0, completed: 0, risks: 0 });
   const [taskPie, setTaskPie] = useState<any[]>([]);
   const [riskPie, setRiskPie] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -74,33 +75,17 @@ export default function Dashboard() {
     let cancelled = false;
     const fetchStats = async () => {
       try {
-        const results: PromiseSettledResult<any>[] = [];
-        const promises: Promise<any>[] = [];
-
-        if (can('tasks', 'read')) promises.push(apiClient.get('/tasks'));
-        if (can('templates', 'read')) promises.push(apiClient.get('/templates'));
-        if (can('risks', 'read')) promises.push(apiClient.get('/risks'));
-        promises.push(apiClient.get('/stats'));
-
-        const settled = await Promise.allSettled(promises);
+        const statsRes: any = await apiClient.get('/stats');
         if (cancelled) return;
-
-        let idx = 0;
-        const tasksRes = can('tasks', 'read') ? settled[idx++] : null;
-        const templatesRes = can('templates', 'read') ? settled[idx++] : null;
-        const risksRes = can('risks', 'read') ? settled[idx++] : null;
-        const statsRes = settled[idx++];
-
-        const tasks = tasksRes?.status === 'fulfilled' ? tasksRes.value?.data?.items || [] : [];
-        const templates = templatesRes?.status === 'fulfilled' ? templatesRes.value?.data?.items || [] : [];
-        const risks = risksRes?.status === 'fulfilled' ? risksRes.value?.data?.items || [] : [];
-        const pieData = statsRes?.status === 'fulfilled' ? statsRes.value?.data : {};
+        const pieData = statsRes?.data || {};
+        const summary = pieData.summary || {};
 
         setStats({
-          tasks: tasks.length,
-          templates: templates.length,
-          completed: tasks.filter((t: any) => t.status === 'completed').length,
-          risks: risks.length,
+          tasks: summary.tasks || 0,
+          templates: summary.templates || 0,
+          qualifications: summary.qualifications || 0,
+          completed: summary.completed || 0,
+          risks: summary.risks || 0,
         });
         setTaskPie(pieData.taskPie || []);
         setRiskPie(pieData.riskPie || []);
@@ -112,7 +97,7 @@ export default function Dashboard() {
     return () => { cancelled = true; };
   }, []);
 
-  const hasAnyPermission = can('tasks', 'read') || can('risks', 'read');
+  const hasAnyPermission = can('tasks', 'read') || can('risks', 'read') || can('qualifications', 'read');
   if (!hasAnyPermission) {
     return <Navigate to="/my-tasks" replace />;
   }
@@ -141,8 +126,16 @@ export default function Dashboard() {
         {can('templates', 'read') && (
           <Col xs={24} sm={12} lg={6}>
             <StatCard
-              icon={<FileTextOutlined />} label="问卷模版" value={stats.templates}
+              icon={<FileTextOutlined />} label="合规模板" value={stats.templates}
               color="#5856D6" onClick={() => navigate('/templates')}
+            />
+          </Col>
+        )}
+        {can('qualifications', 'read') && (
+          <Col xs={24} sm={12} lg={6}>
+            <StatCard
+              icon={<SafetyCertificateOutlined />} label="资质台账" value={stats.qualifications}
+              color="#00A0A0" onClick={() => navigate('/qualifications')}
             />
           </Col>
         )}
@@ -154,7 +147,7 @@ export default function Dashboard() {
             />
           </Col>
         )}
-        {!can('tasks', 'read') && !can('templates', 'read') && !can('risks', 'read') && (
+        {!can('tasks', 'read') && !can('templates', 'read') && !can('qualifications', 'read') && !can('risks', 'read') && (
           <Col span={24}>
             <Text type="secondary">暂无权限查看统计数据</Text>
           </Col>

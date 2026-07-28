@@ -5,9 +5,13 @@ import { useAuthStore } from './store/auth';
 import PrivateRoute from './components/PrivateRoute';
 import MainLayout from './components/MainLayout';
 import Login from './views/Login';
+import TenantSelection from './views/TenantSelection';
+import ChangePassword from './views/ChangePassword';
+import InvitationAcceptance from './views/InvitationAcceptance';
 
 const Dashboard = lazy(() => import('./views/Dashboard'));
 const TemplateManagement = lazy(() => import('./views/admin/TemplateManagement'));
+const QualificationLedger = lazy(() => import('./views/QualificationLedger'));
 const UserManagement = lazy(() => import('./views/admin/UserManagement'));
 const RoleManagement = lazy(() => import('./views/RoleManagement'));
 const AuditLogViewer = lazy(() => import('./views/admin/AuditLogViewer'));
@@ -19,6 +23,7 @@ const MyTasks = lazy(() => import('./views/respondent/MyTasks'));
 const FillQuestionnaire = lazy(() => import('./views/respondent/FillQuestionnaire'));
 const RiskManagement = lazy(() => import('./views/RiskManagement'));
 const Settings = lazy(() => import('./views/Settings'));
+const OrganizationManagement = lazy(() => import('./views/OrganizationManagement'));
 const AccountAudit = lazy(() => import('./views/AccountAudit'));
 const AccountDashboard = lazy(() => import('./views/account/Dashboard'));
 const DataSourceList = lazy(() => import('./views/account/DataSourceList'));
@@ -49,13 +54,18 @@ function App() {
     <Suspense fallback={routeFallback}>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/tenant-select" element={<TenantSelection />} />
+        <Route path="/change-password" element={<ChangePassword />} />
+        <Route path="/accept-invitation" element={<InvitationAcceptance />} />
         <Route path="/" element={<PrivateRoute><MainLayout /></PrivateRoute>}>
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="templates" element={<PrivateRoute permission={['templates', 'read']}><TemplateManagement /></PrivateRoute>} />
+          <Route path="qualifications" element={<PrivateRoute permission={['qualifications', 'read']}><QualificationLedger /></PrivateRoute>} />
           <Route path="users" element={<PrivateRoute permission={['users', 'read']}><UserManagement /></PrivateRoute>} />
           <Route path="roles" element={<PrivateRoute permission={['users', 'read']}><RoleManagement /></PrivateRoute>} />
           <Route path="tenants" element={<PrivateRoute permission={['tenants', 'read']}><TenantManagement /></PrivateRoute>} />
+          <Route path="organization" element={<PrivateRoute permission={['organization', 'read']}><OrganizationManagement /></PrivateRoute>} />
           <Route path="audit-logs" element={<PrivateRoute permission={['audit_logs', 'read']}><AuditLogViewer /></PrivateRoute>} />
           <Route path="tasks/review" element={<PrivateRoute permission={['tasks', 'read']}><ReviewTaskList /></PrivateRoute>} />
           <Route path="tasks/review/:id" element={<PrivateRoute permission={['tasks', 'read']}><ReviewTask /></PrivateRoute>} />
@@ -64,7 +74,7 @@ function App() {
           <Route path="my-tasks/:id" element={<PrivateRoute permission={['tasks', 'submit']}><FillQuestionnaire /></PrivateRoute>} />
           <Route path="risks" element={<PrivateRoute permission={['risks', 'read']}><RiskManagement /></PrivateRoute>} />
           <Route path="settings" element={<Settings />} />
-          <Route path="account-audit" element={<PrivateRoute permission={['dashboard', 'read']}><AccountAudit /></PrivateRoute>}>
+          <Route path="account-audit" element={<PrivateRoute permission={['account_dashboard', 'read']}><AccountAudit /></PrivateRoute>}>
             <Route index element={<AccountDashboard />} />
             <Route path="data-sources" element={<DataSourceList />} />
             <Route path="data-sources/new" element={<PrivateRoute permission={['data_sources', 'create']}><DataSourceForm /></PrivateRoute>} />

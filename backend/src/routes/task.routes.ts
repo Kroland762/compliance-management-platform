@@ -3,93 +3,124 @@ import { Op } from 'sequelize';
 import { authenticate, authorize } from '../middlewares/auth';
 import taskService from '../services/task.service';
 import taskLifecycleService from '../services/task-lifecycle.service';
+import objectAccessService from '../services/object-access.service';
+import { AppError } from '../utils/http';
 
 const router = Router();
 router.use(authenticate);
 
+function sendError(res: Response, error: any, status: number, code: string): void {
+  if (error instanceof AppError) {
+    res.status(error.statusCode).json({
+      success: false,
+      error: { code: error.code, message: error.message },
+    });
+    return;
+  }
+  res.status(status).json({ success: false, error: { code, message: error.message } });
+}
+
 router.post('/', authorize('tasks', 'create'), async (req: Request, res: Response) => {
   try {
+    const departmentId = req.body.departmentId || req.user!.primaryDepartmentId;
+    if (!departmentId) throw new AppError(400, 'PRIMARY_DEPARTMENT_REQUIRED', '请选择任务归属部门');
     // assignedTo 不再必填 — 创建草稿任务，后续再指派
-    const task = await taskService.createTask({ ...req.body, createdBy: req.user!.userId });
+    const task = await taskService.createTask({ ...req.body, departmentId, createdBy: req.user!.userId });
     res.status(201).json({ success: true, data: task });
   } catch (error: any) {
-    res.status(400).json({ success: false, error: { code: 'CREATE_FAILED', message: error.message } });
+    sendError(res, error, 400, 'CREATE_FAILED');
   }
 });
 
-router.get('/', async (req: Request, res: Response) => {
+router.get('/', authorize('tasks', 'read'), async (req: Request, res: Response) => {
   try {
-    const result = await taskService.getTasksWithStats({ ...req.query, userId: req.user!.userId, userRole: req.user!.role } as any);
+    const result = await taskService.getTasksWithStats({ ...req.query, userId: req.user!.userId, user: req.user! } as any);
     res.json({ success: true, data: result });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: { code: 'QUERY_FAILED', message: error.message } });
+    sendError(res, error, 500, 'QUERY_FAILED');
   }
 });
 
-router.get('/:id/questions', async (req: Request, res: Response) => {
+router.get('/:id/questions', authorize('tasks', 'read'), async (req: Request, res: Response) => {
   try {
+    await objectAccessService.taskOrNotFound(req.params.id, req.user!);
     const questionnaireService = (await import('../services/questionnaire.service')).default;
-    const questions = await questionnaireService.getQuestions(req.params.id, req.user!.userId);
+    const questions = await questionnaireService.getQuestions(req.params.id, req.user!);
     res.json({ success: true, data: { questions } });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: { code: 'QUERY_FAILED', message: error.message } });
+    sendError(res, error, 500, 'QUERY_FAILED');
   }
 });
 
-router.get('/:id', async (req: Request, res: Response) => {
+router.get('/:id', authorize('tasks', 'read'), async (req: Request, res: Response) => {
   try {
+    await objectAccessService.taskOrNotFound(req.params.id, req.user!);
     const task = await taskService.getTaskById(req.params.id);
     res.json({ success: true, data: task });
   } catch (error: any) {
-    res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: error.message } });
+    sendError(res, error, 404, 'NOT_FOUND');
   }
 });
 
-router.post('/:id/submit', async (req: Request, res: Response) => {
+router.post('/:id/submit', authorize('tasks', 'submit'), async (req: Request, res: Response) => {
   try {
+    await objectAccessService.taskOrNotFound(req.params.id, req.user!, 'submit');
     const task = await taskLifecycleService.submitTask(req.params.id, req.user!.userId);
     res.json({ success: true, data: task });
   } catch (error: any) {
-    res.status(400).json({ success: false, error: { code: 'SUBMIT_FAILED', message: error.message } });
+    sendError(res, error, 400, 'SUBMIT_FAILED');
   }
 });
 
 router.post('/:id/return', authorize('tasks', 'update'), async (req: Request, res: Response) => {
   try {
     const { assigneeIds, reason } = req.body;
+    await objectAccessService.taskOrNotFound(req.params.id, req.user!, 'update');
     const task = await taskLifecycleService.returnTask(req.params.id, assigneeIds, reason, req.user!.userId);
     res.json({ success: true, data: task });
   } catch (error: any) {
-    res.status(400).json({ success: false, error: { code: 'RETURN_FAILED', message: error.message } });
+    sendError(res, error, 400, 'RETURN_FAILED');
   }
 });
 
 router.post('/:id/complete-review', authorize('tasks', 'update'), async (req: Request, res: Response) => {
   try {
+    await objectAccessService.taskOrNotFound(req.params.id, req.user!, 'update');
     const task = await taskLifecycleService.completeReview(req.params.id, req.user!.userId);
     res.json({ success: true, data: task });
   } catch (error: any) {
-    res.status(400).json({ success: false, error: { code: 'COMPLETE_FAILED', message: error.message } });
+    sendError(res, error, 400, 'COMPLETE_FAILED');
   }
 });
 
 // 审计员配置任务：更新问题责任分配
 router.put('/:id/configure', authorize('tasks', 'update'), async (req: Request, res: Response) => {
   try {
+    await objectAccessService.taskOrNotFound(req.params.id, req.user!, 'update');
     const { questionAssignments } = req.body;
-    const { QuestionItem, AuditTask, TaskStatus, NotificationType } = await import('../models');
+    const { QuestionItem, TaskStatus, TenantMember, TenantMemberStatus, Department } = await import('../models');
     const notificationService = (await import('../services/notification.service')).default;
 
     const notifiedUsers = new Set<string>();
 
     if (questionAssignments) {
+      const assigneeIds = Array.from(new Set(
+        questionAssignments.map((item: any) => item.assignedTo).filter(Boolean),
+      )) as string[];
+      if (assigneeIds.length > 0) {
+        const count = await TenantMember.count({
+          where: { userId: { [Op.in]: assigneeIds }, status: TenantMemberStatus.ACTIVE },
+        });
+        if (count !== assigneeIds.length) throw new AppError(404, 'NOT_FOUND', '指派成员不存在');
+      }
       for (const qa of questionAssignments) {
-        await QuestionItem.update(
+        const [updated] = await QuestionItem.update(
           { responsibleDepartment: qa.responsibleDepartment, responsiblePerson: qa.responsiblePerson,
             referenceAnswer: qa.referenceAnswer, historicalEvidencePath: qa.historicalEvidencePath,
             assignedTo: qa.assignedTo || null },
-          { where: { id: qa.questionId } }
+          { where: { id: qa.questionId, taskId: req.params.id } }
         );
+        if (updated !== 1) throw new AppError(404, 'NOT_FOUND', '任务问题不存在');
         if (qa.assignedTo) {
           if (!notifiedUsers.has(qa.assignedTo)) {
             notifiedUsers.add(qa.assignedTo);
@@ -99,8 +130,15 @@ router.put('/:id/configure', authorize('tasks', 'update'), async (req: Request, 
     }
 
     // 全部题目都指派了 → 草稿变已分配，同步任务级 assignedTo
-    const task = await AuditTask.findByPk(req.params.id);
+    const task = await objectAccessService.taskOrNotFound(req.params.id, req.user!, 'delete');
     if (task) {
+      if (req.body.departmentId && req.body.departmentId !== task.departmentId) {
+        const department = await Department.findOne({
+          where: { id: req.body.departmentId, status: 'active' },
+        });
+        if (!department) throw new AppError(404, 'NOT_FOUND', '归属部门不存在');
+        task.departmentId = department.id;
+      }
       const totalQuestions = await QuestionItem.count({ where: { taskId: req.params.id } });
       const assignedQuestions = await QuestionItem.count({ where: { taskId: req.params.id, assignedTo: { [Op.ne]: null } } });
       
@@ -124,7 +162,7 @@ router.put('/:id/configure', authorize('tasks', 'update'), async (req: Request, 
 
     res.json({ success: true, message: '任务配置完成' });
   } catch (error: any) {
-    res.status(400).json({ success: false, error: { code: 'CONFIGURE_FAILED', message: error.message } });
+    sendError(res, error, 400, 'CONFIGURE_FAILED');
   }
 });
 
@@ -132,7 +170,7 @@ router.put('/:id/configure', authorize('tasks', 'update'), async (req: Request, 
 router.delete('/:id', authorize('tasks', 'delete'), async (req: Request, res: Response) => {
   try {
     const { AuditTask, QuestionItem, EvidenceFile, Notification, AuditLog, OperationType } = await import('../models');
-    const task = await AuditTask.findByPk(req.params.id);
+    const task = await objectAccessService.taskOrNotFound(req.params.id, req.user!);
     if (!task) {
       res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '任务不存在' } });
       return;
@@ -146,17 +184,16 @@ router.delete('/:id', authorize('tasks', 'delete'), async (req: Request, res: Re
     });
     res.json({ success: true, message: '任务已删除' });
   } catch (error: any) {
-    res.status(400).json({ success: false, error: { code: 'DELETE_FAILED', message: error.message } });
+    sendError(res, error, 400, 'DELETE_FAILED');
   }
 });
 
 // 手动发送催办邮件
 router.post('/:id/remind', authenticate, async (req: Request, res: Response) => {
   try {
-    const { AuditTask, User } = await import('../models');
+    const { User } = await import('../models');
     const emailService = (await import('../services/email.service')).default;
-    const task = await AuditTask.findByPk(req.params.id);
-    if (!task) { res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '任务不存在' } }); return; }
+    const task = await objectAccessService.taskOrNotFound(req.params.id, req.user!);
     if (!task.assignedTo) { res.status(400).json({ success: false, error: { code: 'NO_ASSIGNEE', message: '任务未分配用户' } }); return; }
     const user = await User.findByPk(task.assignedTo);
     if (!user || !user.email) { res.status(400).json({ success: false, error: { code: 'NO_EMAIL', message: '普通用户未设置邮箱' } }); return; }
@@ -167,7 +204,7 @@ router.post('/:id/remind', authenticate, async (req: Request, res: Response) => 
       res.json({ success: true, message: 'SMTP 未配置，邮件未发送（系统通知已生效）' });
     }
   } catch (error: any) {
-    res.status(500).json({ success: false, error: { code: 'REMIND_FAILED', message: error.message } });
+    sendError(res, error, 500, 'REMIND_FAILED');
   }
 });
 

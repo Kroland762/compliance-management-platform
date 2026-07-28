@@ -1,4 +1,5 @@
 import { Notification, NotificationType } from '../models';
+import { parsePagination, pagination } from '../utils/pagination';
 
 class NotificationService {
   async create(data: { userId: string; taskId: string; type: NotificationType; title: string; content: string }) {
@@ -12,7 +13,8 @@ class NotificationService {
   }
 
   async getNotifications(userId: string, query: { page?: number; pageSize?: number; isRead?: boolean }) {
-    const { page = 1, pageSize = 20, isRead } = query;
+    const { page, pageSize } = parsePagination(query);
+    const { isRead } = query;
     const where: any = { userId };
     if (isRead !== undefined) where.isRead = isRead;
 
@@ -25,7 +27,7 @@ class NotificationService {
 
     return {
       items: rows,
-      pagination: { page, pageSize, total: count, totalPages: Math.ceil(count / pageSize) },
+      pagination: pagination(page, pageSize, count),
     };
   }
 

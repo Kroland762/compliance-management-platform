@@ -6,7 +6,7 @@ import QuestionItem from './QuestionItem';
 
 interface RiskRecordAttributes {
   id: string;
-  taskId: string | null;
+  taskId: string;
   questionItemId: string | null;
   assessmentType: AssessmentType;
   assessmentTarget: string;
@@ -19,11 +19,11 @@ interface RiskRecordAttributes {
   updatedAt: Date;
 }
 
-type CreationAttributes = Optional<RiskRecordAttributes, 'id' | 'taskId' | 'questionItemId' | 'identifiedAt' | 'updatedAt' | 'remediationMeasures'>;
+type CreationAttributes = Optional<RiskRecordAttributes, 'id' | 'questionItemId' | 'identifiedAt' | 'updatedAt' | 'remediationMeasures'>;
 
 class RiskRecord extends Model<RiskRecordAttributes, CreationAttributes> implements RiskRecordAttributes {
   declare id: string;
-  declare taskId: string | null;
+  declare taskId: string;
   declare questionItemId: string | null;
   declare assessmentType: AssessmentType;
   declare assessmentTarget: string;
@@ -39,15 +39,15 @@ class RiskRecord extends Model<RiskRecordAttributes, CreationAttributes> impleme
 RiskRecord.init(
   {
     id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
-    taskId: { type: DataTypes.UUID, allowNull: true, references: { model: AuditTask, key: 'id' } },
+    taskId: { type: DataTypes.UUID, allowNull: false, references: { model: AuditTask, key: 'id' } },
     questionItemId: { type: DataTypes.UUID, allowNull: true, references: { model: QuestionItem, key: 'id' } },
     assessmentType: { type: DataTypes.STRING(100), allowNull: false },
     assessmentTarget: { type: DataTypes.STRING(200), allowNull: false },
     riskIdentification: { type: DataTypes.STRING(100), allowNull: false },
-    riskLevel: { type: DataTypes.ENUM(...Object.values(RiskLevel)), allowNull: false },
+    riskLevel: { type: DataTypes.STRING(20), allowNull: false, validate: { isIn: [Object.values(RiskLevel)] } },
     remediationMeasures: { type: DataTypes.STRING(500), allowNull: true },
-    remediationStatus: { type: DataTypes.ENUM(...Object.values(RemediationStatus)), allowNull: false, defaultValue: RemediationStatus.NOT_REMEDIATED },
-    riskStatus: { type: DataTypes.ENUM(...Object.values(RiskStatus)), allowNull: false, defaultValue: RiskStatus.RISK_REDUCTION },
+    remediationStatus: { type: DataTypes.STRING(30), allowNull: false, defaultValue: RemediationStatus.NOT_REMEDIATED, validate: { isIn: [Object.values(RemediationStatus)] } },
+    riskStatus: { type: DataTypes.STRING(30), allowNull: false, defaultValue: RiskStatus.RISK_REDUCTION, validate: { isIn: [Object.values(RiskStatus)] } },
     identifiedAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
     updatedAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
   },

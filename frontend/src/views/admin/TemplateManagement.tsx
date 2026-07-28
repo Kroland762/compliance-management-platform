@@ -27,7 +27,7 @@ export default function TemplateManagement() {
   const handleDelete = async (id: string) => {
     try {
       await apiClient.delete(`/templates/${id}`);
-      message.success('模版已删除');
+      message.success('模板已删除');
       fetchTemplates();
     } catch (err: any) {
       message.error(getApiErrorMessage(err, '删除失败'));
@@ -61,7 +61,7 @@ export default function TemplateManagement() {
   };
 
   const columns = [
-    { title: '模版名称', dataIndex: 'name', key: 'name' },
+    { title: '模板名称', dataIndex: 'name', key: 'name' },
     { title: '描述', dataIndex: 'description', key: 'description' },
     { title: '题目数量', dataIndex: 'questionCount', key: 'questionCount' },
     { title: '创建时间', dataIndex: 'createdAt', key: 'createdAt', render: (v: string) => v ? new Date(v).toLocaleString() : '-' },
@@ -69,7 +69,7 @@ export default function TemplateManagement() {
       title: '操作', key: 'actions', render: (_: any, record: any) => (
         <Space>
           <Button size="small" icon={<EyeOutlined />} onClick={() => handleView(record.id)}>详情</Button>
-          <Popconfirm title="确定删除此模版？" onConfirm={() => handleDelete(record.id)}>
+          <Popconfirm title="确定删除此模板？" okText="确认" cancelText="取消" onConfirm={() => handleDelete(record.id)}>
             <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
           </Popconfirm>
         </Space>
@@ -86,22 +86,22 @@ export default function TemplateManagement() {
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
           <div />
-          <Button type="primary" icon={<UploadOutlined />} onClick={() => setImportVisible(true)}>导入CSV模版</Button>
+          <Button type="primary" icon={<UploadOutlined />} onClick={() => setImportVisible(true)}>导入 CSV 模板</Button>
         </div>
         <Table columns={columns} dataSource={templates} rowKey="id" loading={loading} size="small" />
       </div>
 
-      <Modal title="导入CSV模版" open={importVisible} onCancel={() => setImportVisible(false)} footer={null}>
+      <Modal title="导入 CSV 模板" open={importVisible} onCancel={() => setImportVisible(false)} footer={null}>
         <div style={{ marginBottom: 16 }}>
-          <span>模版名称：</span>
-          <input value={importName} onChange={e => setImportName(e.target.value)} placeholder="输入模版名称" style={{ marginLeft: 8, padding: '4px 8px', width: 200 }} />
+          <span>模板名称：</span>
+          <input value={importName} onChange={e => setImportName(e.target.value)} placeholder="输入模板名称" style={{ marginLeft: 8, padding: '4px 8px', width: 200 }} />
         </div>
         <Upload accept=".csv" beforeUpload={handleImport} maxCount={1}>
           <Button icon={<UploadOutlined />}>选择CSV文件</Button>
         </Upload>
       </Modal>
 
-      <Modal title="模版详情" open={detailVisible} onCancel={() => setDetailVisible(false)} width="90%" style={{ top: 20 }} footer={null}>
+      <Modal title="模板详情" open={detailVisible} onCancel={() => setDetailVisible(false)} width="90%" style={{ top: 20 }} footer={null}>
         {selectedTemplate && (() => {
           const questions = selectedTemplate.templateQuestions || selectedTemplate.questions || [];
           // 动态列：基础三列 + 从 extraData 提取的额外列

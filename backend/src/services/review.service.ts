@@ -1,5 +1,6 @@
-import { QuestionItem, AuditTask, RiskRecord, TaskStatus, ComplianceStatus, RiskLevel, RemediationStatus, RiskStatus, AssessmentType, OperationType, AuditLog } from '../models';
+import { QuestionItem, AuditTask, RiskRecord, TaskStatus, ComplianceStatus, RiskLevel, RemediationStatus, RiskStatus, OperationType } from '../models';
 import { decrypt } from '../utils/crypto';
+import auditLogService from './audit-log.service';
 
 class ReviewService {
   async getReviewData(taskId: string) {
@@ -10,6 +11,9 @@ class ReviewService {
     });
     return items.map(item => {
       const json = item.toJSON() as any;
+      json.evidenceFiles = (json.evidenceFiles || [])
+        .filter((file: any) => file.status === 'active')
+        .map(({ filePath: _path, storedFilename: _stored, storageKey: _key, ...safe }: any) => safe);
       if (json.currentStatusDescription) {
         json.currentStatusDescription = decrypt(json.currentStatusDescription);
       }
@@ -41,11 +45,11 @@ class ReviewService {
     task.returnReason = reason;
     await task.save();
 
-    await AuditLog.create({
+    await auditLogService.log({
       userId, operationType: OperationType.UPDATE, resourceType: 'task',
       resourceId: taskId, success: true,
       operationDetails: `退回任务: ${reason}`,
-    } as any);
+    });
 
     return task;
   }
@@ -80,11 +84,11 @@ class ReviewService {
     task.reviewedAt = new Date();
     await task.save();
 
-    await AuditLog.create({
+    await auditLogService.log({
       userId, operationType: OperationType.UPDATE, resourceType: 'task',
       resourceId: taskId, success: true,
       operationDetails: '完成审阅',
-    } as any);
+    });
 
     return task;
   }

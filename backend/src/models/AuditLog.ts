@@ -13,10 +13,11 @@ interface AuditLogAttributes {
   success: boolean;
   ipAddress: string | null;
   tenantId: string | null;
+  departmentId: string | null;
   createdAt: Date;
 }
 
-type CreationAttributes = Optional<AuditLogAttributes, 'id' | 'createdAt'>;
+type CreationAttributes = Optional<AuditLogAttributes, 'id' | 'departmentId' | 'createdAt'>;
 
 class AuditLog extends Model<AuditLogAttributes, CreationAttributes> implements AuditLogAttributes {
   declare id: string;
@@ -28,6 +29,7 @@ class AuditLog extends Model<AuditLogAttributes, CreationAttributes> implements 
   declare success: boolean;
   declare ipAddress: string | null;
   declare tenantId: string | null;
+  declare departmentId: string | null;
   declare createdAt: Date;
 }
 
@@ -35,13 +37,14 @@ AuditLog.init(
   {
     id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
     userId: { type: DataTypes.UUID, allowNull: false, references: { model: User, key: 'id' } },
-    operationType: { type: DataTypes.ENUM(...Object.values(OperationType)), allowNull: false },
+    operationType: { type: DataTypes.STRING(30), allowNull: false, validate: { isIn: [Object.values(OperationType)] } },
     resourceType: { type: DataTypes.STRING(50), allowNull: false },
     resourceId: { type: DataTypes.UUID, allowNull: true },
     operationDetails: { type: DataTypes.TEXT, allowNull: true },
     success: { type: DataTypes.BOOLEAN, allowNull: false },
     ipAddress: { type: DataTypes.STRING(45), allowNull: true },
     tenantId: { type: DataTypes.UUID, allowNull: true },
+    departmentId: { type: DataTypes.UUID, allowNull: true },
     createdAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
   },
   { sequelize, tableName: 'audit_logs', timestamps: false },

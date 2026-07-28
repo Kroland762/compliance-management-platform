@@ -14,6 +14,7 @@ class CaptchaService {
 
   constructor() {
     this.cleanupTimer = setInterval(() => this.cleanup(), 60_000);
+    this.cleanupTimer.unref();
   }
 
   /**

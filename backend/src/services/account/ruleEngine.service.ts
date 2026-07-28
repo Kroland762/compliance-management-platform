@@ -2,6 +2,7 @@ import { Op } from 'sequelize';
 import { AuditRule, RuleType, Severity, BuiltinKey, AccountData } from '../../models/account';
 import auditLogService from '../audit-log.service';
 import { OperationType } from '../../models';
+import { parsePagination, pagination } from '../../utils/pagination';
 
 interface ListQuery {
   page?: number;
@@ -33,7 +34,8 @@ class RuleEngineService {
    * 分页列出审计规则
    */
   async listRules(query: ListQuery) {
-    const { page = 1, pageSize = 20, ruleType, severity, isActive, search } = query;
+    const { page, pageSize } = parsePagination(query);
+    const { ruleType, severity, isActive, search } = query;
     const where: any = {};
 
     if (ruleType) where.ruleType = ruleType;
@@ -52,7 +54,7 @@ class RuleEngineService {
 
     return {
       items: rows.map(r => r.toJSON()),
-      pagination: { page, pageSize, total: count, totalPages: Math.ceil(count / pageSize) },
+      pagination: pagination(page, pageSize, count),
     };
   }
 

@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs';
 import { AuditTask, QuestionItem, RiskRecord } from '../models';
+import { Op } from 'sequelize';
 
 class ExportService {
   async exportAuditTask(taskId: string, exportedBy: string): Promise<Buffer> {
@@ -53,9 +54,11 @@ class ExportService {
     return Buffer.from(buffer);
   }
 
-  async exportRisks(filters: any): Promise<Buffer> {
+  async exportRisks(filters: any, taskIds: string[] | null): Promise<Buffer> {
+    const where = { ...filters };
+    if (taskIds) where.taskId = { [Op.in]: taskIds };
     const risks = await RiskRecord.findAll({
-      where: filters,
+      where,
       order: [['riskLevel', 'ASC']],
     });
 
