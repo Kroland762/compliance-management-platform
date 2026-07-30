@@ -5,6 +5,7 @@ import {
   BellOutlined, LogoutOutlined, FileSearchOutlined,
   MenuFoldOutlined, MenuUnfoldOutlined, DatabaseOutlined, ScheduleOutlined,
   SecurityScanOutlined, SafetyCertificateOutlined, HomeOutlined, ApartmentOutlined,
+  AppstoreOutlined, NodeIndexOutlined, ToolOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import { useAuthStore } from '../store/auth';
@@ -118,17 +119,29 @@ export default function MainLayout() {
     ...(can('templates', 'read') ? [
       { key: '/templates', icon: <FileTextOutlined />, label: '合规模板' },
     ] : []),
+    ...(can('assets', 'read') ? [
+      { key: '/assets', icon: <AppstoreOutlined />, label: '资产台账' },
+    ] : []),
     ...(can('qualifications', 'read') ? [
       { key: '/qualifications', icon: <SafetyCertificateOutlined />, label: '资质台账' },
     ] : []),
     ...(can('tasks', 'read') ? [
       { key: '/tasks/review', icon: <AuditOutlined />, label: '合规检查' },
     ] : []),
+    ...(can('tasks', 'create') ? [
+      { key: '/assessments/new', icon: <NodeIndexOutlined />, label: '创建评估' },
+    ] : []),
     ...(can('tasks', 'read') ? [
       { key: '/my-tasks', icon: <FormOutlined />, label: '我的任务' },
     ] : []),
     ...(can('risks', 'read') ? [
       { key: '/risks', icon: <WarningOutlined />, label: '合规风险' },
+    ] : []),
+    ...(can('remediation_actions', 'read') ? [
+      { key: '/remediation-actions', icon: <ToolOutlined />, label: '我的整改' },
+    ] : []),
+    ...(can('assessment_plans', 'read') ? [
+      { key: '/assessment-plans', icon: <ScheduleOutlined />, label: '周期计划' },
     ] : []),
   ];
 
@@ -200,6 +213,11 @@ export default function MainLayout() {
 
   const activeSideKey = (() => {
     if (location.pathname.startsWith('/tasks/review') || location.pathname.startsWith('/tasks/configure')) return '/tasks/review';
+    if (location.pathname.startsWith('/assessments/new')) return '/assessments/new';
+    if (location.pathname.startsWith('/assessments/')) return '/tasks/review';
+    if (location.pathname.startsWith('/assets')) return '/assets';
+    if (location.pathname.startsWith('/remediation-actions')) return '/remediation-actions';
+    if (location.pathname.startsWith('/assessment-plans')) return '/assessment-plans';
     if (location.pathname.startsWith('/my-tasks')) return '/my-tasks';
     if (location.pathname.startsWith('/qualifications')) return '/qualifications';
     if (location.pathname.startsWith('/dashboard')) return '/dashboard';
