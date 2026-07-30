@@ -53,7 +53,7 @@ export default function MyTasks() {
           size="small"
           type={canEdit(record) ? 'primary' : undefined}
           icon={canEdit(record) ? <FormOutlined /> : undefined}
-          onClick={() => navigate(`/my-tasks/${record.id}`)}
+          onClick={() => navigate(`/assessments/${record.id}/workbench`)}
         >
           {canEdit(record) ? '填写' : '查看'}
         </Button>

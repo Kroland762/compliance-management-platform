@@ -14,6 +14,8 @@
     "migrate:legacy-public": "tsx src/config/migrate-legacy-public.ts",
     "migrate:legacy-files": "tsx src/config/migrate-legacy-files.ts",
     "migrate:membership-plan": "tsx src/config/migrate-membership-plan.ts",
+    "migrate:relationship-plan": "tsx src/config/migrate-relationship-plan.ts",
+    "benchmark:vnext": "tsx src/config/benchmark-vnext.ts",
     "seed": "tsx src/config/seed.ts",
     "test": "jest --runInBand",
     "test:ci": "jest --runInBand --coverage"

@@ -102,9 +102,6 @@ export interface IQuestionItem {
   currentStatusDescription: string | null;
   answerStatus: AnswerStatus;
   complianceStatus: ComplianceStatus | null;
-  riskIdentification: string | null;
-  riskLevel: RiskLevel | null;
-  remediationMeasures: string | null;
   answeredAt: Date | null;
   reviewedAt: Date | null;
 }
@@ -126,14 +123,12 @@ export interface IEvidenceFile {
 export interface IRiskRecord {
   id: string;
   taskId: string;
-  questionItemId: string;
-  assessmentType: AssessmentType;
-  assessmentTarget: string;
-  riskIdentification: string;
+  code: string;
+  title: string;
+  description: string;
   riskLevel: RiskLevel;
-  remediationMeasures: string | null;
-  remediationStatus: RemediationStatus;
-  riskStatus: RiskStatus;
+  treatmentStrategy: string;
+  status: string;
   identifiedAt: Date;
   updatedAt: Date;
 }

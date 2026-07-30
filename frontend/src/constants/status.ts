@@ -4,7 +4,8 @@
 
 /** 审计员/管理员视角 — 任务列表 */
 export const TASK_STATUS: Record<string, { color: string; text: string }> = {
-  draft: { color: 'default', text: '待分配' },
+  draft: { color: 'default', text: '草稿' },
+  configuring: { color: 'cyan', text: '配置中' },
   assigned: { color: 'blue', text: '已分配' },
   in_progress: { color: 'processing', text: '进行中' },
   submitted: { color: 'orange', text: '待审阅' },
@@ -33,6 +34,7 @@ export const CAN_REVIEW_STATUS = ['submitted', 'under_review'] as const;
 
 /** 风险级别 */
 export const RISK_LEVEL: Record<string, { color: string; text: string }> = {
+  critical: { color: 'magenta', text: '严重' },
   high: { color: 'red', text: '高' },
   medium: { color: 'orange', text: '中' },
   low: { color: 'green', text: '低' },
@@ -41,7 +43,7 @@ export const RISK_LEVEL: Record<string, { color: string; text: string }> = {
 /** 符合性状态 */
 export const COMPLIANCE_STATUS_OPTIONS = [
   { value: 'compliant', label: '符合', color: 'green' },
-  { value: 'partially_compliant', label: '部分符合', color: 'orange' },
+  { value: 'partial', label: '部分符合', color: 'orange' },
   { value: 'non_compliant', label: '不符合', color: 'red' },
   { value: 'not_applicable', label: '不适用', color: 'default' },
 ];

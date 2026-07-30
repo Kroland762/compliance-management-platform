@@ -85,7 +85,7 @@ async function buildPlan() {
             }),
             risksWithoutTask: await RiskRecord.findAll({
               where: { taskId: null as any },
-              attributes: ['id', 'assessmentTarget', 'riskIdentification'],
+              attributes: ['id', 'taskId', 'title'],
               raw: true,
             }),
           };

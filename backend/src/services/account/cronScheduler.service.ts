@@ -54,6 +54,8 @@ export class CronSchedulerService {
       tenantId: context.tenantId,
       tenantSchema: context.schema,
       taskId,
+      resourceType: 'account_audit',
+      resourceId: taskId,
       cronExpression: expression,
       enabled: true,
       consecutiveFailures: 0,
@@ -61,9 +63,42 @@ export class CronSchedulerService {
     this.startLocalJob(schedule);
   }
 
+  async registerResourceJob(
+    resourceType: 'assessment_plan',
+    resourceId: string,
+    cronExpression: string,
+  ): Promise<void> {
+    const context = getTenantStore();
+    if (!context?.tenantId || context.schema === 'public') throw new Error('调度注册缺少租户上下文');
+    if (!cron.validate(cronExpression)) throw new Error('Cron 表达式无效');
+    const [schedule] = await TaskSchedule.upsert({
+      tenantId: context.tenantId,
+      tenantSchema: context.schema,
+      taskId: null,
+      resourceType,
+      resourceId,
+      cronExpression,
+      enabled: true,
+      consecutiveFailures: 0,
+    }, { returning: true });
+    this.startLocalJob(schedule);
+  }
+
+  async unregisterResourceJob(resourceType: 'assessment_plan', resourceId: string): Promise<void> {
+    const context = getTenantStore();
+    const where: any = { resourceType, resourceId };
+    if (context?.tenantId) where.tenantId = context.tenantId;
+    const schedules = await TaskSchedule.findAll({ where });
+    schedules.forEach((schedule) => {
+      this.jobs.get(schedule.id)?.stop();
+      this.jobs.delete(schedule.id);
+    });
+    await TaskSchedule.update({ enabled: false }, { where });
+  }
+
   async unregisterJob(taskId: string): Promise<void> {
     const context = getTenantStore();
-    const where: any = { taskId };
+    const where: any = { resourceType: 'account_audit', resourceId: taskId };
     if (context?.tenantId) where.tenantId = context.tenantId;
     const schedules = await TaskSchedule.findAll({ where });
     schedules.forEach((schedule) => {
@@ -121,7 +156,13 @@ export class CronSchedulerService {
       let timeout: ReturnType<typeof setTimeout> | undefined;
       const execution = runWithTenantContext(
         { schema: schedule.tenantSchema, tenantId: schedule.tenantId },
-        () => auditTaskService.executeTaskScheduled(schedule.taskId, idempotencyKey, this.workerId),
+        async () => {
+          if (schedule.resourceType === 'assessment_plan') {
+            const assessmentPlanService = (await import('../assessment-plan.service')).default;
+            return assessmentPlanService.executeScheduled(schedule.resourceId, idempotencyKey, this.workerId);
+          }
+          return auditTaskService.executeTaskScheduled(schedule.resourceId, idempotencyKey, this.workerId);
+        },
       );
       const timeoutFailure = new Promise<never>((_resolve, reject) => {
         timeout = setTimeout(

@@ -1,5 +1,14 @@
 import { Op, type WhereOptions } from 'sequelize';
-import { AuditTask, Department, Qualification, QuestionItem, RiskRecord } from '../models';
+import {
+  Asset,
+  AuditTask,
+  Department,
+  Qualification,
+  QuestionItem,
+  RemediationAction,
+  RiskActionLink,
+  RiskRecord,
+} from '../models';
 import type { DataScope, PermissionResource } from '../models';
 import { AppError } from '../utils/http';
 
@@ -118,24 +127,120 @@ class ObjectAccessService {
   }
 
   async riskOrNotFound(id: string, user: RequestUser, action = 'read'): Promise<RiskRecord> {
-    const risk = await RiskRecord.findByPk(id);
-    if (!risk || !risk.taskId) throw new AppError(404, 'NOT_FOUND', '风险记录不存在');
-    await this.taskOrNotFound(risk.taskId, user, action);
+    const risk = await RiskRecord.findOne({
+      where: { id, ...(await this.riskScope(user, action) as object) },
+    });
+    if (!risk) throw new AppError(404, 'NOT_FOUND', '风险记录不存在');
     return risk;
   }
 
-  async questionOrNotFound(id: string, user: RequestUser, write = false): Promise<QuestionItem> {
-    const item = await QuestionItem.findByPk(id);
-    if (!item) throw new AppError(404, 'NOT_FOUND', '问卷条目不存在');
-    const task = await this.taskOrNotFound(item.taskId, user, write ? 'update' : 'read');
-    const scope = this.scope(user, 'tasks', write ? 'update' : 'read');
-    if (['all', 'department', 'department_tree'].includes(scope)) return item;
-    const related = item.assignedTo === user.userId
-      || task.createdBy === user.userId
-      || task.reviewerId === user.userId
-      || task.assignedTo === user.userId;
-    if (!related) throw new AppError(404, 'NOT_FOUND', '问卷条目不存在');
+  async assetScope(user: RequestUser, action = 'read'): Promise<WhereOptions> {
+    const scope = this.scope(user, 'assets', action);
+    if (scope === 'all') return {};
+    if (scope === 'department' || scope === 'department_tree') {
+      return { ownerDepartmentId: { [Op.in]: await this.departmentIds(user, scope) } };
+    }
+    return { ownerUserId: user.userId };
+  }
+
+  async assetOrNotFound(id: string, user: RequestUser, action = 'read'): Promise<Asset> {
+    const asset = await Asset.findOne({
+      where: { id, ...(await this.assetScope(user, action) as object) },
+    });
+    if (!asset) throw new AppError(404, 'NOT_FOUND', '资产不存在');
+    return asset;
+  }
+
+  async evaluationOrNotFound(id: string, user: RequestUser, action = 'read'): Promise<QuestionItem> {
+    const item = await QuestionItem.findOne({
+      where: { id, ...(await this.evaluationScope(user, action) as object) },
+    });
+    if (!item) throw new AppError(404, 'NOT_FOUND', '评估单元不存在');
     return item;
+  }
+
+  async evaluationScope(user: RequestUser, action = 'read'): Promise<WhereOptions> {
+    const scope = this.scope(user, 'evaluations', action);
+    if (scope === 'all') return {};
+    if (scope === 'department' || scope === 'department_tree') {
+      return { responsibleDepartmentId: { [Op.in]: await this.departmentIds(user, scope) } };
+    }
+    if (scope === 'assigned') {
+      const tasks = await AuditTask.findAll({
+        where: {
+          [Op.or]: [
+            { assignedTo: user.userId },
+            { reviewerId: user.userId },
+          ],
+        },
+        attributes: ['id'],
+        raw: true,
+      });
+      return {
+        [Op.or]: [
+          { assignedTo: user.userId },
+          { reviewedBy: user.userId },
+          { taskId: { [Op.in]: tasks.map((task: any) => task.id) } },
+        ],
+      };
+    }
+    return { [Op.or]: [{ assignedTo: user.userId }, { reviewedBy: user.userId }] };
+  }
+
+  async riskScope(user: RequestUser, action = 'read'): Promise<WhereOptions> {
+    const scope = this.scope(user, 'risks', action);
+    if (scope === 'all') return {};
+    if (scope === 'department' || scope === 'department_tree') {
+      return { ownerDepartmentId: { [Op.in]: await this.departmentIds(user, scope) } };
+    }
+    if (scope === 'assigned') {
+      const tasks = await AuditTask.findAll({
+        where: await this.taskScope(user, 'read', true),
+        attributes: ['id'],
+        raw: true,
+      });
+      return {
+        [Op.or]: [
+          { ownerUserId: user.userId },
+          { taskId: { [Op.in]: tasks.map((task: any) => task.id) } },
+        ],
+      };
+    }
+    return { ownerUserId: user.userId };
+  }
+
+  async remediationScope(user: RequestUser, action = 'read'): Promise<WhereOptions> {
+    const scope = this.scope(user, 'remediation_actions', action);
+    if (scope === 'all') return {};
+    if (scope === 'department' || scope === 'department_tree') {
+      return { ownerDepartmentId: { [Op.in]: await this.departmentIds(user, scope) } };
+    }
+    if (scope === 'assigned' || scope === 'self') return { ownerUserId: user.userId };
+    return { ownerUserId: user.userId };
+  }
+
+  async remediationOrNotFound(id: string, user: RequestUser, action = 'read'): Promise<RemediationAction> {
+    const remediation = await RemediationAction.findOne({
+      where: { id, ...(await this.remediationScope(user, action) as object) },
+    });
+    if (!remediation) throw new AppError(404, 'NOT_FOUND', '整改行动不存在');
+    return remediation;
+  }
+
+  async riskActionLinkOrNotFound(
+    riskId: string,
+    actionId: string,
+    user: RequestUser,
+    action = 'read',
+  ): Promise<RiskActionLink> {
+    await this.riskOrNotFound(riskId, user, action === 'verify' ? 'close' : 'read');
+    const link = await RiskActionLink.findOne({ where: { riskId, actionId } });
+    if (!link) throw new AppError(404, 'NOT_FOUND', '风险整改关联不存在');
+    return link;
+  }
+
+  async questionOrNotFound(id: string, user: RequestUser, write = false): Promise<QuestionItem> {
+    return this.evaluationOrNotFound(id, user, write ? 'answer' : 'read');
   }
 }
 

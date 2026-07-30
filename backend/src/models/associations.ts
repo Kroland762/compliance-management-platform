@@ -16,6 +16,15 @@ import DepartmentMember from './DepartmentMember';
 import TenantMember from './TenantMember';
 import MemberRole from './MemberRole';
 import Role from './Role';
+import Asset from './Asset';
+import AssessmentAsset from './AssessmentAsset';
+import AssessmentControlAsset from './AssessmentControlAsset';
+import RiskSource from './RiskSource';
+import RiskAffectedAsset from './RiskAffectedAsset';
+import RemediationAction from './RemediationAction';
+import RiskActionLink from './RiskActionLink';
+import AssessmentPlan from './AssessmentPlan';
+import AssessmentPlanExecution from './AssessmentPlanExecution';
 
 export function setupAssociations(): void {
   // QuestionnaireTemplate 1:N QuestionTemplate
@@ -46,9 +55,24 @@ export function setupAssociations(): void {
   QuestionTemplate.hasMany(QuestionItem, { foreignKey: 'templateQuestionId', as: 'items' });
   QuestionItem.belongsTo(QuestionTemplate, { foreignKey: 'templateQuestionId', as: 'templateQuestion' });
 
+  AuditTask.hasMany(AssessmentAsset, { foreignKey: 'taskId', as: 'assessmentAssets', onDelete: 'RESTRICT' });
+  AssessmentAsset.belongsTo(AuditTask, { foreignKey: 'taskId', as: 'task' });
+  Asset.hasMany(AssessmentAsset, { foreignKey: 'assetId', as: 'assessmentScopes', onDelete: 'RESTRICT' });
+  AssessmentAsset.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' });
+  AuditTask.hasMany(AssessmentControlAsset, { foreignKey: 'taskId', as: 'controlAssetMatrix', onDelete: 'CASCADE' });
+  AssessmentControlAsset.belongsTo(AuditTask, { foreignKey: 'taskId', as: 'task' });
+  QuestionTemplate.hasMany(AssessmentControlAsset, { foreignKey: 'controlPointId', as: 'assetMappings', onDelete: 'RESTRICT' });
+  AssessmentControlAsset.belongsTo(QuestionTemplate, { foreignKey: 'controlPointId', as: 'controlPoint' });
+  Asset.hasMany(AssessmentControlAsset, { foreignKey: 'assetId', as: 'controlMappings', onDelete: 'RESTRICT' });
+  AssessmentControlAsset.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' });
+  Asset.hasMany(QuestionItem, { foreignKey: 'assetId', as: 'controlEvaluations', onDelete: 'RESTRICT' });
+  QuestionItem.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' });
+
   // QuestionItem 1:N EvidenceFile
   QuestionItem.hasMany(EvidenceFile, { foreignKey: 'questionItemId', as: 'evidenceFiles', onDelete: 'CASCADE' });
   EvidenceFile.belongsTo(QuestionItem, { foreignKey: 'questionItemId', as: 'questionItem' });
+  RemediationAction.hasMany(EvidenceFile, { foreignKey: 'remediationActionId', as: 'evidenceFiles', onDelete: 'RESTRICT' });
+  EvidenceFile.belongsTo(RemediationAction, { foreignKey: 'remediationActionId', as: 'remediationAction' });
 
   // User 1:N EvidenceFile (uploader)
   User.hasMany(EvidenceFile, { foreignKey: 'uploadedBy', as: 'uploadedFiles' });
@@ -58,9 +82,25 @@ export function setupAssociations(): void {
   AuditTask.hasMany(RiskRecord, { foreignKey: 'taskId', as: 'riskRecords', onDelete: 'CASCADE' });
   RiskRecord.belongsTo(AuditTask, { foreignKey: 'taskId', as: 'task' });
 
-  // QuestionItem 1:N RiskRecord
-  QuestionItem.hasMany(RiskRecord, { foreignKey: 'questionItemId', as: 'riskRecords' });
-  RiskRecord.belongsTo(QuestionItem, { foreignKey: 'questionItemId', as: 'questionItem' });
+  RiskRecord.hasMany(RiskSource, { foreignKey: 'riskId', as: 'sources', onDelete: 'RESTRICT' });
+  RiskSource.belongsTo(RiskRecord, { foreignKey: 'riskId', as: 'risk' });
+  QuestionItem.hasMany(RiskSource, { foreignKey: 'controlEvaluationId', as: 'riskSources', onDelete: 'RESTRICT' });
+  RiskSource.belongsTo(QuestionItem, { foreignKey: 'controlEvaluationId', as: 'controlEvaluation' });
+
+  RiskRecord.hasMany(RiskAffectedAsset, { foreignKey: 'riskId', as: 'affectedAssets', onDelete: 'RESTRICT' });
+  RiskAffectedAsset.belongsTo(RiskRecord, { foreignKey: 'riskId', as: 'risk' });
+  Asset.hasMany(RiskAffectedAsset, { foreignKey: 'assetId', as: 'riskImpacts', onDelete: 'RESTRICT' });
+  RiskAffectedAsset.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' });
+
+  RiskRecord.hasMany(RiskActionLink, { foreignKey: 'riskId', as: 'actionLinks', onDelete: 'RESTRICT' });
+  RiskActionLink.belongsTo(RiskRecord, { foreignKey: 'riskId', as: 'risk' });
+  RemediationAction.hasMany(RiskActionLink, { foreignKey: 'actionId', as: 'riskLinks', onDelete: 'RESTRICT' });
+  RiskActionLink.belongsTo(RemediationAction, { foreignKey: 'actionId', as: 'action' });
+
+  AssessmentPlan.hasMany(AssessmentPlanExecution, { foreignKey: 'planId', as: 'executions', onDelete: 'RESTRICT' });
+  AssessmentPlanExecution.belongsTo(AssessmentPlan, { foreignKey: 'planId', as: 'plan' });
+  AuditTask.hasMany(AssessmentPlanExecution, { foreignKey: 'taskId', as: 'planExecutions', onDelete: 'RESTRICT' });
+  AssessmentPlanExecution.belongsTo(AuditTask, { foreignKey: 'taskId', as: 'task' });
 
   // User 1:N Notification
   User.hasMany(Notification, { foreignKey: 'userId', as: 'notifications' });

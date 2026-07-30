@@ -5,7 +5,8 @@ import User from './User';
 
 interface EvidenceFileAttributes {
   id: string;
-  questionItemId: string;
+  questionItemId: string | null;
+  remediationActionId: string | null;
   originalFilename: string;
   storedFilename: string | null;
   filePath: string | null;
@@ -13,18 +14,23 @@ interface EvidenceFileAttributes {
   sha256: string | null;
   status: 'active' | 'deleted' | 'quarantined';
   deletedAt: Date | null;
-  evidenceType: 'current' | 'historical';
+  evidenceType: 'current' | 'historical' | 'remediation';
+  evidencePurpose: 'assessment_current' | 'assessment_historical' | 'remediation';
   fileSize: number;
   mimeType: string;
   uploadedBy: string;
   uploadedAt: Date;
 }
 
-type CreationAttributes = Optional<EvidenceFileAttributes, 'id' | 'storedFilename' | 'filePath' | 'storageKey' | 'sha256' | 'status' | 'deletedAt' | 'evidenceType' | 'uploadedAt'>;
+type CreationAttributes = Optional<EvidenceFileAttributes,
+  'id' | 'questionItemId' | 'remediationActionId' | 'storedFilename' |
+  'filePath' | 'storageKey' | 'sha256' | 'status' | 'deletedAt' |
+  'evidenceType' | 'evidencePurpose' | 'uploadedAt'>;
 
 class EvidenceFile extends Model<EvidenceFileAttributes, CreationAttributes> implements EvidenceFileAttributes {
   declare id: string;
-  declare questionItemId: string;
+  declare questionItemId: string | null;
+  declare remediationActionId: string | null;
   declare originalFilename: string;
   declare storedFilename: string | null;
   declare filePath: string | null;
@@ -32,7 +38,8 @@ class EvidenceFile extends Model<EvidenceFileAttributes, CreationAttributes> imp
   declare sha256: string | null;
   declare status: 'active' | 'deleted' | 'quarantined';
   declare deletedAt: Date | null;
-  declare evidenceType: 'current' | 'historical';
+  declare evidenceType: 'current' | 'historical' | 'remediation';
+  declare evidencePurpose: 'assessment_current' | 'assessment_historical' | 'remediation';
   declare fileSize: number;
   declare mimeType: string;
   declare uploadedBy: string;
@@ -42,7 +49,8 @@ class EvidenceFile extends Model<EvidenceFileAttributes, CreationAttributes> imp
 EvidenceFile.init(
   {
     id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
-    questionItemId: { type: DataTypes.UUID, allowNull: false, references: { model: QuestionItem, key: 'id' } },
+    questionItemId: { type: DataTypes.UUID, allowNull: true, references: { model: QuestionItem, key: 'id' } },
+    remediationActionId: { type: DataTypes.UUID, allowNull: true },
     originalFilename: { type: DataTypes.STRING(255), allowNull: false },
     storedFilename: { type: DataTypes.STRING(255), allowNull: true },
     filePath: { type: DataTypes.STRING(500), allowNull: true },
@@ -51,12 +59,21 @@ EvidenceFile.init(
     status: { type: DataTypes.STRING(20), allowNull: false, defaultValue: 'active' },
     deletedAt: { type: DataTypes.DATE, allowNull: true },
     evidenceType: { type: DataTypes.STRING(20), allowNull: false, defaultValue: 'current' },
+    evidencePurpose: { type: DataTypes.STRING(30), allowNull: false, defaultValue: 'assessment_current' },
     fileSize: { type: DataTypes.INTEGER, allowNull: false },
     mimeType: { type: DataTypes.STRING(100), allowNull: false },
     uploadedBy: { type: DataTypes.UUID, allowNull: false, references: { model: User, key: 'id' } },
     uploadedAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
   },
-  { sequelize, tableName: 'evidence_files', timestamps: false },
+  {
+    sequelize,
+    tableName: 'evidence_files',
+    timestamps: false,
+    indexes: [
+      { fields: ['questionItemId', 'status'] },
+      { fields: ['remediationActionId', 'status'] },
+    ],
+  },
 );
 
 export default EvidenceFile;

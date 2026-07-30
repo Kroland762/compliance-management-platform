@@ -17,11 +17,15 @@ const RoleManagement = lazy(() => import('./views/RoleManagement'));
 const AuditLogViewer = lazy(() => import('./views/admin/AuditLogViewer'));
 const TenantManagement = lazy(() => import('./views/admin/TenantManagement'));
 const ReviewTaskList = lazy(() => import('./views/auditor/ReviewTaskList'));
-const ReviewTask = lazy(() => import('./views/auditor/ReviewTask'));
-const TaskConfigure = lazy(() => import('./views/auditor/TaskConfigure'));
 const MyTasks = lazy(() => import('./views/respondent/MyTasks'));
-const FillQuestionnaire = lazy(() => import('./views/respondent/FillQuestionnaire'));
 const RiskManagement = lazy(() => import('./views/RiskManagement'));
+const RiskDetail = lazy(() => import('./views/RiskDetail'));
+const AssetLedger = lazy(() => import('./views/AssetLedger'));
+const AssessmentWizard = lazy(() => import('./views/AssessmentWizard'));
+const EvaluationWorkbench = lazy(() => import('./views/EvaluationWorkbench'));
+const RemediationActions = lazy(() => import('./views/RemediationActions'));
+const RemediationActionDetail = lazy(() => import('./views/RemediationActionDetail'));
+const AssessmentPlans = lazy(() => import('./views/AssessmentPlans'));
 const Settings = lazy(() => import('./views/Settings'));
 const OrganizationManagement = lazy(() => import('./views/OrganizationManagement'));
 const AccountAudit = lazy(() => import('./views/AccountAudit'));
@@ -68,11 +72,19 @@ function App() {
           <Route path="organization" element={<PrivateRoute permission={['organization', 'read']}><OrganizationManagement /></PrivateRoute>} />
           <Route path="audit-logs" element={<PrivateRoute permission={['audit_logs', 'read']}><AuditLogViewer /></PrivateRoute>} />
           <Route path="tasks/review" element={<PrivateRoute permission={['tasks', 'read']}><ReviewTaskList /></PrivateRoute>} />
-          <Route path="tasks/review/:id" element={<PrivateRoute permission={['tasks', 'read']}><ReviewTask /></PrivateRoute>} />
-          <Route path="tasks/configure/:id" element={<PrivateRoute permission={['tasks', 'update']}><TaskConfigure /></PrivateRoute>} />
+          <Route path="tasks/review/:id" element={<Navigate to="/tasks/review" replace />} />
+          <Route path="tasks/configure/:id" element={<Navigate to="/assessments/new" replace />} />
+          <Route path="assessments/new" element={<PrivateRoute permission={['tasks', 'create']}><AssessmentWizard /></PrivateRoute>} />
+          <Route path="assessments/:id/workbench" element={<PrivateRoute permission={['evaluations', 'read']}><EvaluationWorkbench /></PrivateRoute>} />
           <Route path="my-tasks" element={<PrivateRoute permission={['tasks', 'read']}><MyTasks /></PrivateRoute>} />
-          <Route path="my-tasks/:id" element={<PrivateRoute permission={['tasks', 'submit']}><FillQuestionnaire /></PrivateRoute>} />
+          <Route path="my-tasks/:id" element={<Navigate to="/my-tasks" replace />} />
           <Route path="risks" element={<PrivateRoute permission={['risks', 'read']}><RiskManagement /></PrivateRoute>} />
+          <Route path="risks/:id" element={<PrivateRoute permission={['risks', 'read']}><RiskDetail /></PrivateRoute>} />
+          <Route path="assets" element={<PrivateRoute permission={['assets', 'read']}><AssetLedger /></PrivateRoute>} />
+          <Route path="remediation-actions" element={<PrivateRoute permission={['remediation_actions', 'read']}><RemediationActions /></PrivateRoute>} />
+          <Route path="remediation-actions/new" element={<PrivateRoute permission={['remediation_actions', 'create']}><RemediationActions /></PrivateRoute>} />
+          <Route path="remediation-actions/:id" element={<PrivateRoute permission={['remediation_actions', 'read']}><RemediationActionDetail /></PrivateRoute>} />
+          <Route path="assessment-plans" element={<PrivateRoute permission={['assessment_plans', 'read']}><AssessmentPlans /></PrivateRoute>} />
           <Route path="settings" element={<Settings />} />
           <Route path="account-audit" element={<PrivateRoute permission={['account_dashboard', 'read']}><AccountAudit /></PrivateRoute>}>
             <Route index element={<AccountDashboard />} />

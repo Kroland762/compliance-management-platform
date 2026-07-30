@@ -27,6 +27,15 @@ import {
   TenantMember,
   MemberRole,
   MemberInvitation,
+  Asset,
+  AssessmentAsset,
+  AssessmentControlAsset,
+  RiskSource,
+  RiskAffectedAsset,
+  RemediationAction,
+  RiskActionLink,
+  AssessmentPlan,
+  AssessmentPlanExecution,
 } from '../../models';
 import {
   AccountAuditTask,
@@ -52,10 +61,19 @@ const tenantModels = [
   Department,
   QuestionnaireTemplate,
   QuestionTemplate,
+  Asset,
   AuditTask,
   QuestionItem,
-  EvidenceFile,
+  AssessmentAsset,
+  AssessmentControlAsset,
   RiskRecord,
+  RiskSource,
+  RiskAffectedAsset,
+  RemediationAction,
+  RiskActionLink,
+  EvidenceFile,
+  AssessmentPlan,
+  AssessmentPlanExecution,
   Notification,
   AuditLog,
   Qualification,
@@ -449,6 +467,429 @@ const migrations: Migration[] = [
             "tenantId" = snapshot.legacy_tenant_id
         FROM public.user_identity_migration_snapshots snapshot
         WHERE snapshot.user_id = users.id`, { transaction });
+    },
+  },
+  {
+    id: '005_control_schedule_resources',
+    scope: 'control',
+    description: 'Generalize persistent schedules for account audits and assessment plans',
+    checksumSource: 'control:v1:task-schedules:resource-type:resource-id:legacy-account-audit-backfill',
+    up: async (_schemaName, transaction) => {
+      await sequelize.query(`ALTER TABLE public.task_schedules
+        ADD COLUMN IF NOT EXISTS "resourceType" varchar(30),
+        ADD COLUMN IF NOT EXISTS "resourceId" uuid`, { transaction });
+      await sequelize.query(`UPDATE public.task_schedules
+        SET "resourceType" = COALESCE("resourceType", 'account_audit'),
+            "resourceId" = COALESCE("resourceId", "taskId")
+        WHERE "resourceType" IS NULL OR "resourceId" IS NULL`, { transaction });
+      await sequelize.query(`ALTER TABLE public.task_schedules
+        ALTER COLUMN "resourceType" SET DEFAULT 'account_audit',
+        ALTER COLUMN "resourceType" SET NOT NULL,
+        ALTER COLUMN "resourceId" SET NOT NULL,
+        ALTER COLUMN "taskId" DROP NOT NULL`, { transaction });
+      await sequelize.query('DROP INDEX IF EXISTS public.task_schedules_tenant_id_task_id', { transaction });
+      await sequelize.query(`CREATE UNIQUE INDEX IF NOT EXISTS task_schedules_resource_unique
+        ON public.task_schedules ("tenantId", "resourceType", "resourceId")`, { transaction });
+    },
+    down: async (_schemaName, transaction) => {
+      const unresolved = await sequelize.query<{ count: number }>(`
+        SELECT count(*)::int AS count FROM public.task_schedules
+        WHERE "resourceType" <> 'account_audit' OR "taskId" IS NULL
+      `, { type: QueryTypes.SELECT, transaction });
+      if (Number(unresolved[0]?.count || 0) > 0) {
+        throw new Error('存在评估计划调度记录，不能回滚为账户审计专用结构');
+      }
+      await sequelize.query('DROP INDEX IF EXISTS public.task_schedules_resource_unique', { transaction });
+      await sequelize.query(`ALTER TABLE public.task_schedules
+        ALTER COLUMN "taskId" SET NOT NULL,
+        DROP COLUMN IF EXISTS "resourceType",
+        DROP COLUMN IF EXISTS "resourceId"`, { transaction });
+    },
+  },
+  {
+    id: '005_assessment_asset_graph',
+    scope: 'tenant',
+    description: 'Create assets, assessment scopes and asset-scoped control evaluations',
+    checksumSource: 'tenant:v2:assets:assessment-assets:control-evaluations:snapshots:org-governance:legacy-table-recovery',
+    up: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      const q = (sql: string, replacements?: Record<string, unknown>) =>
+        sequelize.query(sql, { transaction, replacements });
+      await q('CREATE EXTENSION IF NOT EXISTS pgcrypto');
+      // Some early installations only recorded the membership tables in the
+      // baseline migration. Recreate missing standard/control tables before
+      // snapshotting, while leaving existing populated tables untouched.
+      await runWithTenantContext({ schema: schemaName, tenantId: null }, async () => {
+        await QuestionnaireTemplate.schema(schemaName).sync({ transaction } as any);
+        await QuestionTemplate.schema(schemaName).sync({ transaction } as any);
+      });
+      await q(`ALTER TABLE ${quoted}.audit_tasks
+        ADD COLUMN IF NOT EXISTS "templateId" uuid,
+        ADD COLUMN IF NOT EXISTS "assessmentType" varchar(100),
+        ADD COLUMN IF NOT EXISTS "assessmentTarget" varchar(200),
+        ADD COLUMN IF NOT EXISTS "createdBy" uuid,
+        ADD COLUMN IF NOT EXISTS "assignedTo" uuid,
+        ADD COLUMN IF NOT EXISTS "reviewerId" uuid,
+        ADD COLUMN IF NOT EXISTS status varchar(30) NOT NULL DEFAULT 'draft',
+        ADD COLUMN IF NOT EXISTS "returnReason" text,
+        ADD COLUMN IF NOT EXISTS "returnedAssignees" jsonb,
+        ADD COLUMN IF NOT EXISTS "createdAt" timestamptz NOT NULL DEFAULT now(),
+        ADD COLUMN IF NOT EXISTS "submittedAt" timestamptz,
+        ADD COLUMN IF NOT EXISTS "reviewedAt" timestamptz`);
+      await runWithTenantContext({ schema: schemaName, tenantId: null }, async () => {
+        await Asset.schema(schemaName).sync({ transaction } as any);
+        await QuestionItem.schema(schemaName).sync({ transaction } as any);
+      });
+      await q(`CREATE TABLE IF NOT EXISTS ${quoted}.relationship_migration_snapshots (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        entity_type varchar(40) NOT NULL,
+        entity_id uuid NOT NULL,
+        payload jsonb NOT NULL,
+        checksum varchar(64) NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (entity_type, entity_id)
+      )`);
+      await q(`INSERT INTO ${quoted}.relationship_migration_snapshots
+        (entity_type, entity_id, payload, checksum)
+        SELECT 'audit_task', id, to_jsonb(source),
+          encode(digest(convert_to(to_jsonb(source)::text, 'UTF8'), 'sha256'), 'hex')
+        FROM ${quoted}.audit_tasks source
+        ON CONFLICT (entity_type, entity_id) DO NOTHING`);
+      await q(`INSERT INTO ${quoted}.relationship_migration_snapshots
+        (entity_type, entity_id, payload, checksum)
+        SELECT 'question_item', id, to_jsonb(source),
+          encode(digest(convert_to(to_jsonb(source)::text, 'UTF8'), 'sha256'), 'hex')
+        FROM ${quoted}.question_items source
+        ON CONFLICT (entity_type, entity_id) DO NOTHING`);
+
+      await runWithTenantContext({ schema: schemaName, tenantId: null }, async () => {
+        await AssessmentAsset.schema(schemaName).sync({ transaction } as any);
+        await AssessmentControlAsset.schema(schemaName).sync({ transaction } as any);
+      });
+      await q(`INSERT INTO ${quoted}.assets
+        (id, code, name, "assetType", criticality, description, metadata, status, "createdAt", "updatedAt")
+        VALUES (gen_random_uuid(), 'ORG-GOVERNANCE', '组织级治理', 'organization', 'high',
+          '系统内置逻辑资产，用于不对应具体技术资产的流程与治理控制项',
+          '{}'::jsonb, 'active', now(), now())
+        ON CONFLICT (code) DO NOTHING`);
+      await q(`ALTER TABLE ${quoted}.audit_tasks
+        ADD COLUMN IF NOT EXISTS name varchar(200),
+        ADD COLUMN IF NOT EXISTS "periodStart" date,
+        ADD COLUMN IF NOT EXISTS "periodEnd" date,
+        ADD COLUMN IF NOT EXISTS "publishedAt" timestamptz,
+        ADD COLUMN IF NOT EXISTS "cancelledAt" timestamptz,
+        ADD COLUMN IF NOT EXISTS "lockVersion" integer NOT NULL DEFAULT 0`);
+      await q(`UPDATE ${quoted}.audit_tasks
+        SET name = COALESCE(NULLIF(name, ''), "assessmentTarget", '未命名评估')
+        WHERE name IS NULL OR name = ''`);
+      await q(`ALTER TABLE ${quoted}.audit_tasks ALTER COLUMN name SET NOT NULL`);
+
+      await q(`ALTER TABLE ${quoted}.question_items
+        ADD COLUMN IF NOT EXISTS "assetId" uuid,
+        ADD COLUMN IF NOT EXISTS "responsibleDepartmentId" uuid,
+        ADD COLUMN IF NOT EXISTS "workflowStatus" varchar(30) NOT NULL DEFAULT 'pending',
+        ADD COLUMN IF NOT EXISTS "submittedAt" timestamptz,
+        ADD COLUMN IF NOT EXISTS "reviewedBy" uuid,
+        ADD COLUMN IF NOT EXISTS "lockVersion" integer NOT NULL DEFAULT 0`);
+      await q(`UPDATE ${quoted}.question_items
+        SET "workflowStatus" = CASE
+          WHEN "reviewedAt" IS NOT NULL THEN 'reviewed'
+          WHEN "answerStatus" = 'answered' THEN 'in_progress'
+          ELSE 'pending'
+        END,
+        "complianceStatus" = CASE
+          WHEN "complianceStatus" = 'partially_compliant' THEN 'partial'
+          ELSE COALESCE("complianceStatus", 'not_assessed')
+        END`);
+      await q(`ALTER TABLE ${quoted}.question_items
+        ALTER COLUMN "complianceStatus" SET DEFAULT 'not_assessed',
+        ALTER COLUMN "complianceStatus" SET NOT NULL`);
+      await q(`CREATE UNIQUE INDEX IF NOT EXISTS control_evaluation_task_control_asset_unique
+        ON ${quoted}.question_items ("taskId", "templateQuestionId", "assetId")
+        WHERE "assetId" IS NOT NULL`);
+      await q(`CREATE INDEX IF NOT EXISTS control_evaluation_asset_idx
+        ON ${quoted}.question_items ("assetId")`);
+      await q(`CREATE INDEX IF NOT EXISTS control_evaluation_assignee_status_idx
+        ON ${quoted}.question_items ("assignedTo", "workflowStatus")`);
+    },
+    down: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      await sequelize.query(`DROP INDEX IF EXISTS ${quoted}.control_evaluation_assignee_status_idx`, { transaction });
+      await sequelize.query(`DROP INDEX IF EXISTS ${quoted}.control_evaluation_asset_idx`, { transaction });
+      await sequelize.query(`DROP INDEX IF EXISTS ${quoted}.control_evaluation_task_control_asset_unique`, { transaction });
+      await sequelize.query(`ALTER TABLE ${quoted}.question_items
+        DROP COLUMN IF EXISTS "lockVersion",
+        DROP COLUMN IF EXISTS "reviewedBy",
+        DROP COLUMN IF EXISTS "submittedAt",
+        DROP COLUMN IF EXISTS "workflowStatus",
+        DROP COLUMN IF EXISTS "responsibleDepartmentId",
+        DROP COLUMN IF EXISTS "assetId"`, { transaction });
+      await sequelize.query(`ALTER TABLE ${quoted}.audit_tasks
+        DROP COLUMN IF EXISTS "lockVersion",
+        DROP COLUMN IF EXISTS "cancelledAt",
+        DROP COLUMN IF EXISTS "publishedAt",
+        DROP COLUMN IF EXISTS "periodEnd",
+        DROP COLUMN IF EXISTS "periodStart",
+        DROP COLUMN IF EXISTS name`, { transaction });
+      await sequelize.query(`DROP TABLE IF EXISTS ${quoted}.assessment_assets`, { transaction });
+      await sequelize.query(`DROP TABLE IF EXISTS ${quoted}.assessment_control_assets`, { transaction });
+      await sequelize.query(`DROP TABLE IF EXISTS ${quoted}.assets`, { transaction });
+    },
+  },
+  {
+    id: '006_risk_remediation_graph',
+    scope: 'tenant',
+    description: 'Create risk sources, affected assets, remediation actions and per-risk verification',
+    checksumSource: 'tenant:v3:risk-graph:remediation-graph:evidence-parent-check:sequences:legacy-snapshots:permissions',
+    up: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      const q = (sql: string, replacements?: Record<string, unknown>) =>
+        sequelize.query(sql, { transaction, replacements });
+      await q('CREATE EXTENSION IF NOT EXISTS pgcrypto');
+      await q(`ALTER TABLE ${quoted}.risk_records
+        ADD COLUMN IF NOT EXISTS "questionItemId" uuid,
+        ADD COLUMN IF NOT EXISTS "assessmentType" varchar(100),
+        ADD COLUMN IF NOT EXISTS "assessmentTarget" varchar(200),
+        ADD COLUMN IF NOT EXISTS "riskIdentification" varchar(100),
+        ADD COLUMN IF NOT EXISTS "riskLevel" varchar(20) NOT NULL DEFAULT 'low',
+        ADD COLUMN IF NOT EXISTS "remediationMeasures" varchar(500),
+        ADD COLUMN IF NOT EXISTS "remediationStatus" varchar(30),
+        ADD COLUMN IF NOT EXISTS "riskStatus" varchar(30),
+        ADD COLUMN IF NOT EXISTS "identifiedAt" timestamptz NOT NULL DEFAULT now()`);
+      await q(`INSERT INTO ${quoted}.relationship_migration_snapshots
+        (entity_type, entity_id, payload, checksum)
+        SELECT 'risk_record', id, to_jsonb(source),
+          encode(digest(convert_to(to_jsonb(source)::text, 'UTF8'), 'sha256'), 'hex')
+        FROM ${quoted}.risk_records source
+        ON CONFLICT (entity_type, entity_id) DO NOTHING`);
+      await q(`CREATE SEQUENCE IF NOT EXISTS ${quoted}.risk_code_seq`);
+      await q(`CREATE SEQUENCE IF NOT EXISTS ${quoted}.remediation_action_code_seq`);
+      await q(`ALTER TABLE ${quoted}.risk_records
+        ADD COLUMN IF NOT EXISTS code varchar(32),
+        ADD COLUMN IF NOT EXISTS title varchar(200),
+        ADD COLUMN IF NOT EXISTS description text,
+        ADD COLUMN IF NOT EXISTS "treatmentStrategy" varchar(20),
+        ADD COLUMN IF NOT EXISTS "ownerDepartmentId" uuid,
+        ADD COLUMN IF NOT EXISTS "ownerUserId" uuid,
+        ADD COLUMN IF NOT EXISTS "dueDate" date,
+        ADD COLUMN IF NOT EXISTS status varchar(24),
+        ADD COLUMN IF NOT EXISTS "confirmedBy" uuid,
+        ADD COLUMN IF NOT EXISTS "confirmedAt" timestamptz,
+        ADD COLUMN IF NOT EXISTS "acceptedBy" uuid,
+        ADD COLUMN IF NOT EXISTS "acceptedAt" timestamptz,
+        ADD COLUMN IF NOT EXISTS "acceptanceReason" text,
+        ADD COLUMN IF NOT EXISTS "reviewDueDate" date,
+        ADD COLUMN IF NOT EXISTS "closedBy" uuid,
+        ADD COLUMN IF NOT EXISTS "closedAt" timestamptz,
+        ADD COLUMN IF NOT EXISTS "closeComment" text,
+        ADD COLUMN IF NOT EXISTS "lockVersion" integer NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS "createdAt" timestamptz,
+        ADD COLUMN IF NOT EXISTS "updatedAt" timestamptz`);
+      await q(`UPDATE ${quoted}.risk_records risk
+        SET code = COALESCE(risk.code,
+              'RISK-' || to_char(CURRENT_DATE, 'YYYYMM') || '-' ||
+              lpad(nextval('${schemaName.replace(/'/g, "''")}.risk_code_seq')::text, 6, '0')),
+            title = COALESCE(risk.title, NULLIF(risk."riskIdentification", ''), '历史风险'),
+            description = COALESCE(risk.description, NULLIF(risk."riskIdentification", ''), '历史风险'),
+            "treatmentStrategy" = COALESCE(risk."treatmentStrategy", CASE risk."riskStatus"
+              WHEN 'risk_acceptance' THEN 'accept'
+              WHEN 'risk_transfer' THEN 'transfer'
+              WHEN 'risk_elimination' THEN 'avoid'
+              ELSE 'mitigate' END),
+            "ownerDepartmentId" = COALESCE(risk."ownerDepartmentId", task."departmentId"),
+            "ownerUserId" = COALESCE(risk."ownerUserId", task."assignedTo", task."createdBy"),
+            status = COALESCE(risk.status, CASE risk."remediationStatus"
+              WHEN 'remediated' THEN 'pending_verification'
+              WHEN 'in_progress' THEN 'remediating'
+              ELSE 'open' END),
+            "createdAt" = COALESCE(risk."createdAt", risk."identifiedAt", now()),
+            "updatedAt" = COALESCE(risk."updatedAt", now())
+        FROM ${quoted}.audit_tasks task
+        WHERE risk."taskId" = task.id`);
+      await q(`CREATE UNIQUE INDEX IF NOT EXISTS risk_records_code_unique ON ${quoted}.risk_records (code)`);
+
+      await runWithTenantContext({ schema: schemaName, tenantId: null }, async () => {
+        await RiskSource.schema(schemaName).sync({ transaction } as any);
+        await RiskAffectedAsset.schema(schemaName).sync({ transaction } as any);
+        await RemediationAction.schema(schemaName).sync({ transaction } as any);
+        await RiskActionLink.schema(schemaName).sync({ transaction } as any);
+        await EvidenceFile.schema(schemaName).sync({ transaction } as any);
+      });
+      await q(`ALTER TABLE ${quoted}.evidence_files
+        ADD COLUMN IF NOT EXISTS "remediationActionId" uuid,
+        ADD COLUMN IF NOT EXISTS "evidencePurpose" varchar(30) NOT NULL DEFAULT 'assessment_current',
+        ALTER COLUMN "questionItemId" DROP NOT NULL`);
+      await q(`UPDATE ${quoted}.evidence_files
+        SET "evidencePurpose" = CASE
+          WHEN "evidenceType" = 'historical' THEN 'assessment_historical'
+          ELSE 'assessment_current' END
+        WHERE "remediationActionId" IS NULL`);
+      await q(`CREATE INDEX IF NOT EXISTS evidence_remediation_action_idx
+        ON ${quoted}.evidence_files ("remediationActionId", status)`);
+      await q(`UPDATE ${quoted}.roles SET
+        permissions = permissions || '{
+          "assets":["create","read","update","archive"],
+          "evaluations":["read","answer","submit","review"],
+          "risks":["create","read","update","confirm","assign","accept","verify","close","export"],
+          "remediation_actions":["create","read","update","submit","verify","link"],
+          "assessment_plans":["create","read","update","delete","execute"]
+        }'::jsonb,
+        "permissionScopes" = "permissionScopes" || '{
+          "assets":{"create":"all","read":"all","update":"all","archive":"all"},
+          "evaluations":{"read":"all","answer":"all","submit":"all","review":"all"},
+          "risks":{"create":"all","read":"all","update":"all","confirm":"all","assign":"all","accept":"all","verify":"all","close":"all","export":"all"},
+          "remediation_actions":{"create":"all","read":"all","update":"all","submit":"all","verify":"all","link":"all"},
+          "assessment_plans":{"create":"all","read":"all","update":"all","delete":"all","execute":"all"}
+        }'::jsonb
+        WHERE "systemKey" = 'tenant_admin'`);
+      await q(`UPDATE ${quoted}.roles SET
+        permissions = permissions || '{
+          "assets":["read"],
+          "evaluations":["read","answer","submit","review"],
+          "risks":["create","read","update","confirm","assign","accept","verify","close","export"],
+          "remediation_actions":["create","read","update","submit","verify","link"],
+          "assessment_plans":["create","read","update","execute"]
+        }'::jsonb,
+        "permissionScopes" = "permissionScopes" || '{
+          "assets":{"read":"assigned"},
+          "evaluations":{"read":"assigned","answer":"assigned","submit":"assigned","review":"assigned"},
+          "risks":{"create":"assigned","read":"assigned","update":"assigned","confirm":"assigned","assign":"assigned","accept":"assigned","verify":"assigned","close":"assigned","export":"assigned"},
+          "remediation_actions":{"create":"assigned","read":"assigned","update":"assigned","submit":"assigned","verify":"assigned","link":"assigned"},
+          "assessment_plans":{"create":"assigned","read":"assigned","update":"assigned","execute":"assigned"}
+        }'::jsonb
+        WHERE "systemKey" = 'auditor'`);
+      await q(`UPDATE ${quoted}.roles SET
+        permissions = permissions || '{
+          "assets":["read"],
+          "evaluations":["read","answer","submit"],
+          "risks":["read"],
+          "remediation_actions":["read","update","submit"]
+        }'::jsonb,
+        "permissionScopes" = "permissionScopes" || '{
+          "assets":{"read":"assigned"},
+          "evaluations":{"read":"assigned","answer":"assigned","submit":"assigned"},
+          "risks":{"read":"assigned"},
+          "remediation_actions":{"read":"assigned","update":"assigned","submit":"assigned"}
+        }'::jsonb
+        WHERE "systemKey" = 'member'`);
+    },
+    down: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      const actionEvidence = await sequelize.query<{ count: number }>(`
+        SELECT count(*)::int AS count FROM ${quoted}.evidence_files
+        WHERE "remediationActionId" IS NOT NULL
+      `, { type: QueryTypes.SELECT, transaction });
+      if (Number(actionEvidence[0]?.count || 0) > 0) {
+        throw new Error('存在整改证据，不能直接回滚风险整改关系');
+      }
+      await sequelize.query(`DROP TABLE IF EXISTS ${quoted}.risk_action_links`, { transaction });
+      await sequelize.query(`DROP TABLE IF EXISTS ${quoted}.remediation_actions`, { transaction });
+      await sequelize.query(`DROP TABLE IF EXISTS ${quoted}.risk_affected_assets`, { transaction });
+      await sequelize.query(`DROP TABLE IF EXISTS ${quoted}.risk_sources`, { transaction });
+      await sequelize.query(`ALTER TABLE ${quoted}.evidence_files
+        ALTER COLUMN "questionItemId" SET NOT NULL,
+        DROP COLUMN IF EXISTS "evidencePurpose",
+        DROP COLUMN IF EXISTS "remediationActionId"`, { transaction });
+      await sequelize.query(`DROP SEQUENCE IF EXISTS ${quoted}.remediation_action_code_seq`, { transaction });
+      await sequelize.query(`DROP SEQUENCE IF EXISTS ${quoted}.risk_code_seq`, { transaction });
+    },
+  },
+  {
+    id: '007_assessment_plans',
+    scope: 'tenant',
+    description: 'Create recurring assessment plans and execution history',
+    checksumSource: 'tenant:v1:assessment-plans:snapshots:executions:idempotency',
+    up: async (schemaName, transaction) => {
+      await runWithTenantContext({ schema: schemaName, tenantId: null }, async () => {
+        await AssessmentPlan.schema(schemaName).sync({ transaction } as any);
+        await AssessmentPlanExecution.schema(schemaName).sync({ transaction } as any);
+      });
+    },
+    down: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      await sequelize.query(`DROP TABLE IF EXISTS ${quoted}.assessment_plan_executions`, { transaction });
+      await sequelize.query(`DROP TABLE IF EXISTS ${quoted}.assessment_plans`, { transaction });
+    },
+  },
+  {
+    id: '008_relationship_graph_finalize',
+    scope: 'tenant',
+    description: 'Enforce complete assessment, risk and remediation graph mappings',
+    checksumSource: 'tenant:v1:relationship-finalize:preflight:not-null:foreign-keys:drop-single-risk-fields',
+    up: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      const failures = await sequelize.query<{ problem: string; count: number }>(`
+        SELECT 'evaluation_without_asset' AS problem, count(*)::int AS count
+          FROM ${quoted}.question_items WHERE "assetId" IS NULL
+        UNION ALL
+        SELECT 'evaluation_without_department', count(*)::int
+          FROM ${quoted}.question_items WHERE "responsibleDepartmentId" IS NULL
+        UNION ALL
+        SELECT 'risk_without_source', count(*)::int
+          FROM ${quoted}.risk_records risk
+          WHERE NOT EXISTS (SELECT 1 FROM ${quoted}.risk_sources source WHERE source."riskId" = risk.id)
+        UNION ALL
+        SELECT 'risk_without_affected_asset', count(*)::int
+          FROM ${quoted}.risk_records risk
+          WHERE NOT EXISTS (SELECT 1 FROM ${quoted}.risk_affected_assets affected WHERE affected."riskId" = risk.id)
+        UNION ALL
+        SELECT 'risk_without_owner', count(*)::int
+          FROM ${quoted}.risk_records WHERE "ownerDepartmentId" IS NULL OR "ownerUserId" IS NULL
+      `, { type: QueryTypes.SELECT, transaction });
+      const unresolved = failures.filter((failure) => Number(failure.count) > 0);
+      if (unresolved.length > 0) {
+        throw new Error(`关系图迁移仍有未映射数据: ${unresolved.map((item) => `${item.problem}=${item.count}`).join(', ')}`);
+      }
+      await sequelize.query(`ALTER TABLE ${quoted}.question_items
+        ALTER COLUMN "assetId" SET NOT NULL,
+        ALTER COLUMN "responsibleDepartmentId" SET NOT NULL`, { transaction });
+      await sequelize.query(`ALTER TABLE ${quoted}.risk_records
+        ALTER COLUMN code SET NOT NULL,
+        ALTER COLUMN title SET NOT NULL,
+        ALTER COLUMN description SET NOT NULL,
+        ALTER COLUMN "treatmentStrategy" SET NOT NULL,
+        ALTER COLUMN "ownerDepartmentId" SET NOT NULL,
+        ALTER COLUMN "ownerUserId" SET NOT NULL,
+        ALTER COLUMN status SET NOT NULL,
+        ALTER COLUMN "createdAt" SET NOT NULL,
+        ALTER COLUMN "updatedAt" SET NOT NULL`, { transaction });
+      await sequelize.query(`ALTER TABLE ${quoted}.evidence_files
+        DROP CONSTRAINT IF EXISTS evidence_files_exactly_one_parent,
+        ADD CONSTRAINT evidence_files_exactly_one_parent CHECK (
+          (CASE WHEN "questionItemId" IS NULL THEN 0 ELSE 1 END) +
+          (CASE WHEN "remediationActionId" IS NULL THEN 0 ELSE 1 END) = 1
+        )`, { transaction });
+      await sequelize.query(`ALTER TABLE ${quoted}.risk_records
+        DROP COLUMN IF EXISTS "questionItemId",
+        DROP COLUMN IF EXISTS "assessmentType",
+        DROP COLUMN IF EXISTS "assessmentTarget",
+        DROP COLUMN IF EXISTS "riskIdentification",
+        DROP COLUMN IF EXISTS "remediationMeasures",
+        DROP COLUMN IF EXISTS "remediationStatus",
+        DROP COLUMN IF EXISTS "riskStatus"`, { transaction });
+      await sequelize.query(`ALTER TABLE ${quoted}.question_items
+        DROP COLUMN IF EXISTS "riskIdentification",
+        DROP COLUMN IF EXISTS "riskLevel",
+        DROP COLUMN IF EXISTS "remediationMeasures"`, { transaction });
+    },
+    down: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      await sequelize.query(`ALTER TABLE ${quoted}.question_items
+        ALTER COLUMN "assetId" DROP NOT NULL,
+        ALTER COLUMN "responsibleDepartmentId" DROP NOT NULL,
+        ADD COLUMN IF NOT EXISTS "riskIdentification" varchar(100),
+        ADD COLUMN IF NOT EXISTS "riskLevel" varchar(20),
+        ADD COLUMN IF NOT EXISTS "remediationMeasures" varchar(500)`, { transaction });
+      await sequelize.query(`ALTER TABLE ${quoted}.evidence_files
+        DROP CONSTRAINT IF EXISTS evidence_files_exactly_one_parent`, { transaction });
+      await sequelize.query(`ALTER TABLE ${quoted}.risk_records
+        ADD COLUMN IF NOT EXISTS "questionItemId" uuid,
+        ADD COLUMN IF NOT EXISTS "assessmentType" varchar(100),
+        ADD COLUMN IF NOT EXISTS "assessmentTarget" varchar(200),
+        ADD COLUMN IF NOT EXISTS "riskIdentification" varchar(100),
+        ADD COLUMN IF NOT EXISTS "remediationMeasures" varchar(500),
+        ADD COLUMN IF NOT EXISTS "remediationStatus" varchar(30),
+        ADD COLUMN IF NOT EXISTS "riskStatus" varchar(30)`, { transaction });
     },
   },
 ];

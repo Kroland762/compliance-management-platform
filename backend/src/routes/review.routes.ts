@@ -25,7 +25,7 @@ router.get('/tasks/:taskId', async (req: Request, res: Response) => {
 router.put('/questions/:id', async (req: Request, res: Response) => {
   try {
     await objectAccessService.questionOrNotFound(req.params.id, req.user!, true);
-    const item = await reviewService.saveReview(req.params.id, req.body);
+    const item = await reviewService.saveReview(req.params.id, req.body, req.user!.userId);
     res.json({ success: true, data: item });
   } catch (error: any) {
     if (error instanceof AppError) {
