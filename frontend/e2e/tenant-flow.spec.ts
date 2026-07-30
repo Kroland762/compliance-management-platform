@@ -83,23 +83,50 @@ test('global administrator selects a tenant and completes core control flow', as
   expect(taskResponse.status()).toBe(201);
   const taskId = (await taskResponse.json()).data.id;
 
-  const questionsResponse = await page.request.get(`http://127.0.0.1:3001/api/tasks/${taskId}/questions`, { headers });
-  expect(questionsResponse.ok()).toBeTruthy();
-  const question = (await questionsResponse.json()).data.questions[0];
-
-  const configureResponse = await page.request.put(`http://127.0.0.1:3001/api/tasks/${taskId}/configure`, {
+  const assetResponse = await page.request.post('http://127.0.0.1:3001/api/assets', {
     headers,
     data: {
-      questionAssignments: [{
-        questionId: question.id,
-        assignedTo: userId,
-        responsibleDepartment: rootDepartment.name,
-        responsiblePerson: `e2e_user_${suffix}`,
-        referenceAnswer: '应定期复核',
-      }],
+      code: `E2E-ASSET-${suffix}`,
+      name: `E2E核心资产-${suffix}`,
+      assetType: 'application',
+      criticality: 'high',
+      ownerDepartmentId: rootDepartment.id,
+      ownerUserId: userId,
     },
   });
-  expect(configureResponse.ok()).toBeTruthy();
+  expect(assetResponse.status()).toBe(201);
+  const assetId = (await assetResponse.json()).data.id;
+  const templateDetailResponse = await page.request.get(
+    `http://127.0.0.1:3001/api/templates/${templateId}`,
+    { headers },
+  );
+  const controlPointId = (await templateDetailResponse.json()).data.templateQuestions[0].id;
+  expect((await page.request.put(`http://127.0.0.1:3001/api/tasks/${taskId}/assets`, {
+    headers,
+    data: { assetIds: [assetId] },
+  })).ok()).toBeTruthy();
+  expect((await page.request.put(`http://127.0.0.1:3001/api/tasks/${taskId}/control-asset-matrix`, {
+    headers,
+    data: {
+      items: [{
+        controlPointId,
+        assetId,
+        assignedTo: userId,
+        responsibleDepartmentId: rootDepartment.id,
+      }],
+    },
+  })).ok()).toBeTruthy();
+  const publishResponse = await page.request.post(
+    `http://127.0.0.1:3001/api/tasks/${taskId}/publish`,
+    { headers },
+  );
+  expect(publishResponse.ok()).toBeTruthy();
+  expect((await publishResponse.json()).data.total).toBe(1);
+  const evaluationsResponse = await page.request.get(
+    `http://127.0.0.1:3001/api/tasks/${taskId}/evaluations?pageSize=100`,
+    { headers },
+  );
+  const evaluation = (await evaluationsResponse.json()).data.items[0];
 
   const userLoginResponse = await page.request.post('http://127.0.0.1:3001/api/auth/login', {
     data: {
@@ -129,13 +156,13 @@ test('global administrator selects a tenant and completes core control flow', as
     'X-Tenant-ID': auth.selectedTenant.id,
   };
 
-  const answerResponse = await page.request.put(`http://127.0.0.1:3001/api/questions/${question.id}/answer`, {
+  const answerResponse = await page.request.put(`http://127.0.0.1:3001/api/evaluations/${evaluation.id}/answer`, {
     headers: userHeaders,
-    data: { currentStatusDescription: '已完成账号定期复核' },
+    data: { currentStatusDescription: '已完成账号定期复核', lockVersion: evaluation.lockVersion },
   });
   expect(answerResponse.ok()).toBeTruthy();
 
-  const evidenceResponse = await page.request.post(`http://127.0.0.1:3001/api/questions/${question.id}/evidence`, {
+  const evidenceResponse = await page.request.post(`http://127.0.0.1:3001/api/evaluations/${evaluation.id}/evidence`, {
     headers: userHeaders,
     multipart: {
       file: {
@@ -154,27 +181,22 @@ test('global administrator selects a tenant and completes core control flow', as
   expect(downloadResponse.ok()).toBeTruthy();
   expect(downloadResponse.headers()['content-type']).toContain('application/pdf');
 
-  const submitResponse = await page.request.post(`http://127.0.0.1:3001/api/tasks/${taskId}/submit`, {
+  const submitResponse = await page.request.post(`http://127.0.0.1:3001/api/evaluations/${evaluation.id}/submit`, {
     headers: userHeaders,
   });
   expect(submitResponse.ok()).toBeTruthy();
-  expect((await submitResponse.json()).data.status).toBe('submitted');
+  expect((await submitResponse.json()).data.workflowStatus).toBe('submitted');
 
   const reviewDataResponse = await page.request.get(`http://127.0.0.1:3001/api/review/tasks/${taskId}`, { headers });
   expect(reviewDataResponse.ok()).toBeTruthy();
-  const reviewQuestion = (await reviewDataResponse.json()).data[0];
-  expect(reviewQuestion.evidenceFiles[0].id).toBe(evidenceId);
-  expect(reviewQuestion.evidenceFiles[0].storageKey).toBeUndefined();
-  expect(reviewQuestion.evidenceFiles[0].filePath).toBeUndefined();
+  const reviewEvaluation = (await reviewDataResponse.json()).data[0];
+  expect(reviewEvaluation.evidenceFiles[0].id).toBe(evidenceId);
+  expect(reviewEvaluation.evidenceFiles[0].storageKey).toBeUndefined();
+  expect(reviewEvaluation.evidenceFiles[0].filePath).toBeUndefined();
 
-  const reviewResponse = await page.request.put(`http://127.0.0.1:3001/api/review/questions/${question.id}`, {
+  const reviewResponse = await page.request.post(`http://127.0.0.1:3001/api/evaluations/${evaluation.id}/review`, {
     headers,
-    data: {
-      complianceStatus: 'non_compliant',
-      riskIdentification: `E2E风险-${suffix}`,
-      riskLevel: 'high',
-      remediationMeasures: '立即整改并复核',
-    },
+    data: { complianceStatus: 'non_compliant' },
   });
   expect(reviewResponse.ok()).toBeTruthy();
 
@@ -185,14 +207,81 @@ test('global administrator selects a tenant and completes core control flow', as
   expect(completeReviewResponse.ok()).toBeTruthy();
   expect((await completeReviewResponse.json()).data.status).toBe('completed');
 
-  const riskResponse = await page.request.get(
-    `http://127.0.0.1:3001/api/risks?page=1&pageSize=20`,
+  const createRiskResponse = await page.request.post('http://127.0.0.1:3001/api/risks', {
+    headers,
+    data: {
+      taskId,
+      title: `E2E风险-${suffix}`,
+      description: '账号复核控制项发现高风险',
+      riskLevel: 'high',
+      treatmentStrategy: 'mitigate',
+      ownerDepartmentId: rootDepartment.id,
+      ownerUserId: userId,
+      sources: [{ controlEvaluationId: evaluation.id }],
+      assets: [{ assetId }],
+    },
+  });
+  expect(createRiskResponse.status()).toBe(201);
+  const risk = (await createRiskResponse.json()).data;
+  expect(risk.sources).toHaveLength(1);
+  expect(risk.affectedAssets).toHaveLength(1);
+  expect((await page.request.post(`http://127.0.0.1:3001/api/risks/${risk.id}/confirm`, { headers })).ok()).toBeTruthy();
+
+  for (const actionIndex of [1, 2]) {
+    const createActionResponse = await page.request.post('http://127.0.0.1:3001/api/remediation-actions', {
+      headers,
+      data: {
+        title: `E2E整改行动${actionIndex}-${suffix}`,
+        description: `完成第${actionIndex}项整改`,
+        ownerUserId: userId,
+        ownerDepartmentId: rootDepartment.id,
+        dueDate: '2030-12-31',
+        riskLinks: [{
+          riskId: risk.id,
+          isRequired: true,
+          contributionDescription: `降低风险的第${actionIndex}项行动`,
+        }],
+      },
+    });
+    expect(createActionResponse.status()).toBe(201);
+    const remediationAction = (await createActionResponse.json()).data;
+    const remediationEvidence = await page.request.post(
+      `http://127.0.0.1:3001/api/remediation-actions/${remediationAction.id}/evidence`,
+      {
+        headers: userHeaders,
+        multipart: {
+          file: {
+            name: `remediation-${actionIndex}.pdf`,
+            mimeType: 'application/pdf',
+            buffer: Buffer.from(`%PDF-1.7\nE2E remediation ${actionIndex}\n`),
+          },
+        },
+      },
+    );
+    expect(remediationEvidence.status()).toBe(201);
+    expect((await page.request.post(
+      `http://127.0.0.1:3001/api/remediation-actions/${remediationAction.id}/submit`,
+      { headers: userHeaders },
+    )).ok()).toBeTruthy();
+    expect((await page.request.post(
+      `http://127.0.0.1:3001/api/risks/${risk.id}/actions/${remediationAction.id}/verify`,
+      { headers, data: { decision: 'approved', comment: `行动${actionIndex}通过` } },
+    )).ok()).toBeTruthy();
+  }
+
+  const closeRiskResponse = await page.request.post(
+    `http://127.0.0.1:3001/api/risks/${risk.id}/close`,
+    { headers, data: { comment: '全部必要行动已通过' } },
+  );
+  expect(closeRiskResponse.ok()).toBeTruthy();
+  expect((await closeRiskResponse.json()).data.status).toBe('closed');
+
+  const riskExportResponse = await page.request.get(
+    'http://127.0.0.1:3001/api/export/risks',
     { headers },
   );
-  expect(riskResponse.ok()).toBeTruthy();
-  expect((await riskResponse.json()).data.items.some(
-    (risk: any) => risk.riskIdentification === `E2E风险-${suffix}`,
-  )).toBeTruthy();
+  expect(riskExportResponse.ok()).toBeTruthy();
+  expect(riskExportResponse.headers()['content-type']).toContain('spreadsheetml');
 
   const accountCsvResponse = await page.request.get(
     'http://127.0.0.1:3001/api/account/problems/export/data?format=csv',

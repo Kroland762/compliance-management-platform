@@ -6,9 +6,14 @@
 
 ### 资质合规
 - 问卷模版管理（CSV 导入/导出、版本管理）
-- 审计任务创建 → 题目配置 → 指派 → 填写 → 审阅 → 退回/通过
-- 风险项追踪与状态管理
-- 可视化仪表盘（任务分布、风险分布饼图）
+- 资产台账与组织级治理逻辑资产
+- 标准 → 资产范围 → 控制项资产矩阵 → 发布评估
+- 一个控制项可评估多个资产，每个组合生成独立“评估单元”
+- 风险可关联多个来源评估单元和多个受影响资产
+- 一个整改行动可关联多个风险，并在每个风险下独立复核
+- 风险关闭由服务端门禁计算，支持单人自审标识
+- 周期评估计划保存标准、资产范围和矩阵快照
+- 管理驾驶舱与风险/来源/资产/行动/复核/证据多工作表导出
 
 ### 账户审计
 - PostgreSQL 只读数据源接入（表/字段白名单映射，不接受任意 SQL）
@@ -74,6 +79,8 @@ npm run migrate:legacy-public -- --apply --tenant=<tenant-id>
 npm run migrate:legacy-files -- --tenant=<tenant-id>  # 默认只生成文件清单
 npm run migrate:membership-plan       # 只读生成成员/角色/部门/对象归属清单
 npm run migrate:membership-plan -- --apply --mapping=/absolute/path/membership-map.json
+npm run migrate:relationship-plan   # 只读生成资产、风险来源和旧整改清单
+npm run migrate:relationship-plan -- --apply --mapping=/absolute/path/relationship-map.json
 
 npm test
 cd ../frontend && npm test && npm run build
@@ -129,8 +136,12 @@ compliance-management-platform/
 |------|---------|
 | 成员管理 | 创建、查看、更新、删除 |
 | 模版管理 | 创建、查看、更新、删除 |
-| 合规任务 | 创建、查看、更新、删除、提交、退回 |
-| 风险管理 | 查看、更新 |
+| 资产台账 | 创建、查看、更新、归档 |
+| 合规任务 | 创建、查看、更新、删除、提交、退回、发布、取消 |
+| 评估单元 | 查看、填写、提交、复核 |
+| 风险管理 | 创建、查看、更新、确认、分配、接受、复核、关闭、导出 |
+| 整改行动 | 创建、查看、更新、提交、复核、关联 |
+| 周期计划 | 创建、查看、更新、删除、执行 |
 | 操作日志 | 查看、导出 |
 | 通知管理 | 查看、更新 |
 | 数据导出 | 创建 |
@@ -152,3 +163,6 @@ compliance-management-platform/
 `eq` `neq` `gt` `lt` `gte` `lte` `contains` `contains_any` `not_true` `is_null` `is_not_null` `lt_days` `lt_date`
 
 内置规则：长期未登录、未启用 MFA、高权限未启用 MFA、异常创建时间。
+
+vNext 关系图的数据库结构、状态机、接口与运行约束见
+[vNext 多对多评估与整改技术说明](./VNEXT_RELATIONSHIP_GRAPH.md)。
