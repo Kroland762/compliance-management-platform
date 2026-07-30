@@ -9,7 +9,7 @@ import {
   TenantMemberStatus,
   Department,
   TaskStatus,
-  AnswerStatus,
+  EvaluationWorkflowStatus,
   OperationType,
 } from '../models';
 import auditLogService from './audit-log.service';
@@ -19,11 +19,14 @@ import { pagination, parsePagination } from '../utils/pagination';
 interface CreateTaskInput {
   templateId: string;
   assessmentType: string;
+  name?: string;
   assessmentTarget: string;
   assignedTo?: string | null;
   reviewerId?: string | null;
   departmentId: string;
   createdBy: string;
+  periodStart?: Date | null;
+  periodEnd?: Date | null;
 }
 
 interface TaskQuery {
@@ -59,7 +62,10 @@ class TaskService {
       throw new Error('归属部门不存在或已归档');
     }
 
+    const taskName = input.name?.trim() || input.assessmentTarget?.trim();
+    if (!taskName) throw new Error('评估名称不能为空');
     const task = await AuditTask.create({
+      name: taskName,
       templateId: input.templateId,
       assessmentType: input.assessmentType as any,
       assessmentTarget: input.assessmentTarget,
@@ -68,30 +74,16 @@ class TaskService {
       reviewerId: input.reviewerId || input.createdBy,
       departmentId: input.departmentId,
       status: TaskStatus.DRAFT,
+      periodStart: input.periodStart || null,
+      periodEnd: input.periodEnd || null,
     } as any);
-
-    const templateQuestions = (template as any).templateQuestions as QuestionTemplate[];
-    const questionItems = templateQuestions.map(q => ({
-      taskId: task.id,
-      templateQuestionId: q.id,
-      sequenceNumber: q.sequenceNumber,
-      controlDomain: q.controlDomain,
-      controlPoint: q.controlPoint,
-      referenceAnswer: q.referenceAnswer,
-      historicalEvidencePath: q.historicalEvidencePath,
-      responsibleDepartment: q.responsibleDepartment,
-      responsiblePerson: q.responsiblePerson,
-      answerStatus: AnswerStatus.PENDING,
-    }));
-
-    await QuestionItem.bulkCreate(questionItems as any);
 
     await auditLogService.log({
       userId: input.createdBy,
       operationType: OperationType.CREATE,
       resourceType: 'task',
       resourceId: task.id,
-      operationDetails: `创建审计任务，目标: ${input.assessmentTarget}`,
+      operationDetails: `创建评估草稿: ${taskName}`,
       success: true,
       departmentId: input.departmentId,
     });
@@ -173,7 +165,7 @@ class TaskService {
     });
 
     const answered = await QuestionItem.findAll({
-      where: { taskId: { [Op.in]: taskIds }, answerStatus: AnswerStatus.ANSWERED },
+      where: { taskId: { [Op.in]: taskIds }, workflowStatus: EvaluationWorkflowStatus.REVIEWED },
       attributes: [
         ['taskId', 'taskId'],
         [QuestionItem.sequelize!.fn('COUNT', QuestionItem.sequelize!.col('id')), 'answered'],
@@ -207,7 +199,7 @@ class TaskService {
         raw: true,
       });
       const myAnswered = await QuestionItem.findAll({
-        where: { taskId: { [Op.in]: taskIds }, assignedTo: query.userId, answerStatus: AnswerStatus.ANSWERED },
+        where: { taskId: { [Op.in]: taskIds }, assignedTo: query.userId, workflowStatus: EvaluationWorkflowStatus.REVIEWED },
         attributes: [
           ['taskId', 'taskId'],
           [QuestionItem.sequelize!.fn('COUNT', QuestionItem.sequelize!.col('id')), 'myAnswered'],

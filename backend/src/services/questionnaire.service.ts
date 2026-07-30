@@ -110,6 +110,14 @@ class QuestionnaireService {
         fileSize: file.size,
         mimeType: file.mimetype,
       });
+      await auditLogService.log({
+        userId: uploadedBy,
+        operationType: OperationType.CREATE,
+        resourceType: 'evidence',
+        resourceId: evidence.id,
+        operationDetails: `上传${evidenceType === 'historical' ? '历史' : '评估'}证据`,
+        success: true,
+      });
       const { filePath: _path, storedFilename: _stored, storageKey: _key, ...safe } = evidence.toJSON() as any;
       return safe;
     } catch (error) {

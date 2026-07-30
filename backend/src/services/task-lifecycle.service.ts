@@ -7,7 +7,7 @@ import {
   AnswerStatus,
   OperationType,
   NotificationType,
-  RiskRecord,
+  EvaluationWorkflowStatus,
 } from '../models';
 import auditLogService from './audit-log.service';
 import notificationService from './notification.service';
@@ -101,7 +101,10 @@ class TaskLifecycleService {
 
     // 重置被退回责任人的题目状态
     await QuestionItem.update(
-      { answerStatus: AnswerStatus.PENDING },
+      {
+        answerStatus: AnswerStatus.PENDING,
+        workflowStatus: EvaluationWorkflowStatus.RETURNED,
+      },
       { where: { taskId, assignedTo: { [Op.in]: assigneeIds } } }
     );
 
@@ -152,25 +155,10 @@ class TaskLifecycleService {
     task.reviewedAt = new Date();
     await task.save();
 
-    // 自动生成风险记录
-    const reviewedItems = await QuestionItem.findAll({
-      where: { taskId, riskIdentification: { [Op.ne]: null } },
+    const unreviewed = await QuestionItem.count({
+      where: { taskId, workflowStatus: { [Op.ne]: EvaluationWorkflowStatus.REVIEWED } },
     });
-    for (const item of reviewedItems) {
-      if (item.riskIdentification && item.riskIdentification.trim()) {
-        await RiskRecord.create({
-          taskId,
-          questionItemId: item.id,
-          assessmentType: task.assessmentType,
-          assessmentTarget: task.assessmentTarget,
-          riskIdentification: item.riskIdentification,
-          riskLevel: item.riskLevel || 'low',
-          remediationMeasures: item.remediationMeasures || null,
-          remediationStatus: 'not_remediated',
-          riskStatus: 'risk_reduction',
-        } as any);
-      }
-    }
+    if (unreviewed > 0) throw new Error(`还有 ${unreviewed} 个评估单元尚未复核`);
 
     await auditLogService.log({
       userId: reviewerId,

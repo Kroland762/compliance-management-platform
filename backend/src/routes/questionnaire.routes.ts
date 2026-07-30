@@ -47,6 +47,7 @@ async function assertCanAccessEvidence(req: Request, evidenceId: string, write =
   const { EvidenceFile } = await import('../models');
   const evidence = await EvidenceFile.findOne({ where: { id: evidenceId, status: 'active' } });
   if (!evidence) throw new AppError(404, 'NOT_FOUND', '文件不存在');
+  if (!evidence.questionItemId) throw new AppError(404, 'NOT_FOUND', '文件不存在');
 
   const item = await assertCanAccessQuestion(req, evidence.questionItemId, write);
   if (write && evidence.uploadedBy !== req.user!.userId && !objectAccessService.canReadAllTasks(req.user!)) {
