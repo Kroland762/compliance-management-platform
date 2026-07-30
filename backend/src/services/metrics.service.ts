@@ -45,6 +45,41 @@ export const scheduleOperations = new Counter({
   registers: [metricsRegistry],
 });
 
+export const assessmentPublishDuration = new Histogram({
+  name: 'compliance_assessment_publish_duration_seconds',
+  help: 'Assessment publish duration',
+  labelNames: ['outcome'],
+  buckets: [0.1, 0.5, 1, 5, 15, 30, 60, 120],
+  registers: [metricsRegistry],
+});
+
+export const riskConfirmations = new Counter({
+  name: 'compliance_risk_confirmations_total',
+  help: 'Risk confirmation outcomes',
+  labelNames: ['outcome'],
+  registers: [metricsRegistry],
+});
+
+export const remediationOverdue = new Gauge({
+  name: 'compliance_remediation_overdue_actions',
+  help: 'Current overdue remediation action count',
+  registers: [metricsRegistry],
+});
+
+export const verificationDuration = new Histogram({
+  name: 'compliance_remediation_verification_duration_seconds',
+  help: 'Duration from remediation submission to risk-specific verification',
+  buckets: [60, 300, 1800, 3600, 86400, 604800, 2592000],
+  registers: [metricsRegistry],
+});
+
+export const relationshipMigrationDifferences = new Gauge({
+  name: 'compliance_relationship_migration_differences',
+  help: 'Relationship migration verification differences',
+  labelNames: ['object_type'],
+  registers: [metricsRegistry],
+});
+
 new Gauge({
   name: 'compliance_database_pool_connections',
   help: 'Database pool connections',

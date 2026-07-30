@@ -18,6 +18,11 @@ import roleRoutes from './role.routes';
 import tenantRoutes from './tenant.routes';
 import departmentRoutes from './department.routes';
 import qualificationRoutes from './qualification.routes';
+import assetRoutes from './asset.routes';
+import assessmentScopeRoutes from './assessment-scope.routes';
+import evaluationRoutes from './evaluation.routes';
+import remediationRoutes from './remediation.routes';
+import assessmentPlanRoutes from './assessment-plan.routes';
 import { authenticate } from '../middlewares/auth';
 import { requireTenantContext } from '../middlewares/tenant';
 
@@ -30,6 +35,10 @@ export function registerRoutes(app: Application): void {
   app.use('/api/members', memberRoutes);
   app.use('/api/templates', templateRoutes);
   app.use('/api/tasks', taskRoutes);
+  app.use('/api/tasks', assessmentScopeRoutes);
+  app.use('/api/evaluations', evaluationRoutes);
+  app.use('/api/remediation-actions', remediationRoutes);
+  app.use('/api/assessment-plans', assessmentPlanRoutes);
   app.use('/api', questionnaireRoutes);
   app.use('/api/review', reviewRoutes);
   app.use('/api/risks', riskRoutes);
@@ -44,4 +53,5 @@ export function registerRoutes(app: Application): void {
   app.use('/api/roles', roleRoutes);
   app.use('/api/departments', departmentRoutes);
   app.use('/api/qualifications', qualificationRoutes);
+  app.use('/api/assets', assetRoutes);
 }
