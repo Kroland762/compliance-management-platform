@@ -5,7 +5,9 @@ interface Attributes {
   id: string;
   tenantId: string;
   tenantSchema: string;
-  taskId: string;
+  taskId: string | null;
+  resourceType: 'account_audit' | 'assessment_plan';
+  resourceId: string;
   cronExpression: string;
   enabled: boolean;
   workerId: string | null;
@@ -18,13 +20,18 @@ interface Attributes {
   updatedAt: Date;
 }
 
-type CreationAttributes = Optional<Attributes, 'id' | 'enabled' | 'workerId' | 'leasedUntil' | 'heartbeatAt' | 'lastRunAt' | 'lastOutcome' | 'consecutiveFailures' | 'createdAt' | 'updatedAt'>;
+type CreationAttributes = Optional<Attributes,
+  'id' | 'taskId' | 'resourceType' | 'enabled' | 'workerId' | 'leasedUntil' |
+  'heartbeatAt' | 'lastRunAt' | 'lastOutcome' | 'consecutiveFailures' |
+  'createdAt' | 'updatedAt'>;
 
 class TaskSchedule extends Model<Attributes, CreationAttributes> implements Attributes {
   declare id: string;
   declare tenantId: string;
   declare tenantSchema: string;
-  declare taskId: string;
+  declare taskId: string | null;
+  declare resourceType: 'account_audit' | 'assessment_plan';
+  declare resourceId: string;
   declare cronExpression: string;
   declare enabled: boolean;
   declare workerId: string | null;
@@ -41,7 +48,9 @@ TaskSchedule.init({
   id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
   tenantId: { type: DataTypes.UUID, allowNull: false },
   tenantSchema: { type: DataTypes.STRING(63), allowNull: false },
-  taskId: { type: DataTypes.UUID, allowNull: false },
+  taskId: { type: DataTypes.UUID, allowNull: true },
+  resourceType: { type: DataTypes.STRING(30), allowNull: false, defaultValue: 'account_audit' },
+  resourceId: { type: DataTypes.UUID, allowNull: false },
   cronExpression: { type: DataTypes.STRING(120), allowNull: false },
   enabled: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
   workerId: { type: DataTypes.STRING(120), allowNull: true },
@@ -58,7 +67,7 @@ TaskSchedule.init({
   schema: 'public',
   timestamps: true,
   indexes: [
-    { unique: true, fields: ['tenantId', 'taskId'] },
+    { unique: true, fields: ['tenantId', 'resourceType', 'resourceId'] },
     { fields: ['enabled', 'leasedUntil'] },
   ],
 });

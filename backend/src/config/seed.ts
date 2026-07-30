@@ -8,9 +8,13 @@ export const ADMIN_PERMISSIONS: PermissionMatrix = {
   tenants: ['create', 'read', 'update', 'delete'],
   users: ['create', 'read', 'update', 'delete'],
   templates: ['create', 'read', 'update', 'delete'],
+  assets: ['create', 'read', 'update', 'archive'],
   qualifications: ['create', 'read', 'update', 'delete'],
-  tasks: ['create', 'read', 'update', 'delete', 'submit', 'return'],
-  risks: ['read', 'update'],
+  tasks: ['create', 'read', 'update', 'delete', 'submit', 'return', 'publish', 'cancel'],
+  evaluations: ['read', 'answer', 'submit', 'review'],
+  risks: ['create', 'read', 'update', 'confirm', 'assign', 'accept', 'verify', 'close', 'export'],
+  remediation_actions: ['create', 'read', 'update', 'submit', 'verify', 'link'],
+  assessment_plans: ['create', 'read', 'update', 'delete', 'execute'],
   audit_logs: ['read', 'export'],
   notifications: ['read', 'update'],
   export: ['create'],
@@ -26,9 +30,13 @@ export const ADMIN_PERMISSIONS: PermissionMatrix = {
 
 export const AUDITOR_PERMISSIONS: PermissionMatrix = {
   templates: ['read'],
+  assets: ['read'],
   qualifications: ['create', 'read', 'update'],
-  tasks: ['create', 'read', 'update', 'submit', 'return'],
-  risks: ['read', 'update'],
+  tasks: ['create', 'read', 'update', 'submit', 'return', 'publish'],
+  evaluations: ['read', 'answer', 'submit', 'review'],
+  risks: ['create', 'read', 'update', 'confirm', 'assign', 'accept', 'verify', 'close', 'export'],
+  remediation_actions: ['create', 'read', 'update', 'submit', 'verify', 'link'],
+  assessment_plans: ['create', 'read', 'update', 'execute'],
   notifications: ['read', 'update'],
   export: ['create'],
   settings: ['read'],
@@ -42,7 +50,11 @@ export const AUDITOR_PERMISSIONS: PermissionMatrix = {
 };
 
 export const USER_PERMISSIONS: PermissionMatrix = {
+  assets: ['read'],
   tasks: ['read', 'update', 'submit'],
+  evaluations: ['read', 'answer', 'submit'],
+  risks: ['read'],
+  remediation_actions: ['read', 'update', 'submit'],
   notifications: ['read', 'update'],
   settings: ['read'],
   dashboard: ['read'],
