@@ -36,6 +36,7 @@ import {
   RiskActionLink,
   AssessmentPlan,
   AssessmentPlanExecution,
+  IdempotencyRecord,
 } from '../../models';
 import {
   AccountAuditTask,
@@ -74,6 +75,7 @@ const tenantModels = [
   EvidenceFile,
   AssessmentPlan,
   AssessmentPlanExecution,
+  IdempotencyRecord,
   Notification,
   AuditLog,
   Qualification,
@@ -890,6 +892,83 @@ const migrations: Migration[] = [
         ADD COLUMN IF NOT EXISTS "remediationMeasures" varchar(500),
         ADD COLUMN IF NOT EXISTS "remediationStatus" varchar(30),
         ADD COLUMN IF NOT EXISTS "riskStatus" varchar(30)`, { transaction });
+    },
+  },
+  {
+    id: '009_relationship_graph_hardening',
+    scope: 'tenant',
+    description: 'Add durable API idempotency records for relationship graph commands',
+    checksumSource: 'tenant:v3:relationship-graph-idempotency-records:nullable-notification-task:structured-audit:partial-legacy-safe',
+    up: async (schemaName, transaction) => {
+      await runWithTenantContext({ schema: schemaName, tenantId: null }, async () => {
+        await IdempotencyRecord.schema(schemaName).sync({ transaction } as any);
+      });
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      const tables = await sequelize.query<{ table_name: string }>(
+        `SELECT table_name FROM information_schema.tables
+          WHERE table_schema = :schemaName
+            AND table_name IN ('notifications', 'audit_logs', 'question_items')`,
+        { replacements: { schemaName }, type: QueryTypes.SELECT, transaction },
+      );
+      const present = new Set(tables.map((row) => row.table_name));
+      if (present.has('notifications')) {
+        await sequelize.query(`ALTER TABLE ${quoted}.notifications
+          ALTER COLUMN "taskId" DROP NOT NULL`, { transaction });
+      }
+      if (present.has('audit_logs')) {
+        await sequelize.query(`ALTER TABLE ${quoted}.audit_logs
+          ADD COLUMN IF NOT EXISTS "eventType" varchar(120) NOT NULL DEFAULT 'legacy.operation',
+          ADD COLUMN IF NOT EXISTS "requestId" uuid,
+          ADD COLUMN IF NOT EXISTS "memberId" uuid,
+          ADD COLUMN IF NOT EXISTS "relatedResourceIds" jsonb NOT NULL DEFAULT '{}'::jsonb,
+          ADD COLUMN IF NOT EXISTS result varchar(20) NOT NULL DEFAULT 'success',
+          ADD COLUMN IF NOT EXISTS "reasonCode" varchar(80),
+          ADD COLUMN IF NOT EXISTS "durationMs" integer,
+          ADD COLUMN IF NOT EXISTS "departmentIdSnapshot" uuid`, { transaction });
+        await sequelize.query(`UPDATE ${quoted}.audit_logs
+          SET "eventType" = "resourceType" || '.' || "operationType",
+              result = CASE WHEN success THEN 'success' ELSE 'failure' END,
+              "departmentIdSnapshot" = "departmentId"
+          WHERE "eventType" = 'legacy.operation'
+             OR "departmentIdSnapshot" IS NULL`, { transaction });
+      }
+      if (present.has('question_items')) {
+        await sequelize.query(`ALTER TABLE ${quoted}.question_items
+          ALTER COLUMN "currentStatusDescription" TYPE text`, { transaction });
+      }
+    },
+    down: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      const tables = await sequelize.query<{ table_name: string }>(
+        `SELECT table_name FROM information_schema.tables
+          WHERE table_schema = :schemaName
+            AND table_name IN ('notifications', 'audit_logs')`,
+        { replacements: { schemaName }, type: QueryTypes.SELECT, transaction },
+      );
+      const present = new Set(tables.map((row) => row.table_name));
+      if (present.has('notifications')) {
+        const nullNotifications = await sequelize.query<{ count: number }>(
+          `SELECT count(*)::int AS count FROM ${quoted}.notifications WHERE "taskId" IS NULL`,
+          { type: QueryTypes.SELECT, transaction },
+        );
+        if (Number(nullNotifications[0]?.count || 0) > 0) {
+          throw new Error('存在不关联评估任务的通知，不能回滚关系图加固迁移');
+        }
+        await sequelize.query(`ALTER TABLE ${quoted}.notifications
+          ALTER COLUMN "taskId" SET NOT NULL`, { transaction });
+      }
+      if (present.has('audit_logs')) {
+        await sequelize.query(`ALTER TABLE ${quoted}.audit_logs
+          DROP COLUMN IF EXISTS "departmentIdSnapshot",
+          DROP COLUMN IF EXISTS "durationMs",
+          DROP COLUMN IF EXISTS "reasonCode",
+          DROP COLUMN IF EXISTS result,
+          DROP COLUMN IF EXISTS "relatedResourceIds",
+          DROP COLUMN IF EXISTS "memberId",
+          DROP COLUMN IF EXISTS "requestId",
+          DROP COLUMN IF EXISTS "eventType"`, { transaction });
+      }
+      await sequelize.query(`DROP TABLE IF EXISTS ${quoted}.idempotency_records`, { transaction });
     },
   },
 ];

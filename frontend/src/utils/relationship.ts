@@ -22,7 +22,12 @@ export function buildControlAssetMatrix(
     controlPoint: control.controlPoint,
     assetName: asset.name,
     responsibleDepartmentId,
+    enabled: true,
   })));
+}
+
+export function enabledMatrixRows<T extends { enabled?: boolean }>(rows: T[]): T[] {
+  return rows.filter((row) => row.enabled !== false);
 }
 
 export function canCloseRisk(actionLinks: Array<{

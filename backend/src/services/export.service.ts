@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs';
-import { Op } from 'sequelize';
+import { Op, type WhereOptions } from 'sequelize';
 import {
   Asset,
   AuditTask,
@@ -74,11 +74,31 @@ class ExportService {
     return Buffer.from(await workbook.xlsx.writeBuffer());
   }
 
-  async exportRisks(filters: Record<string, unknown>, taskIds: string[] | null): Promise<Buffer> {
-    const where: any = { ...filters };
-    if (taskIds) where.taskId = { [Op.in]: taskIds };
+  async exportRisks(
+    filters: Record<string, unknown>,
+    riskAccessWhere: WhereOptions,
+    metadata: { tenantName: string; exportedBy: string },
+  ): Promise<Buffer> {
+    const where: any = { ...(riskAccessWhere as object) };
+    if (filters.status) where.status = filters.status;
+    if (filters.riskLevel) where.riskLevel = filters.riskLevel;
+    if (filters.treatmentStrategy) where.treatmentStrategy = filters.treatmentStrategy;
+    if (filters.ownerDepartmentId) where.ownerDepartmentId = filters.ownerDepartmentId;
+    if (filters.keyword) {
+      where[Op.or] = [
+        { code: { [Op.iLike]: `%${filters.keyword}%` } },
+        { title: { [Op.iLike]: `%${filters.keyword}%` } },
+      ];
+    }
     const risks = await RiskRecord.findAll({ where, order: [['identifiedAt', 'DESC']] });
     const riskIds = risks.map((risk) => risk.id);
+    const taskIds = [...new Set(risks.map((risk) => risk.taskId))];
+    const tasks = taskIds.length
+      ? await AuditTask.findAll({
+        where: { id: { [Op.in]: taskIds } },
+        include: [{ association: 'template', attributes: ['name'] }],
+      })
+      : [];
     const [sources, impacts, links] = riskIds.length ? await Promise.all([
       RiskSource.findAll({
         where: { riskId: { [Op.in]: riskIds } },
@@ -109,6 +129,21 @@ class ExportService {
     });
 
     const workbook = new ExcelJS.Workbook();
+    workbook.creator = metadata.exportedBy;
+    workbook.created = new Date();
+    const metadataSheet = workbook.addWorksheet('报告信息');
+    metadataSheet.addRows([
+      ['租户', metadata.tenantName],
+      ['导出时间', new Date().toISOString()],
+      ['导出人', metadata.exportedBy],
+      ['风险数量', risks.length],
+      ['涉及标准', [...new Set(tasks.map((task: any) => task.template?.name).filter(Boolean))].join('、') || '—'],
+      ['评估周期', tasks.map((task) =>
+        `${task.name || task.assessmentTarget}: ${task.periodStart || '—'} 至 ${task.periodEnd || '—'}`).join('\n') || '—'],
+      ['包含单人自审', (links as RiskActionLink[]).some((link) => link.selfReview) ? '是' : '否'],
+    ]);
+    metadataSheet.getColumn(1).width = 20;
+    metadataSheet.getColumn(2).width = 80;
     const riskSheet = workbook.addWorksheet('风险');
     riskSheet.columns = [
       { header: '风险编号', key: 'code', width: 22 },

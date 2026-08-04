@@ -118,6 +118,7 @@ export enum NotificationType {
   TASK_RETURNED = 'task_returned',
   TASK_SUBMITTED = 'task_submitted',
   RISK_ASSIGNED = 'risk_assigned',
+  RISK_REVIEW_DUE = 'risk_review_due',
   REMEDIATION_ASSIGNED = 'remediation_assigned',
   REMEDIATION_SUBMITTED = 'remediation_submitted',
   REMEDIATION_REJECTED = 'remediation_rejected',

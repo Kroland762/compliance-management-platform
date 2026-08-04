@@ -64,7 +64,7 @@ export class CronSchedulerService {
   }
 
   async registerResourceJob(
-    resourceType: 'assessment_plan',
+    resourceType: 'assessment_plan' | 'risk_review',
     resourceId: string,
     cronExpression: string,
   ): Promise<void> {
@@ -84,7 +84,7 @@ export class CronSchedulerService {
     this.startLocalJob(schedule);
   }
 
-  async unregisterResourceJob(resourceType: 'assessment_plan', resourceId: string): Promise<void> {
+  async unregisterResourceJob(resourceType: 'assessment_plan' | 'risk_review', resourceId: string): Promise<void> {
     const context = getTenantStore();
     const where: any = { resourceType, resourceId };
     if (context?.tenantId) where.tenantId = context.tenantId;
@@ -112,7 +112,7 @@ export class CronSchedulerService {
     this.jobs.get(schedule.id)?.stop();
     const job = cron.schedule(schedule.cronExpression, () => {
       void this.claimAndExecute(schedule.id);
-    }, { timezone: 'Asia/Shanghai' });
+    }, { timezone: config.businessTimeZone });
     this.jobs.set(schedule.id, job);
   }
 
@@ -161,6 +161,10 @@ export class CronSchedulerService {
             const assessmentPlanService = (await import('../assessment-plan.service')).default;
             return assessmentPlanService.executeScheduled(schedule.resourceId, idempotencyKey, this.workerId);
           }
+          if (schedule.resourceType === 'risk_review') {
+            const riskDomainService = (await import('../risk-domain.service')).default;
+            return riskDomainService.sendAcceptedRiskReviewReminder(schedule.resourceId);
+          }
           return auditTaskService.executeTaskScheduled(schedule.resourceId, idempotencyKey, this.workerId);
         },
       );
@@ -172,11 +176,17 @@ export class CronSchedulerService {
         timeout.unref();
       });
       try {
-        await Promise.race([execution, timeoutFailure]);
+        const outcome: any = await Promise.race([execution, timeoutFailure]);
+        if (outcome?.disableSchedule) {
+          schedule.enabled = false;
+          this.jobs.get(schedule.id)?.stop();
+          this.jobs.delete(schedule.id);
+        }
       } finally {
         if (timeout) clearTimeout(timeout);
       }
       await schedule.update({
+        enabled: schedule.enabled,
         lastRunAt: new Date(),
         lastOutcome: 'success',
         consecutiveFailures: 0,

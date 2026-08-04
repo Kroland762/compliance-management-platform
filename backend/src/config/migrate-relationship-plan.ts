@@ -9,6 +9,7 @@ import {
   Asset,
   AssessmentAsset,
   AuditTask,
+  EvidenceFile,
   QuestionItem,
   RemediationAction,
   RiskActionLink,
@@ -118,12 +119,10 @@ async function buildPlan(): Promise<Record<string, unknown>> {
        ORDER BY risk.id`,
       { type: QueryTypes.SELECT },
     );
-    const evidenceCounts = await sequelize.query(
-      `SELECT "questionItemId", count(*)::int AS count
+    const evidenceReferences = await sequelize.query(
+      `SELECT id, "questionItemId", "remediationActionId", sha256, status
        FROM ${quoted}.evidence_files
-       WHERE "questionItemId" IS NOT NULL
-       GROUP BY "questionItemId"
-       ORDER BY "questionItemId"`,
+       ORDER BY id`,
       { type: QueryTypes.SELECT },
     );
     output.tenants[tenant.id] = {
@@ -131,13 +130,17 @@ async function buildPlan(): Promise<Record<string, unknown>> {
       graphTablesPresent: hasGraph,
       tasks,
       risks,
-      evidenceCounts,
+      evidenceReferences,
       counts: {
         tasks: tasks.length,
         risks: risks.length,
-        evidenceRelations: evidenceCounts.length,
+        evidenceReferences: evidenceReferences.length,
       },
-      hash: stableHash({ tasks, risks, evidenceCounts }),
+      hashes: {
+        tasks: stableHash(tasks),
+        risks: stableHash(risks),
+        evidenceReferences: stableHash(evidenceReferences),
+      },
     };
   }
   return output;
@@ -176,12 +179,79 @@ async function nextCode(schemaName: string, sequence: string, prefix: string, tr
   return rows[0].value;
 }
 
+async function graphSnapshot(transaction: Transaction): Promise<Record<string, unknown>> {
+  const [
+    tasks,
+    evaluations,
+    risks,
+    riskSources,
+    affectedAssets,
+    actions,
+    actionLinks,
+    evidenceReferences,
+  ] = await Promise.all([
+    AuditTask.findAll({ attributes: ['id'], order: [['id', 'ASC']], raw: true, transaction }),
+    QuestionItem.findAll({
+      attributes: ['id', 'taskId', 'templateQuestionId', 'assetId', 'responsibleDepartmentId'],
+      order: [['id', 'ASC']],
+      raw: true,
+      transaction,
+    }),
+    RiskRecord.findAll({ attributes: ['id', 'taskId'], order: [['id', 'ASC']], raw: true, transaction }),
+    RiskSource.findAll({
+      attributes: ['riskId', 'controlEvaluationId', 'relationType'],
+      order: [['riskId', 'ASC'], ['controlEvaluationId', 'ASC']],
+      raw: true,
+      transaction,
+    }),
+    RiskAffectedAsset.findAll({
+      attributes: ['riskId', 'assetId'],
+      order: [['riskId', 'ASC'], ['assetId', 'ASC']],
+      raw: true,
+      transaction,
+    }),
+    RemediationAction.findAll({
+      attributes: ['id', 'code'],
+      order: [['id', 'ASC']],
+      raw: true,
+      transaction,
+    }),
+    RiskActionLink.findAll({
+      attributes: ['riskId', 'actionId', 'isRequired'],
+      order: [['riskId', 'ASC'], ['actionId', 'ASC']],
+      raw: true,
+      transaction,
+    }),
+    EvidenceFile.findAll({
+      attributes: ['id', 'questionItemId', 'remediationActionId', 'sha256', 'status'],
+      order: [['id', 'ASC']],
+      raw: true,
+      transaction,
+    }),
+  ]);
+  const rows = {
+    tasks,
+    evaluations,
+    risks,
+    riskSources,
+    affectedAssets,
+    actions,
+    actionLinks,
+    evidenceReferences,
+  };
+  return {
+    counts: Object.fromEntries(Object.entries(rows).map(([name, values]) => [name, values.length])),
+    hashes: Object.fromEntries(Object.entries(rows).map(([name, values]) => [name, stableHash(values)])),
+  };
+}
+
 async function applyTenantMapping(tenantId: string, mapping: TenantMapping): Promise<Record<string, unknown>> {
   const tenant = await Tenant.findByPk(tenantId);
   if (!tenant) throw new Error(`映射包含不存在的租户: ${tenantId}`);
   return runWithTenantContext(
     { schema: tenant.schemaName, tenantId },
     () => sequelize.transaction(async (transaction) => {
+      const before = await graphSnapshot(transaction);
       for (const [taskId, taskMapping] of Object.entries(mapping.tasks || {})) {
         const task = await AuditTask.findByPk(taskId, { transaction });
         if (!task) throw new Error(`租户 ${tenantId} 找不到任务 ${taskId}`);
@@ -298,15 +368,25 @@ async function applyTenantMapping(tenantId: string, mapping: TenantMapping): Pro
         }
       }
 
-      const counts = {
-        evaluations: await QuestionItem.count({ transaction }),
-        risks: await RiskRecord.count({ transaction }),
-        riskSources: await RiskSource.count({ transaction }),
-        affectedAssets: await RiskAffectedAsset.count({ transaction }),
-        actions: await RemediationAction.count({ transaction }),
-        actionLinks: await RiskActionLink.count({ transaction }),
-      };
-      return { tenantId, counts, hash: stableHash(counts) };
+      const after = await graphSnapshot(transaction);
+      const beforeCounts = before.counts as Record<string, number>;
+      const afterCounts = after.counts as Record<string, number>;
+      for (const invariant of ['tasks', 'evaluations', 'risks', 'evidenceReferences']) {
+        if (beforeCounts[invariant] !== afterCounts[invariant]) {
+          throw new Error(
+            `租户 ${tenantId} 的 ${invariant} 数量在迁移前后不一致：`
+            + `${beforeCounts[invariant]} -> ${afterCounts[invariant]}`,
+          );
+        }
+      }
+      const beforeHashes = before.hashes as Record<string, string>;
+      const afterHashes = after.hashes as Record<string, string>;
+      for (const invariant of ['tasks', 'risks', 'evidenceReferences']) {
+        if (beforeHashes[invariant] !== afterHashes[invariant]) {
+          throw new Error(`租户 ${tenantId} 的 ${invariant} 引用摘要在迁移前后不一致`);
+        }
+      }
+      return { tenantId, before, after };
     }),
   );
 }

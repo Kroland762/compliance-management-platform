@@ -209,14 +209,36 @@ class ObjectAccessService {
     return { ownerUserId: user.userId };
   }
 
+  async accessibleRiskIds(user: RequestUser, action = 'read'): Promise<string[] | null> {
+    if (this.scope(user, 'risks', action) === 'all') return null;
+    const risks = await RiskRecord.findAll({
+      where: await this.riskScope(user, action),
+      attributes: ['id'],
+      raw: true,
+    });
+    return risks.map((risk: any) => risk.id);
+  }
+
   async remediationScope(user: RequestUser, action = 'read'): Promise<WhereOptions> {
     const scope = this.scope(user, 'remediation_actions', action);
     if (scope === 'all') return {};
+    const visibleRiskIds = await this.accessibleRiskIds(user, 'read');
+    const linkedActionIds = (await RiskActionLink.findAll({
+      where: visibleRiskIds === null ? {} : { riskId: { [Op.in]: visibleRiskIds } },
+      attributes: ['actionId'],
+      group: ['actionId'],
+      raw: true,
+    })).map((link: any) => link.actionId);
+    const linked = { id: { [Op.in]: linkedActionIds } };
     if (scope === 'department' || scope === 'department_tree') {
-      return { ownerDepartmentId: { [Op.in]: await this.departmentIds(user, scope) } };
+      return {
+        [Op.or]: [
+          { ownerDepartmentId: { [Op.in]: await this.departmentIds(user, scope) } },
+          linked,
+        ],
+      };
     }
-    if (scope === 'assigned' || scope === 'self') return { ownerUserId: user.userId };
-    return { ownerUserId: user.userId };
+    return { [Op.or]: [{ ownerUserId: user.userId }, linked] };
   }
 
   async remediationOrNotFound(id: string, user: RequestUser, action = 'read'): Promise<RemediationAction> {
@@ -233,7 +255,7 @@ class ObjectAccessService {
     user: RequestUser,
     action = 'read',
   ): Promise<RiskActionLink> {
-    await this.riskOrNotFound(riskId, user, action === 'verify' ? 'close' : 'read');
+    await this.riskOrNotFound(riskId, user, action === 'verify' ? 'verify' : 'read');
     const link = await RiskActionLink.findOne({ where: { riskId, actionId } });
     if (!link) throw new AppError(404, 'NOT_FOUND', '风险整改关联不存在');
     return link;

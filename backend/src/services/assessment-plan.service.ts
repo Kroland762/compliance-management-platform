@@ -1,5 +1,5 @@
 import cron from 'node-cron';
-import { Op } from 'sequelize';
+import { Op, QueryTypes } from 'sequelize';
 import sequelize from '../config/database';
 import {
   Asset,
@@ -127,17 +127,34 @@ class AssessmentPlanService {
   }
 
   async executeScheduled(planId: string, idempotencyKey: string, workerId: string) {
-    const existing = await AssessmentPlanExecution.findOne({ where: { idempotencyKey } });
-    if (existing) return existing;
     const plan = await AssessmentPlan.findByPk(planId);
     if (!plan || !plan.enabled) throw new AppError(404, 'NOT_FOUND', '周期评估计划不存在或已停用');
-    const execution = await AssessmentPlanExecution.create({
-      planId,
-      triggerTime: new Date(),
-      idempotencyKey,
-      workerId,
-      status: AssessmentPlanExecutionStatus.RUNNING,
+    const reservation = await sequelize.transaction(async (transaction) => {
+      await sequelize.query(
+        'SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))',
+        {
+          replacements: { key: `assessment-plan:${idempotencyKey}` },
+          type: QueryTypes.SELECT,
+          transaction,
+        },
+      );
+      const existing = await AssessmentPlanExecution.findOne({
+        where: { idempotencyKey },
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (existing) return { execution: existing, replayed: true };
+      const execution = await AssessmentPlanExecution.create({
+        planId,
+        triggerTime: new Date(),
+        idempotencyKey,
+        workerId,
+        status: AssessmentPlanExecutionStatus.RUNNING,
+      }, { transaction });
+      return { execution, replayed: false };
     });
+    if (reservation.replayed) return reservation.execution;
+    const execution = reservation.execution;
     try {
       const assetIds = plan.scopeSnapshot.map((entry: any) => entry.assetId);
       const activeCount = await Asset.count({ where: { id: { [Op.in]: assetIds }, status: 'active' } });
@@ -148,7 +165,7 @@ class AssessmentPlanService {
         });
         await notificationService.create({
           userId: plan.createdBy,
-          taskId: await this.notificationTaskFallback(),
+          taskId: null,
           type: NotificationType.ASSESSMENT_PLAN_ATTENTION,
           title: '周期评估计划需要处理',
           content: `${plan.name} 的资产范围已变化，请更新计划快照`,
@@ -178,12 +195,18 @@ class AssessmentPlanService {
       });
       await assessmentScopeService.replaceAssets(task.id, assetIds, internalUser);
       await assessmentScopeService.replaceMatrix(task.id, plan.matrixSnapshot as any, internalUser);
-      await assessmentScopeService.publish(task.id, internalUser);
       await execution.update({
         taskId: task.id,
         status: AssessmentPlanExecutionStatus.SUCCESS,
         errorMessage: null,
       });
+      await notificationService.create({
+        userId: plan.createdBy,
+        taskId: task.id,
+        type: NotificationType.TASK_ASSIGNED,
+        title: '周期评估草稿已创建',
+        content: `${plan.name} 已按快照创建草稿，请确认范围和人员后发布`,
+      }).catch(() => undefined);
       return execution;
     } catch (error) {
       await execution.update({
@@ -192,15 +215,6 @@ class AssessmentPlanService {
       });
       throw error;
     }
-  }
-
-  private async notificationTaskFallback(): Promise<string> {
-    const [row] = await sequelize.query<{ id: string }>(
-      'SELECT id FROM audit_tasks ORDER BY "createdAt" DESC LIMIT 1',
-      { type: 'SELECT' as any },
-    );
-    if (!row) throw new Error('没有可用于通知关联的评估');
-    return row.id;
   }
 }
 

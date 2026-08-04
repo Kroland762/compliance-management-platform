@@ -21,6 +21,8 @@ import { status as migrationStatus } from './config/migrations/runner';
 import Tenant from './models/Tenant';
 import logger from './services/logger.service';
 import { registerRoutes } from './routes';
+import { fileStorage } from './services/file-storage.service';
+import idempotencyService from './services/idempotency.service';
 
 const INSECURE_JWT_SECRETS = new Set([
   'change-this-to-a-random-32-char-string',
@@ -96,8 +98,15 @@ export function createApp(): express.Application {
       const states = await migrationStatus();
       const invalid = states.filter((item) => !item.applied || item.checksumValid === false);
       const scheduler = cronSchedulerService.status();
-      if (invalid.length || !scheduler.healthy) {
-        res.status(503).json({ status: 'not_ready', database: 'connected', migrations: invalid, scheduler });
+      const storageWritable = await fileStorage.isWritable();
+      if (invalid.length || !scheduler.healthy || !storageWritable) {
+        res.status(503).json({
+          status: 'not_ready',
+          database: 'connected',
+          migrations: invalid,
+          scheduler,
+          storage: { writable: storageWritable },
+        });
         return;
       }
       res.json({
@@ -105,6 +114,7 @@ export function createApp(): express.Application {
         database: 'connected',
         migrations: { applied: states.length, registry: migrations.map((item) => ({ id: item.id, checksum: migrationChecksum(item) })) },
         scheduler,
+        storage: { writable: storageWritable },
       });
     } catch {
       res.status(503).json({ status: 'not_ready', database: 'disconnected' });
@@ -139,7 +149,10 @@ export async function start(): Promise<void> {
     for (const tenant of tenants) {
       await runWithTenantContext(
         { schema: tenant.schemaName, tenantId: tenant.id },
-        () => auditLogService.cleanupExpired(),
+        async () => {
+          await auditLogService.cleanupExpired();
+          await idempotencyService.cleanupExpired();
+        },
       ).catch((error) => logger.error('audit_cleanup_failed', { tenantId: tenant.id, message: String(error) }));
     }
   });

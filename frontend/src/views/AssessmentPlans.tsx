@@ -51,7 +51,9 @@ export default function AssessmentPlans() {
   const trigger = async (id: string) => {
     try {
       const response: any = await apiClient.post(`/assessment-plans/${id}/trigger`);
-      message.success(response.data?.status === 'requires_attention' ? '计划需要处理资产变化' : '已生成新的评估');
+      message.success(response.data?.status === 'requires_attention'
+        ? '计划需要处理资产变化'
+        : '已生成评估草稿，请确认范围和人员后发布');
       load();
     } catch (error) {
       message.error(getApiErrorMessage(error, '触发失败'));

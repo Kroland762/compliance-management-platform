@@ -8,6 +8,9 @@ import { AppError } from '../utils/http';
 export interface TenantStore {
   schema: string;
   tenantId: string | null;
+  requestId?: string | null;
+  userId?: string | null;
+  memberId?: string | null;
 }
 const tenantAls = new AsyncLocalStorage<TenantStore>();
 
@@ -102,7 +105,13 @@ export function enterResolvedTenant(
   next: NextFunction,
 ): void {
   if (!tenant) {
-    runWithTenantContext({ schema: 'public', tenantId: null }, next);
+    runWithTenantContext({
+      schema: 'public',
+      tenantId: null,
+      requestId: req.requestId || null,
+      userId: req.user?.userId || null,
+      memberId: req.user?.memberId || null,
+    }, next);
     return;
   }
   req.tenant = {
@@ -111,7 +120,13 @@ export function enterResolvedTenant(
     slug: tenant.slug,
     schemaName: tenant.schemaName,
   };
-  runWithTenantContext({ schema: tenant.schemaName, tenantId: tenant.id }, next);
+  runWithTenantContext({
+    schema: tenant.schemaName,
+    tenantId: tenant.id,
+    requestId: req.requestId || null,
+    userId: req.user?.userId || null,
+    memberId: req.user?.memberId || null,
+  }, next);
 }
 
 export function requireTenantContext(req: Request, _res: Response, next: NextFunction): void {

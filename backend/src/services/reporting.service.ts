@@ -46,11 +46,14 @@ class ReportingService {
       ? await objectAccessService.qualificationScope(user)
       : null;
     const openStatuses = [
-      RiskLifecycleStatus.PENDING_CONFIRMATION,
       RiskLifecycleStatus.OPEN,
       RiskLifecycleStatus.REMEDIATING,
       RiskLifecycleStatus.PENDING_VERIFICATION,
     ];
+    const activeRiskWhere = {
+      ...(riskWhere as object),
+      status: { [Op.ne]: RiskLifecycleStatus.CANCELLED },
+    };
     const sixMonthsAgo = new Date();
     sixMonthsAgo.setDate(1);
     sixMonthsAgo.setHours(0, 0, 0, 0);
@@ -70,7 +73,7 @@ class ReportingService {
       closedTrendRows,
     ] = await Promise.all([
       can('risks', 'read') ? RiskRecord.findAll({
-        where: riskWhere,
+        where: activeRiskWhere,
         attributes: [
           'riskLevel',
           [RiskRecord.sequelize!.fn('COUNT', RiskRecord.sequelize!.col('id')), 'count'],
@@ -78,9 +81,9 @@ class ReportingService {
         group: ['riskLevel'],
         raw: true,
       }) : [],
-      can('risks', 'read') ? RiskRecord.count({ where: riskWhere }) : 0,
+      can('risks', 'read') ? RiskRecord.count({ where: activeRiskWhere }) : 0,
       can('risks', 'read') ? RiskRecord.count({
-        where: { ...(riskWhere as object), riskLevel: { [Op.in]: ['high', 'critical'] } },
+        where: { ...activeRiskWhere, riskLevel: { [Op.in]: ['high', 'critical'] } },
       }) : 0,
       can('risks', 'read') ? RiskRecord.count({
         where: { ...(riskWhere as object), status: { [Op.in]: openStatuses } },
@@ -117,16 +120,16 @@ class ReportingService {
         raw: true,
       }) : [],
       can('risks', 'read') ? RiskRecord.findAll({
-        where: { ...(riskWhere as object), identifiedAt: { [Op.gte]: sixMonthsAgo } },
+        where: { ...activeRiskWhere, confirmedAt: { [Op.gte]: sixMonthsAgo } },
         attributes: [
-          [RiskRecord.sequelize!.fn('to_char', RiskRecord.sequelize!.fn('date_trunc', 'month', RiskRecord.sequelize!.col('identifiedAt')), 'YYYY-MM'), 'month'],
+          [RiskRecord.sequelize!.fn('to_char', RiskRecord.sequelize!.fn('date_trunc', 'month', RiskRecord.sequelize!.col('confirmedAt')), 'YYYY-MM'), 'month'],
           [RiskRecord.sequelize!.fn('COUNT', RiskRecord.sequelize!.col('id')), 'count'],
         ],
-        group: [RiskRecord.sequelize!.fn('date_trunc', 'month', RiskRecord.sequelize!.col('identifiedAt'))],
+        group: [RiskRecord.sequelize!.fn('date_trunc', 'month', RiskRecord.sequelize!.col('confirmedAt'))],
         raw: true,
       }) : [],
       can('risks', 'read') ? RiskRecord.findAll({
-        where: { ...(riskWhere as object), closedAt: { [Op.gte]: sixMonthsAgo } },
+        where: { ...activeRiskWhere, closedAt: { [Op.gte]: sixMonthsAgo } },
         attributes: [
           [RiskRecord.sequelize!.fn('to_char', RiskRecord.sequelize!.fn('date_trunc', 'month', RiskRecord.sequelize!.col('closedAt')), 'YYYY-MM'), 'month'],
           [RiskRecord.sequelize!.fn('COUNT', RiskRecord.sequelize!.col('id')), 'count'],

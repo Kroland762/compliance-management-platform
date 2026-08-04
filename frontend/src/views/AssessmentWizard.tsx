@@ -1,9 +1,23 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, DatePicker, Form, Input, message, Select, Space, Steps, Table, Typography } from 'antd';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Alert,
+  Button,
+  Card,
+  Checkbox,
+  DatePicker,
+  Form,
+  Input,
+  message,
+  Select,
+  Space,
+  Steps,
+  Table,
+  Typography,
+} from 'antd';
 import { useNavigate } from 'react-router-dom';
 import apiClient from '../api/client';
 import { getApiErrorMessage } from '../utils/error';
-import { buildControlAssetMatrix } from '../utils/relationship';
+import { buildControlAssetMatrix, enabledMatrixRows } from '../utils/relationship';
 
 interface MatrixRow {
   key: string;
@@ -14,6 +28,7 @@ interface MatrixRow {
   assetName: string;
   assignedTo?: string;
   responsibleDepartmentId?: string;
+  enabled: boolean;
 }
 
 export default function AssessmentWizard() {
@@ -24,12 +39,38 @@ export default function AssessmentWizard() {
   const [templates, setTemplates] = useState<any[]>([]);
   const [template, setTemplate] = useState<any>();
   const [assets, setAssets] = useState<any[]>([]);
+  const [assetSearching, setAssetSearching] = useState(false);
   const [departments, setDepartments] = useState<any[]>([]);
   const [people, setPeople] = useState<any[]>([]);
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
   const [matrix, setMatrix] = useState<MatrixRow[]>([]);
   const [form] = Form.useForm();
+  const assetSearchTimer = useRef<ReturnType<typeof setTimeout>>();
   const templateId = Form.useWatch('templateId', form);
+
+  const mergeAssets = (incoming: any[]) => {
+    setAssets((existing) => {
+      const selected = existing.filter((asset) => selectedAssetIds.includes(asset.id));
+      const byId = new Map(incoming.map((asset) => [asset.id, asset]));
+      selected.forEach((asset) => byId.set(asset.id, asset));
+      return Array.from(byId.values());
+    });
+  };
+
+  const searchAssets = (keyword = '') => {
+    clearTimeout(assetSearchTimer.current);
+    assetSearchTimer.current = setTimeout(async () => {
+      setAssetSearching(true);
+      try {
+        const response: any = await apiClient.get('/assets', {
+          params: { pageSize: 100, status: 'active', keyword: keyword.trim() || undefined },
+        });
+        mergeAssets(response.data?.items || []);
+      } finally {
+        setAssetSearching(false);
+      }
+    }, keyword ? 250 : 0);
+  };
 
   useEffect(() => {
     Promise.all([
@@ -43,6 +84,7 @@ export default function AssessmentWizard() {
       setDepartments(d.data || []);
       setPeople(p.data || []);
     });
+    return () => clearTimeout(assetSearchTimer.current);
   }, []);
 
   useEffect(() => {
@@ -54,6 +96,7 @@ export default function AssessmentWizard() {
     () => assets.filter((asset) => selectedAssetIds.includes(asset.id)),
     [assets, selectedAssetIds],
   );
+  const activeMatrix = useMemo(() => enabledMatrixRows(matrix), [matrix]);
 
   const createDraft = async () => {
     const values = await form.validateFields(['templateId', 'name', 'departmentId', 'period']);
@@ -88,11 +131,12 @@ export default function AssessmentWizard() {
         await apiClient.put(`/tasks/${taskId}/assets`, { assetIds: selectedAssetIds });
         buildMatrix();
       } else if (current === 3) {
-        if (matrix.some((row) => !row.assignedTo || !row.responsibleDepartmentId)) {
+        if (!activeMatrix.length) throw new Error('至少启用一个控制项与资产组合');
+        if (activeMatrix.some((row) => !row.assignedTo || !row.responsibleDepartmentId)) {
           throw new Error('请为每个评估单元指定责任人和责任部门');
         }
         await apiClient.put(`/tasks/${taskId}/control-asset-matrix`, {
-          items: matrix.map(({ controlPointId, assetId, assignedTo, responsibleDepartmentId }) => ({
+          items: activeMatrix.map(({ controlPointId, assetId, assignedTo, responsibleDepartmentId }) => ({
             controlPointId, assetId, assignedTo, responsibleDepartmentId,
           })),
         });
@@ -109,7 +153,7 @@ export default function AssessmentWizard() {
     setLoading(true);
     try {
       await apiClient.post(`/tasks/${taskId}/publish`);
-      message.success(`评估已发布，共生成 ${matrix.length} 个评估单元`);
+      message.success(`评估已发布，共生成 ${activeMatrix.length} 个评估单元`);
       navigate(`/assessments/${taskId}/workbench`);
     } catch (error) {
       message.error(getApiErrorMessage(error, '发布失败'));
@@ -118,7 +162,11 @@ export default function AssessmentWizard() {
     }
   };
 
-  const updateMatrix = (key: string, field: 'assignedTo' | 'responsibleDepartmentId', value: string) => {
+  const updateMatrix = (
+    key: string,
+    field: 'assignedTo' | 'responsibleDepartmentId' | 'enabled',
+    value: string | boolean,
+  ) => {
     setMatrix((rows) => rows.map((row) => row.key === key ? { ...row, [field]: value } : row));
   };
 
@@ -140,10 +188,14 @@ export default function AssessmentWizard() {
     <Select
       key="assets"
       mode="multiple"
+      showSearch
       size="large"
       style={{ width: '100%' }}
       value={selectedAssetIds}
       onChange={setSelectedAssetIds}
+      onSearch={searchAssets}
+      filterOption={false}
+      loading={assetSearching}
       placeholder="选择本次评估涉及的资产"
       optionFilterProp="label"
       options={assets.map((asset) => ({
@@ -151,15 +203,39 @@ export default function AssessmentWizard() {
         label: `${asset.code} · ${asset.name}`,
       }))}
     />,
-    <Table
-      key="matrix"
-      rowKey="key"
-      size="small"
-      virtual
-      pagination={false}
-      scroll={{ x: 1200, y: 460 }}
-      dataSource={matrix}
-      columns={[
+    <Space key="matrix" direction="vertical" style={{ width: '100%' }}>
+      <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+        <Typography.Text>
+          已启用 {activeMatrix.length} / {matrix.length} 个组合；取消勾选可排除不适用于该资产的控制项。
+        </Typography.Text>
+        <Space>
+          <Button size="small" onClick={() => setMatrix((rows) => rows.map((row) => ({ ...row, enabled: true })))}>
+            全部启用
+          </Button>
+          <Button size="small" onClick={() => setMatrix((rows) => rows.map((row) => ({ ...row, enabled: false })))}>
+            全部排除
+          </Button>
+        </Space>
+      </Space>
+      <Table
+        rowKey="key"
+        size="small"
+        virtual
+        pagination={false}
+        scroll={{ x: 1260, y: 460 }}
+        dataSource={matrix}
+        columns={[
+        {
+          title: '评估',
+          width: 70,
+          render: (_, row) => (
+            <Checkbox
+              aria-label={`${row.sequenceNumber}-${row.assetName}`}
+              checked={row.enabled}
+              onChange={(event) => updateMatrix(row.key, 'enabled', event.target.checked)}
+            />
+          ),
+        },
         { title: '控制项', dataIndex: 'sequenceNumber', width: 100 },
         { title: '控制点', dataIndex: 'controlPoint', ellipsis: true },
         { title: '资产', dataIndex: 'assetName', width: 180 },
@@ -169,6 +245,7 @@ export default function AssessmentWizard() {
           render: (_, row) => (
             <Select
               value={row.responsibleDepartmentId}
+              disabled={!row.enabled}
               style={{ width: '100%' }}
               onChange={(value) => updateMatrix(row.key, 'responsibleDepartmentId', value)}
               options={departments.map((item) => ({ value: item.id, label: item.name }))}
@@ -181,6 +258,7 @@ export default function AssessmentWizard() {
           render: (_, row) => (
             <Select
               value={row.assignedTo}
+              disabled={!row.enabled}
               showSearch
               optionFilterProp="label"
               style={{ width: '100%' }}
@@ -189,14 +267,15 @@ export default function AssessmentWizard() {
             />
           ),
         },
-      ]}
-    />,
+        ]}
+      />
+    </Space>,
     <Alert
       key="preview"
       type="info"
       showIcon
       message="发布预览"
-      description={`将按 ${template?.templateQuestions?.length || 0} 个控制项与 ${selectedAssets.length} 个资产的矩阵，生成 ${matrix.length} 个独立评估单元。发布后范围与矩阵不可直接修改。`}
+      description={`已从 ${template?.templateQuestions?.length || 0} 个控制项 × ${selectedAssets.length} 个资产的候选矩阵中启用 ${activeMatrix.length} 个组合。发布后将生成相同数量的独立评估单元，范围与矩阵不可直接修改。`}
     />,
   ][current];
 

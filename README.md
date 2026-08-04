@@ -83,11 +83,14 @@ npm run migrate:relationship-plan   # 只读生成资产、风险来源和旧整
 npm run migrate:relationship-plan -- --apply --mapping=/absolute/path/relationship-map.json
 
 npm test
+BENCHMARK_CONFIRM=temporary-only npm run benchmark:vnext  # 仅限临时数据库
 cd ../frontend && npm test && npm run build
 ```
 
 迁移记录以 `(migration_id, schema_name)` 为主键并校验迁移内容；迁移器使用 PostgreSQL
 advisory lock 防止并发执行。`migrate:down` 只允许对最后一个迁移进行显式确认回滚。
+关系图写接口使用 `If-Match` 乐观锁；风险创建、整改提交和风险导出使用持久化
+`Idempotency-Key`，以支持安全重试和并发防重。
 
 运维、升级、备份恢复和故障排查见 [部署与升级指南](./部署与升级指南.md)。
 

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildControlAssetMatrix, canCloseRisk, uniquePrimaryCount } from './relationship';
+import {
+  buildControlAssetMatrix,
+  canCloseRisk,
+  enabledMatrixRows,
+  uniquePrimaryCount,
+} from './relationship';
 
 describe('vNext relationship graph helpers', () => {
   it('builds one evaluation for every selected control and asset pair', () => {
@@ -13,6 +18,23 @@ describe('vNext relationship graph helpers', () => {
     );
     expect(rows).toHaveLength(4);
     expect(uniquePrimaryCount(rows, (row) => `${row.controlPointId}:${row.assetId}`)).toBe(4);
+  });
+
+  it('supports a sparse matrix by excluding individual control-asset pairs', () => {
+    const rows = buildControlAssetMatrix(
+      [
+        { id: 'c1', sequenceNumber: 'A.1', controlPoint: '身份鉴别' },
+        { id: 'c2', sequenceNumber: 'A.2', controlPoint: '权限复核' },
+      ],
+      [
+        { id: 'a1', name: '应用' },
+        { id: 'a2', name: '数据库' },
+        { id: 'a3', name: '组织治理' },
+      ],
+      'department-1',
+    ).map((row, index) => ({ ...row, enabled: index < 4 }));
+    expect(rows).toHaveLength(6);
+    expect(enabledMatrixRows(rows)).toHaveLength(4);
   });
 
   it('requires every necessary link to be completed and approved before closing', () => {

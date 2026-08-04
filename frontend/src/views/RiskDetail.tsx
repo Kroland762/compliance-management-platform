@@ -17,7 +17,9 @@ export default function RiskDetail() {
 
   const action = async (path: string, body: any = {}) => {
     try {
-      await apiClient.post(`/risks/${id}/${path}`, body);
+      await apiClient.post(`/risks/${id}/${path}`, body, {
+        headers: { 'If-Match': `"${risk.lockVersion}"` },
+      });
       message.success('操作成功');
       setAcceptOpen(false);
       setCloseOpen(false);

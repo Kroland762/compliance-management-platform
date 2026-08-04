@@ -205,7 +205,9 @@ class AuthService {
   }
 
   async login(username: string, password: string, captchaId?: string, captchaInput?: string): Promise<LoginResult> {
-    if (config.nodeEnv !== 'development' || !['dev_bypass', '0000'].includes(captchaInput || '')) {
+    const captchaBypass = ['development', 'test'].includes(config.nodeEnv)
+      && ['dev_bypass', '0000'].includes(captchaInput || '');
+    if (!captchaBypass) {
       if (!captchaId || !captchaInput) throw new AppError(400, 'CAPTCHA_REQUIRED', '请输入验证码');
       if (!captchaService.verify(captchaId, captchaInput)) {
         throw new AppError(400, 'CAPTCHA_INVALID', '验证码错误或已过期，请刷新后重试');

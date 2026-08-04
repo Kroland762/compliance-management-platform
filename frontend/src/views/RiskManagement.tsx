@@ -57,7 +57,10 @@ export default function RiskManagement() {
   useEffect(() => {
     if (!taskId) return setEvaluations([]);
     apiClient.get(`/tasks/${taskId}/evaluations`, { params: { pageSize: 100, workflowStatus: 'reviewed' } })
-      .then((response: any) => setEvaluations(response.data?.items || []));
+      .then((response: any) => setEvaluations(
+        (response.data?.items || []).filter((item: any) =>
+          ['partial', 'non_compliant'].includes(item.complianceStatus)),
+      ));
   }, [taskId]);
 
   const create = async (values: any) => {
@@ -76,6 +79,8 @@ export default function RiskManagement() {
           relationType: index === 0 ? 'primary' : 'supporting',
         })),
         assets: values.assetIds.map((assetId: string) => ({ assetId })),
+      }, {
+        headers: { 'Idempotency-Key': crypto.randomUUID() },
       });
       message.success('风险已创建，等待确认');
       setOpen(false);
@@ -88,7 +93,10 @@ export default function RiskManagement() {
 
   const exportReport = async () => {
     try {
-      const response: any = await apiClient.get('/export/risks', { responseType: 'blob' });
+      const response: any = await apiClient.get('/export/risks', {
+        responseType: 'blob',
+        headers: { 'Idempotency-Key': crypto.randomUUID() },
+      });
       const url = URL.createObjectURL(response instanceof Blob ? response : new Blob([response]));
       const link = document.createElement('a');
       link.href = url;

@@ -23,6 +23,8 @@ import { fileStorage } from './file-storage.service';
 import notificationService from './notification.service';
 import objectAccessService from './object-access.service';
 import { verificationDuration } from './metrics.service';
+import { assertLockVersion } from '../utils/optimistic-lock';
+import idempotencyService from './idempotency.service';
 
 type RequestUser = NonNullable<Express.Request['user']>;
 
@@ -85,6 +87,7 @@ class RemediationService {
         status: { [Op.notIn]: [RiskLifecycleStatus.CLOSED, RiskLifecycleStatus.CANCELLED] },
       },
       transaction,
+      ...(transaction ? { lock: transaction.LOCK.UPDATE } : {}),
     });
     if (!department || !member) throw new AppError(404, 'NOT_FOUND', '整改责任部门或负责人不存在');
     if (risks.length !== riskIds.length) throw new AppError(404, 'NOT_FOUND', '关联风险不存在或已关闭');
@@ -115,10 +118,13 @@ class RemediationService {
     const links = ids.length
       ? await RiskActionLink.findAll({ where: { actionId: { [Op.in]: ids } }, include: [{ association: 'risk' }] })
       : [];
+    const visibleRiskIds = await objectAccessService.accessibleRiskIds(user);
     return {
       items: rows.map((row) => ({
         ...row.toJSON(),
-        riskLinks: links.filter((link) => link.actionId === row.id),
+        riskLinks: links.filter((link) =>
+          link.actionId === row.id
+          && (visibleRiskIds === null || visibleRiskIds.includes(link.riskId))),
       })),
       pagination: pagination(page, pageSize, count),
     };
@@ -130,9 +136,11 @@ class RemediationService {
       RiskActionLink.findAll({ where: { actionId: id }, include: [{ association: 'risk' }] }),
       EvidenceFile.findAll({ where: { remediationActionId: id, status: 'active' } }),
     ]);
+    const visibleRiskIds = await objectAccessService.accessibleRiskIds(user);
     return {
       ...action.toJSON(),
-      riskLinks,
+      riskLinks: riskLinks.filter((link) =>
+        visibleRiskIds === null || visibleRiskIds.includes(link.riskId)),
       evidenceFiles: evidenceFiles.map(({ dataValues }: any) => {
         const { storageKey: _key, filePath: _path, storedFilename: _stored, ...safe } = dataValues;
         return safe;
@@ -188,35 +196,65 @@ class RemediationService {
     return this.detail(action.id, user);
   }
 
-  async update(id: string, input: Partial<CreateActionInput> & { progressNote?: string }, user: RequestUser) {
-    const action = await objectAccessService.remediationOrNotFound(id, user, 'update');
-    if ([RemediationActionStatus.PENDING_VERIFICATION, RemediationActionStatus.COMPLETED, RemediationActionStatus.CANCELLED].includes(action.status)) {
-      throw new AppError(409, 'CONFLICT', '当前状态不能修改整改行动');
-    }
-    if (input.ownerDepartmentId || input.ownerUserId) {
-      const departmentId = input.ownerDepartmentId || action.ownerDepartmentId;
-      const ownerUserId = input.ownerUserId || action.ownerUserId;
-      const [department, member] = await Promise.all([
-        Department.findOne({ where: { id: departmentId, status: 'active' } }),
-        TenantMember.findOne({ where: { userId: ownerUserId, status: TenantMemberStatus.ACTIVE } }),
-      ]);
-      if (!department || !member) throw new AppError(404, 'NOT_FOUND', '整改责任部门或负责人不存在');
-    }
-    await action.update({
-      ...(input.title !== undefined ? { title: input.title.trim() } : {}),
-      ...(input.description !== undefined ? { description: input.description.trim() } : {}),
-      ...(input.ownerUserId !== undefined ? { ownerUserId: input.ownerUserId } : {}),
-      ...(input.ownerDepartmentId !== undefined ? { ownerDepartmentId: input.ownerDepartmentId } : {}),
-      ...(input.startDate !== undefined ? { startDate: input.startDate } : {}),
-      ...(input.dueDate !== undefined ? { dueDate: input.dueDate } : {}),
-      ...(input.progressNote !== undefined ? { progressNote: input.progressNote.trim() } : {}),
-      status: RemediationActionStatus.IN_PROGRESS,
-      lockVersion: action.lockVersion + 1,
+  async update(
+    id: string,
+    input: Partial<CreateActionInput> & { progressNote?: string },
+    user: RequestUser,
+    expectedLockVersion: number,
+  ) {
+    await objectAccessService.remediationOrNotFound(id, user, 'update');
+    await sequelize.transaction(async (transaction) => {
+      const action = await RemediationAction.findByPk(id, {
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (!action) throw new AppError(404, 'NOT_FOUND', '整改行动不存在');
+      assertLockVersion(action.lockVersion, expectedLockVersion);
+      if ([RemediationActionStatus.PENDING_VERIFICATION, RemediationActionStatus.COMPLETED, RemediationActionStatus.CANCELLED].includes(action.status)) {
+        throw new AppError(409, 'CONFLICT', '当前状态不能修改整改行动');
+      }
+      if (input.ownerDepartmentId || input.ownerUserId) {
+        const departmentId = input.ownerDepartmentId || action.ownerDepartmentId;
+        const ownerUserId = input.ownerUserId || action.ownerUserId;
+        const [department, member] = await Promise.all([
+          Department.findOne({ where: { id: departmentId, status: 'active' }, transaction }),
+          TenantMember.findOne({
+            where: { userId: ownerUserId, status: TenantMemberStatus.ACTIVE },
+            transaction,
+          }),
+        ]);
+        if (!department || !member) throw new AppError(404, 'NOT_FOUND', '整改责任部门或负责人不存在');
+      }
+      await action.update({
+        ...(input.title !== undefined ? { title: input.title.trim() } : {}),
+        ...(input.description !== undefined ? { description: input.description.trim() } : {}),
+        ...(input.ownerUserId !== undefined ? { ownerUserId: input.ownerUserId } : {}),
+        ...(input.ownerDepartmentId !== undefined ? { ownerDepartmentId: input.ownerDepartmentId } : {}),
+        ...(input.startDate !== undefined ? { startDate: input.startDate } : {}),
+        ...(input.dueDate !== undefined ? { dueDate: input.dueDate } : {}),
+        ...(input.progressNote !== undefined ? { progressNote: input.progressNote.trim() } : {}),
+        status: RemediationActionStatus.IN_PROGRESS,
+        lockVersion: action.lockVersion + 1,
+      }, { transaction });
+      await auditLogService.log({
+        userId: user.userId,
+        operationType: OperationType.UPDATE,
+        resourceType: 'remediation_action',
+        resourceId: action.id,
+        operationDetails: `更新整改行动 ${action.code}`,
+        success: true,
+        departmentId: action.ownerDepartmentId,
+      }, transaction);
     });
     return this.detail(id, user);
   }
 
-  async replaceRisks(id: string, riskLinks: RiskLinkInput[], user: RequestUser) {
+  async replaceRisks(
+    id: string,
+    riskLinks: RiskLinkInput[],
+    user: RequestUser,
+    expectedLockVersion: number,
+  ) {
     const action = await objectAccessService.remediationOrNotFound(id, user, 'update');
     const input: CreateActionInput = {
       title: action.title,
@@ -226,8 +264,23 @@ class RemediationService {
       dueDate: action.dueDate,
       riskLinks,
     };
-    await this.validateInput(input, user);
     await sequelize.transaction(async (transaction) => {
+      const locked = await RemediationAction.findByPk(id, {
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (!locked) throw new AppError(404, 'NOT_FOUND', '整改行动不存在');
+      assertLockVersion(locked.lockVersion, expectedLockVersion);
+      if ([RemediationActionStatus.PENDING_VERIFICATION, RemediationActionStatus.COMPLETED, RemediationActionStatus.CANCELLED].includes(locked.status)) {
+        throw new AppError(409, 'CONFLICT', '当前状态不能修改风险关联');
+      }
+      await this.validateInput(input, user, transaction);
+      const before = await RiskActionLink.findAll({
+        where: { actionId: id },
+        attributes: ['riskId'],
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
       await RiskActionLink.destroy({ where: { actionId: id }, transaction });
       await RiskActionLink.bulkCreate(riskLinks.map((link) => ({
         riskId: link.riskId,
@@ -236,6 +289,16 @@ class RemediationService {
         contributionDescription: link.contributionDescription.trim(),
         verificationStatus: VerificationStatus.PENDING,
       })), { transaction });
+      await locked.update({ lockVersion: locked.lockVersion + 1 }, { transaction });
+      await auditLogService.log({
+        userId: user.userId,
+        operationType: OperationType.UPDATE,
+        resourceType: 'remediation_action',
+        resourceId: id,
+        operationDetails: `更新风险关联：${before.map((link) => link.riskId).join(',')} -> ${riskLinks.map((link) => link.riskId).join(',')}`,
+        success: true,
+        departmentId: locked.ownerDepartmentId,
+      }, transaction);
     });
     return this.detail(id, user);
   }
@@ -282,27 +345,106 @@ class RemediationService {
     }
   }
 
-  async submit(id: string, user: RequestUser) {
-    const action = await objectAccessService.remediationOrNotFound(id, user, 'submit');
-    if (action.ownerUserId !== user.userId && !user.isGlobalAdmin) {
+  async deleteEvidence(id: string, evidenceId: string, user: RequestUser) {
+    const action = await objectAccessService.remediationOrNotFound(id, user, 'update');
+    const evidence = await EvidenceFile.findOne({
+      where: { id: evidenceId, remediationActionId: id, status: 'active' },
+    });
+    if (!evidence) throw new AppError(404, 'NOT_FOUND', '证据不存在');
+    if (evidence.storageKey) await fileStorage.delete(evidence.storageKey);
+    await sequelize.transaction(async (transaction) => {
+      await evidence.update({ status: 'deleted', deletedAt: new Date() }, { transaction });
+      await auditLogService.log({
+        userId: user.userId,
+        operationType: OperationType.DELETE,
+        resourceType: 'evidence',
+        resourceId: evidence.id,
+        operationDetails: `删除整改行动 ${action.code} 的证据`,
+        success: true,
+        departmentId: action.ownerDepartmentId,
+      }, transaction);
+    });
+  }
+
+  async submit(
+    id: string,
+    user: RequestUser,
+    expectedLockVersion: number,
+    rawIdempotencyKey?: string,
+  ) {
+    const visible = await objectAccessService.remediationOrNotFound(id, user, 'submit');
+    if (visible.ownerUserId !== user.userId && !user.isGlobalAdmin) {
       throw new AppError(404, 'NOT_FOUND', '整改行动不存在');
     }
-    const evidenceCount = await EvidenceFile.count({ where: { remediationActionId: id, status: 'active' } });
-    if (!evidenceCount) throw new AppError(400, 'VALIDATION_ERROR', '提交整改行动前至少上传一份证据');
-    await action.update({
-      status: RemediationActionStatus.PENDING_VERIFICATION,
-      submittedAt: new Date(),
-      lockVersion: action.lockVersion + 1,
-    });
-    await auditLogService.log({
-      userId: user.userId,
-      operationType: OperationType.UPDATE,
-      resourceType: 'remediation_action',
-      resourceId: action.id,
-      operationDetails: `提交整改行动 ${action.code} 复核`,
-      success: true,
-      departmentId: action.ownerDepartmentId,
-    });
+    const idempotencyKey = idempotencyService.requireKey(rawIdempotencyKey);
+    const result = await idempotencyService.execute(
+      'remediation.submit',
+      idempotencyKey,
+      user.userId,
+      { id, expectedLockVersion },
+      async (transaction) => {
+      const locked = await RemediationAction.findByPk(id, {
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (!locked) throw new AppError(404, 'NOT_FOUND', '整改行动不存在');
+      assertLockVersion(locked.lockVersion, expectedLockVersion);
+      if (![RemediationActionStatus.NOT_STARTED, RemediationActionStatus.IN_PROGRESS].includes(locked.status)) {
+        throw new AppError(409, 'CONFLICT', '当前状态不能提交复核');
+      }
+      if (!locked.progressNote?.trim()) {
+        throw new AppError(400, 'VALIDATION_ERROR', '提交整改行动前请填写进展说明');
+      }
+      const evidenceCount = await EvidenceFile.count({
+        where: { remediationActionId: id, status: 'active' },
+        transaction,
+      });
+      if (!evidenceCount) throw new AppError(400, 'VALIDATION_ERROR', '提交整改行动前至少上传一份证据');
+      const links = await RiskActionLink.findAll({
+        where: { actionId: id },
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      await Promise.all(links.map((link) => link.update({
+        verificationStatus: VerificationStatus.PENDING,
+        verifiedBy: null,
+        verifiedAt: null,
+        reviewComment: null,
+        selfReview: false,
+      }, { transaction })));
+      await locked.update({
+        status: RemediationActionStatus.PENDING_VERIFICATION,
+        submittedAt: new Date(),
+        completedAt: null,
+        lockVersion: locked.lockVersion + 1,
+      }, { transaction });
+      await auditLogService.log({
+        userId: user.userId,
+        operationType: OperationType.UPDATE,
+        resourceType: 'remediation_action',
+        resourceId: locked.id,
+        operationDetails: `提交整改行动 ${locked.code} 复核并重置 ${links.length} 个关联结论`,
+        success: true,
+        departmentId: locked.ownerDepartmentId,
+      }, transaction);
+        return { resourceId: locked.id };
+      },
+    );
+    const action = await RemediationAction.findByPk(result.value.resourceId);
+    if (!action) throw new AppError(500, 'INTERNAL_ERROR', '整改提交结果不存在');
+    if (!result.replayed) {
+      const firstLink = await RiskActionLink.findOne({ where: { actionId: id } });
+      const firstRisk = firstLink ? await RiskRecord.findByPk(firstLink.riskId) : null;
+      if (firstRisk) {
+        await notificationService.create({
+          userId: firstRisk.ownerUserId,
+          taskId: firstRisk.taskId,
+          type: NotificationType.REMEDIATION_SUBMITTED,
+          title: '整改行动待复核',
+          content: `${action.code} ${action.title}`,
+        });
+      }
+    }
     return this.detail(id, user);
   }
 
@@ -311,28 +453,52 @@ class RemediationService {
     actionId: string,
     input: { decision: VerificationStatus; comment?: string },
     user: RequestUser,
+    expectedLockVersion: number,
   ) {
     if (![VerificationStatus.APPROVED, VerificationStatus.REJECTED].includes(input.decision)) {
       throw new AppError(400, 'VALIDATION_ERROR', '复核结论必须为通过或驳回');
     }
-    const link = await objectAccessService.riskActionLinkOrNotFound(riskId, actionId, user, 'verify');
-    const action = await RemediationAction.findByPk(actionId);
-    if (!action) throw new AppError(404, 'NOT_FOUND', '整改行动不存在');
-    if (action.status !== RemediationActionStatus.PENDING_VERIFICATION) {
-      throw new AppError(409, 'CONFLICT', '整改行动尚未提交复核');
+    if (input.decision === VerificationStatus.REJECTED && !input.comment?.trim()) {
+      throw new AppError(400, 'VALIDATION_ERROR', '驳回时必须填写原因');
     }
-    await sequelize.transaction(async (transaction) => {
+    await objectAccessService.riskActionLinkOrNotFound(riskId, actionId, user, 'verify');
+    const action = await sequelize.transaction(async (transaction) => {
+      const lockedAction = await RemediationAction.findByPk(actionId, {
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      const link = await RiskActionLink.findOne({
+        where: { riskId, actionId },
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      const risk = await RiskRecord.findByPk(riskId, {
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (!lockedAction || !link || !risk) {
+        throw new AppError(404, 'NOT_FOUND', '风险整改关联不存在');
+      }
+      assertLockVersion(lockedAction.lockVersion, expectedLockVersion);
+      if (lockedAction.status !== RemediationActionStatus.PENDING_VERIFICATION) {
+        throw new AppError(409, 'CONFLICT', '整改行动尚未提交复核');
+      }
       await link.update({
         verificationStatus: input.decision,
         verifiedBy: user.userId,
         verifiedAt: new Date(),
         reviewComment: input.comment?.trim() || null,
-        selfReview: action.ownerUserId === user.userId,
+        selfReview: lockedAction.ownerUserId === user.userId,
       }, { transaction });
       if (input.decision === VerificationStatus.REJECTED) {
-        await action.update({
+        await lockedAction.update({
           status: RemediationActionStatus.IN_PROGRESS,
-          lockVersion: action.lockVersion + 1,
+          completedAt: null,
+          lockVersion: lockedAction.lockVersion + 1,
+        }, { transaction });
+        await risk.update({
+          status: RiskLifecycleStatus.REMEDIATING,
+          lockVersion: risk.lockVersion + 1,
         }, { transaction });
       } else {
         const pending = await RiskActionLink.count({
@@ -344,40 +510,57 @@ class RemediationService {
           transaction,
         });
         if (!pending) {
-          await action.update({
+          await lockedAction.update({
             status: RemediationActionStatus.COMPLETED,
             completedAt: new Date(),
-            lockVersion: action.lockVersion + 1,
+            lockVersion: lockedAction.lockVersion + 1,
+          }, { transaction });
+        } else {
+          await lockedAction.update({
+            lockVersion: lockedAction.lockVersion + 1,
+          }, { transaction });
+        }
+        const riskPending = await RiskActionLink.count({
+          where: {
+            riskId,
+            isRequired: true,
+            verificationStatus: { [Op.ne]: VerificationStatus.APPROVED },
+          },
+          transaction,
+        });
+        if (!riskPending) {
+          await risk.update({
+            status: RiskLifecycleStatus.PENDING_VERIFICATION,
+            lockVersion: risk.lockVersion + 1,
           }, { transaction });
         }
       }
-      const riskPending = await RiskActionLink.count({
-        where: {
-          riskId,
-          isRequired: true,
-          verificationStatus: { [Op.ne]: VerificationStatus.APPROVED },
-        },
-        transaction,
-      });
-      if (!riskPending) {
-        await RiskRecord.update(
-          { status: RiskLifecycleStatus.PENDING_VERIFICATION },
-          { where: { id: riskId }, transaction },
-        );
-      }
+      await auditLogService.log({
+        userId: user.userId,
+        operationType: OperationType.UPDATE,
+        resourceType: 'risk_action_link',
+        resourceId: link.id,
+        operationDetails: `逐风险复核 ${input.decision}，自审=${lockedAction.ownerUserId === user.userId}`,
+        success: true,
+        departmentId: lockedAction.ownerDepartmentId,
+      }, transaction);
+      return lockedAction;
     });
     if (action.submittedAt) {
       verificationDuration.observe(Math.max(0, (Date.now() - action.submittedAt.getTime()) / 1000));
     }
-    await auditLogService.log({
-      userId: user.userId,
-      operationType: OperationType.UPDATE,
-      resourceType: 'risk_action_link',
-      resourceId: link.id,
-      operationDetails: `逐风险复核 ${input.decision}，自审=${action.ownerUserId === user.userId}`,
-      success: true,
-      departmentId: action.ownerDepartmentId,
-    });
+    const risk = await RiskRecord.findByPk(riskId);
+    if (risk) {
+      await notificationService.create({
+        userId: action.ownerUserId,
+        taskId: risk.taskId,
+        type: input.decision === VerificationStatus.REJECTED
+          ? NotificationType.REMEDIATION_REJECTED
+          : NotificationType.REMEDIATION_APPROVED,
+        title: input.decision === VerificationStatus.REJECTED ? '整改行动被驳回' : '整改行动复核通过',
+        content: `${action.code} ${input.comment?.trim() || ''}`.trim(),
+      });
+    }
     return this.detail(actionId, user);
   }
 }

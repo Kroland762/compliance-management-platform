@@ -9,6 +9,7 @@ import { asyncHandler, AppError } from '../utils/http';
 import auditLogService from '../services/audit-log.service';
 import { OperationType } from '../models';
 import { uploadOperations } from '../services/metrics.service';
+import { parseExpectedLockVersion } from '../utils/optimistic-lock';
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -48,7 +49,7 @@ router.put('/:id/answer', authorize('evaluations', 'answer'), asyncHandler(async
     data: await evaluationService.answer(
       req.params.id,
       req.body.currentStatusDescription || '',
-      req.body.lockVersion,
+      parseExpectedLockVersion(req),
       req.user!,
     ),
   });
@@ -74,11 +75,26 @@ router.post('/:id/evidence', authorize('evaluations', 'answer'), evidenceUpload,
 }));
 
 router.post('/:id/submit', authorize('evaluations', 'submit'), asyncHandler(async (req: Request, res: Response) => {
-  res.json({ success: true, data: await evaluationService.submit(req.params.id, req.user!) });
+  res.json({
+    success: true,
+    data: await evaluationService.submit(
+      req.params.id,
+      req.user!,
+      parseExpectedLockVersion(req),
+    ),
+  });
 }));
 
 router.post('/:id/review', authorize('evaluations', 'review'), asyncHandler(async (req: Request, res: Response) => {
-  res.json({ success: true, data: await evaluationService.review(req.params.id, req.body, req.user!) });
+  res.json({
+    success: true,
+    data: await evaluationService.review(
+      req.params.id,
+      req.body,
+      req.user!,
+      parseExpectedLockVersion(req),
+    ),
+  });
 }));
 
 export default router;

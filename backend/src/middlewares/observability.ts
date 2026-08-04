@@ -2,6 +2,8 @@ import { randomUUID } from 'crypto';
 import type { NextFunction, Request, Response } from 'express';
 import logger from '../services/logger.service';
 import { httpDuration } from '../services/metrics.service';
+import AuditLog from '../models/AuditLog';
+import { runWithTenantContext } from './tenant';
 
 declare global {
   namespace Express {
@@ -32,6 +34,21 @@ export function observability(req: Request, res: Response, next: NextFunction): 
       outcome: res.statusCode < 400 ? 'success' : 'failure',
       durationMs: Math.round(durationSeconds * 1000),
     });
+    if (req.tenant) {
+      void runWithTenantContext(
+        {
+          schema: req.tenant.schemaName,
+          tenantId: req.tenant.id,
+          requestId,
+          userId: req.user?.userId || null,
+          memberId: req.user?.memberId || null,
+        },
+        () => AuditLog.update(
+          { durationMs: Math.round(durationSeconds * 1000) },
+          { where: { requestId } },
+        ),
+      ).catch(() => undefined);
+    }
   });
   next();
 }

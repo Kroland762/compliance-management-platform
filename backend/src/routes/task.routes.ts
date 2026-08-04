@@ -1,5 +1,4 @@
 import { Router, Request, Response } from 'express';
-import { Op } from 'sequelize';
 import { authenticate, authorize } from '../middlewares/auth';
 import taskService from '../services/task.service';
 import taskLifecycleService from '../services/task-lifecycle.service';
@@ -63,24 +62,23 @@ router.get('/:id', authorize('tasks', 'read'), async (req: Request, res: Respons
 });
 
 router.post('/:id/submit', authorize('tasks', 'submit'), async (req: Request, res: Response) => {
-  try {
-    await objectAccessService.taskOrNotFound(req.params.id, req.user!, 'submit');
-    const task = await taskLifecycleService.submitTask(req.params.id, req.user!.userId);
-    res.json({ success: true, data: task });
-  } catch (error: any) {
-    sendError(res, error, 400, 'SUBMIT_FAILED');
-  }
+  res.status(410).json({
+    success: false,
+    error: {
+      code: 'LEGACY_WRITE_PATH_DISABLED',
+      message: '旧整任务提交接口已停用，请逐项使用 /api/evaluations/:id/submit',
+    },
+  });
 });
 
 router.post('/:id/return', authorize('tasks', 'update'), async (req: Request, res: Response) => {
-  try {
-    const { assigneeIds, reason } = req.body;
-    await objectAccessService.taskOrNotFound(req.params.id, req.user!, 'update');
-    const task = await taskLifecycleService.returnTask(req.params.id, assigneeIds, reason, req.user!.userId);
-    res.json({ success: true, data: task });
-  } catch (error: any) {
-    sendError(res, error, 400, 'RETURN_FAILED');
-  }
+  res.status(410).json({
+    success: false,
+    error: {
+      code: 'LEGACY_WRITE_PATH_DISABLED',
+      message: '旧整任务退回接口已停用，请逐项使用 /api/evaluations/:id/review',
+    },
+  });
 });
 
 router.post('/:id/complete-review', authorize('tasks', 'update'), async (req: Request, res: Response) => {
@@ -95,75 +93,13 @@ router.post('/:id/complete-review', authorize('tasks', 'update'), async (req: Re
 
 // 审计员配置任务：更新问题责任分配
 router.put('/:id/configure', authorize('tasks', 'update'), async (req: Request, res: Response) => {
-  try {
-    await objectAccessService.taskOrNotFound(req.params.id, req.user!, 'update');
-    const { questionAssignments } = req.body;
-    const { QuestionItem, TaskStatus, TenantMember, TenantMemberStatus, Department } = await import('../models');
-    const notificationService = (await import('../services/notification.service')).default;
-
-    const notifiedUsers = new Set<string>();
-
-    if (questionAssignments) {
-      const assigneeIds = Array.from(new Set(
-        questionAssignments.map((item: any) => item.assignedTo).filter(Boolean),
-      )) as string[];
-      if (assigneeIds.length > 0) {
-        const count = await TenantMember.count({
-          where: { userId: { [Op.in]: assigneeIds }, status: TenantMemberStatus.ACTIVE },
-        });
-        if (count !== assigneeIds.length) throw new AppError(404, 'NOT_FOUND', '指派成员不存在');
-      }
-      for (const qa of questionAssignments) {
-        const [updated] = await QuestionItem.update(
-          { responsibleDepartment: qa.responsibleDepartment, responsiblePerson: qa.responsiblePerson,
-            referenceAnswer: qa.referenceAnswer, historicalEvidencePath: qa.historicalEvidencePath,
-            assignedTo: qa.assignedTo || null },
-          { where: { id: qa.questionId, taskId: req.params.id } }
-        );
-        if (updated !== 1) throw new AppError(404, 'NOT_FOUND', '任务问题不存在');
-        if (qa.assignedTo) {
-          if (!notifiedUsers.has(qa.assignedTo)) {
-            notifiedUsers.add(qa.assignedTo);
-          }
-        }
-      }
-    }
-
-    // 全部题目都指派了 → 草稿变已分配，同步任务级 assignedTo
-    const task = await objectAccessService.taskOrNotFound(req.params.id, req.user!, 'delete');
-    if (task) {
-      if (req.body.departmentId && req.body.departmentId !== task.departmentId) {
-        const department = await Department.findOne({
-          where: { id: req.body.departmentId, status: 'active' },
-        });
-        if (!department) throw new AppError(404, 'NOT_FOUND', '归属部门不存在');
-        task.departmentId = department.id;
-      }
-      const totalQuestions = await QuestionItem.count({ where: { taskId: req.params.id } });
-      const assignedQuestions = await QuestionItem.count({ where: { taskId: req.params.id, assignedTo: { [Op.ne]: null } } });
-      
-      // 同步任务级 assignedTo：取第一个被指派的题目的人员
-      if (assignedQuestions > 0 && notifiedUsers.size > 0) {
-        task.assignedTo = [...notifiedUsers][0];
-      }
-      
-      if (assignedQuestions === totalQuestions && assignedQuestions > 0 && task.status === TaskStatus.DRAFT) {
-        task.status = TaskStatus.ASSIGNED;
-      }
-      await task.save();
-    }
-
-    // 通知本次被指派的用户
-    if (notifiedUsers.size > 0) {
-      for (const uid of notifiedUsers) {
-        await notificationService.notifyTaskAssigned(uid, req.params.id, task?.assessmentTarget || '');
-      }
-    }
-
-    res.json({ success: true, message: '任务配置完成' });
-  } catch (error: any) {
-    sendError(res, error, 400, 'CONFIGURE_FAILED');
-  }
+  res.status(410).json({
+    success: false,
+    error: {
+      code: 'LEGACY_WRITE_PATH_DISABLED',
+      message: '旧任务配置接口已停用，请使用评估范围、矩阵和发布接口',
+    },
+  });
 });
 
 // 删除任务（仅管理员）
@@ -188,21 +124,21 @@ router.delete('/:id', authorize('tasks', 'delete'), async (req: Request, res: Re
   }
 });
 
-// 手动发送催办邮件
+// 新评估流程只发送系统内催办，不向外部邮箱发送内容。
 router.post('/:id/remind', authenticate, async (req: Request, res: Response) => {
   try {
-    const { User } = await import('../models');
-    const emailService = (await import('../services/email.service')).default;
+    const { NotificationType } = await import('../models');
+    const notificationService = (await import('../services/notification.service')).default;
     const task = await objectAccessService.taskOrNotFound(req.params.id, req.user!);
     if (!task.assignedTo) { res.status(400).json({ success: false, error: { code: 'NO_ASSIGNEE', message: '任务未分配用户' } }); return; }
-    const user = await User.findByPk(task.assignedTo);
-    if (!user || !user.email) { res.status(400).json({ success: false, error: { code: 'NO_EMAIL', message: '普通用户未设置邮箱' } }); return; }
-    const sent = await emailService.sendReminder(user.email, user.username, task.assessmentTarget);
-    if (sent) {
-      res.json({ success: true, message: '催办邮件已发送' });
-    } else {
-      res.json({ success: true, message: 'SMTP 未配置，邮件未发送（系统通知已生效）' });
-    }
+    await notificationService.create({
+      userId: task.assignedTo,
+      taskId: task.id,
+      type: NotificationType.TASK_ASSIGNED,
+      title: '评估任务催办',
+      content: `请及时处理评估任务：${task.name || task.assessmentTarget}`,
+    });
+    res.json({ success: true, message: '系统通知已发送' });
   } catch (error: any) {
     sendError(res, error, 500, 'REMIND_FAILED');
   }

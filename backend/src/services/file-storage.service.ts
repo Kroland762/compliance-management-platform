@@ -1,4 +1,4 @@
-import { createReadStream, promises as fs } from 'fs';
+import { constants, createReadStream, promises as fs } from 'fs';
 import path from 'path';
 import { config } from '../config';
 
@@ -11,6 +11,7 @@ export interface FileStorage {
   put(storageKey: string, data: Buffer): Promise<StoredObject>;
   delete(storageKey: string): Promise<void>;
   exists(storageKey: string): Promise<boolean>;
+  isWritable(): Promise<boolean>;
   absolutePath(storageKey: string): string;
   createReadStream(storageKey: string): NodeJS.ReadableStream;
 }
@@ -50,6 +51,16 @@ class LocalFileStorage implements FileStorage {
 
   async exists(storageKey: string): Promise<boolean> {
     return fs.access(this.safePath(storageKey)).then(() => true, () => false);
+  }
+
+  async isWritable(): Promise<boolean> {
+    try {
+      await fs.mkdir(this.root, { recursive: true, mode: 0o750 });
+      await fs.access(this.root, constants.W_OK);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   absolutePath(storageKey: string): string {

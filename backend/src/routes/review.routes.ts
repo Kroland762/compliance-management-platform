@@ -23,17 +23,13 @@ router.get('/tasks/:taskId', async (req: Request, res: Response) => {
 });
 
 router.put('/questions/:id', async (req: Request, res: Response) => {
-  try {
-    await objectAccessService.questionOrNotFound(req.params.id, req.user!, true);
-    const item = await reviewService.saveReview(req.params.id, req.body, req.user!.userId);
-    res.json({ success: true, data: item });
-  } catch (error: any) {
-    if (error instanceof AppError) {
-      res.status(error.statusCode).json({ success: false, error: { code: error.code, message: error.message } });
-      return;
-    }
-    res.status(400).json({ success: false, error: { code: 'UPDATE_FAILED', message: error.message } });
-  }
+  res.status(410).json({
+    success: false,
+    error: {
+      code: 'LEGACY_WRITE_PATH_DISABLED',
+      message: '旧复核写入接口已停用，请使用 /api/evaluations/:id/review',
+    },
+  });
 });
 
 export default router;

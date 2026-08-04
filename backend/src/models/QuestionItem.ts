@@ -12,7 +12,7 @@ interface QuestionItemAttributes {
   id: string;
   taskId: string;
   templateQuestionId: string;
-  assetId: string | null;
+  assetId: string;
   sequenceNumber: string;
   controlDomain: string;
   controlPoint: string;
@@ -20,7 +20,7 @@ interface QuestionItemAttributes {
   historicalEvidencePath: string | null;
   responsibleDepartment: string | null;
   responsiblePerson: string | null;
-  responsibleDepartmentId: string | null;
+  responsibleDepartmentId: string;
   currentStatusDescription: string | null;
   answerStatus: AnswerStatus;
   workflowStatus: EvaluationWorkflowStatus;
@@ -34,7 +34,7 @@ interface QuestionItemAttributes {
 }
 
 type CreationAttributes = Optional<QuestionItemAttributes,
-  'id' | 'assetId' | 'currentStatusDescription' | 'responsibleDepartmentId' |
+  'id' | 'currentStatusDescription' |
   'workflowStatus' | 'complianceStatus' | 'assignedTo' | 'reviewedBy' | 'answeredAt' |
   'submittedAt' | 'reviewedAt' | 'lockVersion'>;
 
@@ -42,7 +42,7 @@ class QuestionItem extends Model<QuestionItemAttributes, CreationAttributes> imp
   declare id: string;
   declare taskId: string;
   declare templateQuestionId: string;
-  declare assetId: string | null;
+  declare assetId: string;
   declare sequenceNumber: string;
   declare controlDomain: string;
   declare controlPoint: string;
@@ -50,7 +50,7 @@ class QuestionItem extends Model<QuestionItemAttributes, CreationAttributes> imp
   declare historicalEvidencePath: string | null;
   declare responsibleDepartment: string | null;
   declare responsiblePerson: string | null;
-  declare responsibleDepartmentId: string | null;
+  declare responsibleDepartmentId: string;
   declare currentStatusDescription: string | null;
   declare answerStatus: AnswerStatus;
   declare workflowStatus: EvaluationWorkflowStatus;
@@ -68,7 +68,7 @@ QuestionItem.init(
     id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
     taskId: { type: DataTypes.UUID, allowNull: false, references: { model: AuditTask, key: 'id' } },
     templateQuestionId: { type: DataTypes.UUID, allowNull: false, references: { model: QuestionTemplate, key: 'id' } },
-    assetId: { type: DataTypes.UUID, allowNull: true },
+    assetId: { type: DataTypes.UUID, allowNull: false },
     sequenceNumber: { type: DataTypes.STRING(50), allowNull: false },
     controlDomain: { type: DataTypes.STRING(200), allowNull: false },
     controlPoint: { type: DataTypes.TEXT, allowNull: false },
@@ -76,8 +76,8 @@ QuestionItem.init(
     historicalEvidencePath: { type: DataTypes.STRING(500), allowNull: true },
     responsibleDepartment: { type: DataTypes.STRING(100), allowNull: true },
     responsiblePerson: { type: DataTypes.STRING(100), allowNull: true },
-    responsibleDepartmentId: { type: DataTypes.UUID, allowNull: true },
-    currentStatusDescription: { type: DataTypes.STRING(500), allowNull: true },
+    responsibleDepartmentId: { type: DataTypes.UUID, allowNull: false },
+    currentStatusDescription: { type: DataTypes.TEXT, allowNull: true },
     answerStatus: { type: DataTypes.STRING(30), allowNull: false, defaultValue: AnswerStatus.PENDING, validate: { isIn: [Object.values(AnswerStatus)] } },
     workflowStatus: { type: DataTypes.STRING(30), allowNull: false, defaultValue: EvaluationWorkflowStatus.PENDING, validate: { isIn: [Object.values(EvaluationWorkflowStatus)] } },
     complianceStatus: { type: DataTypes.STRING(30), allowNull: false, defaultValue: ComplianceStatus.NOT_ASSESSED, validate: { isIn: [Object.values(ComplianceStatus)] } },

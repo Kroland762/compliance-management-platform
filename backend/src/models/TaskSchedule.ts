@@ -6,7 +6,7 @@ interface Attributes {
   tenantId: string;
   tenantSchema: string;
   taskId: string | null;
-  resourceType: 'account_audit' | 'assessment_plan';
+  resourceType: 'account_audit' | 'assessment_plan' | 'risk_review';
   resourceId: string;
   cronExpression: string;
   enabled: boolean;
@@ -30,7 +30,7 @@ class TaskSchedule extends Model<Attributes, CreationAttributes> implements Attr
   declare tenantId: string;
   declare tenantSchema: string;
   declare taskId: string | null;
-  declare resourceType: 'account_audit' | 'assessment_plan';
+  declare resourceType: 'account_audit' | 'assessment_plan' | 'risk_review';
   declare resourceId: string;
   declare cronExpression: string;
   declare enabled: boolean;

@@ -2,7 +2,7 @@ import { Notification, NotificationType } from '../models';
 import { parsePagination, pagination } from '../utils/pagination';
 
 class NotificationService {
-  async create(data: { userId: string; taskId: string; type: NotificationType; title: string; content: string }) {
+  async create(data: { userId: string; taskId: string | null; type: NotificationType; title: string; content: string }) {
     return Notification.create({
       userId: data.userId,
       taskId: data.taskId,

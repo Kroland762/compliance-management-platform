@@ -1,6 +1,8 @@
-import { Op } from 'sequelize';
+import { Op, QueryTypes } from 'sequelize';
+import sequelize from '../config/database';
 import {
   AuditTask,
+  ComplianceStatus,
   QuestionItem,
   User,
   TaskStatus,
@@ -145,31 +147,62 @@ class TaskLifecycleService {
   }
 
   async completeReview(taskId: string, reviewerId: string) {
-    const task = await AuditTask.findByPk(taskId);
-    if (!task) throw new Error('任务不存在');
-    if (task.status !== TaskStatus.UNDER_REVIEW && task.status !== TaskStatus.SUBMITTED) {
-      throw new Error('只有已提交或审核中状态的任务可以完成审阅');
-    }
+    return sequelize.transaction(async (transaction) => {
+      const task = await AuditTask.findByPk(taskId, {
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (!task) throw new Error('任务不存在');
+      if (task.status !== TaskStatus.UNDER_REVIEW && task.status !== TaskStatus.SUBMITTED) {
+        throw new Error('只有已提交或审核中状态的任务可以完成审阅');
+      }
 
-    task.status = TaskStatus.COMPLETED;
-    task.reviewedAt = new Date();
-    await task.save();
+      const unreviewed = await QuestionItem.count({
+        where: { taskId, workflowStatus: { [Op.ne]: EvaluationWorkflowStatus.REVIEWED } },
+        transaction,
+      });
+      if (unreviewed > 0) throw new Error(`还有 ${unreviewed} 个评估单元尚未复核`);
 
-    const unreviewed = await QuestionItem.count({
-      where: { taskId, workflowStatus: { [Op.ne]: EvaluationWorkflowStatus.REVIEWED } },
+      // 部分合规和不合规评估必须先形成风险来源，避免任务完成后遗漏风险。
+      const [unmapped] = await sequelize.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+           FROM "question_items" qi
+          WHERE qi."taskId" = :taskId
+            AND qi."complianceStatus" IN (:statuses)
+            AND NOT EXISTS (
+              SELECT 1
+                FROM "risk_sources" rs
+               WHERE rs."controlEvaluationId" = qi.id
+            )`,
+        {
+          replacements: {
+            taskId,
+            statuses: [ComplianceStatus.PARTIAL, ComplianceStatus.NON_COMPLIANT],
+          },
+          type: QueryTypes.SELECT,
+          transaction,
+        },
+      );
+      const missingRiskSources = Number(unmapped?.count || 0);
+      if (missingRiskSources > 0) {
+        throw new Error(`还有 ${missingRiskSources} 个不合规评估单元尚未生成风险`);
+      }
+
+      task.status = TaskStatus.COMPLETED;
+      task.reviewedAt = new Date();
+      await task.save({ transaction });
+
+      await auditLogService.log({
+        userId: reviewerId,
+        operationType: OperationType.UPDATE,
+        resourceType: 'task',
+        resourceId: taskId,
+        operationDetails: '完成审核并确认风险已生成',
+        success: true,
+      }, transaction);
+
+      return task;
     });
-    if (unreviewed > 0) throw new Error(`还有 ${unreviewed} 个评估单元尚未复核`);
-
-    await auditLogService.log({
-      userId: reviewerId,
-      operationType: OperationType.UPDATE,
-      resourceType: 'task',
-      resourceId: taskId,
-      operationDetails: '完成审核',
-      success: true,
-    });
-
-    return task;
   }
 }
 

@@ -1,5 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, Form, Input, message, Modal, Segmented, Select, Space, Table, Tag, Typography, Upload } from 'antd';
+import {
+  Button,
+  Form,
+  Input,
+  message,
+  Modal,
+  Pagination,
+  Segmented,
+  Select,
+  Space,
+  Table,
+  Tag,
+  Typography,
+  Upload,
+} from 'antd';
 import { UploadOutlined, WarningOutlined } from '@ant-design/icons';
 import { useNavigate, useParams } from 'react-router-dom';
 import apiClient from '../api/client';
@@ -25,18 +39,24 @@ export default function EvaluationWorkbench() {
   const [selected, setSelected] = useState<React.Key[]>([]);
   const [editing, setEditing] = useState<any>();
   const [reviewing, setReviewing] = useState<any>();
+  const [pagination, setPagination] = useState({ page: 1, pageSize: 100, total: 0 });
   const [answerForm] = Form.useForm();
   const [reviewForm] = Form.useForm();
 
-  const load = async () => {
+  const load = async (page = pagination.page, pageSize = pagination.pageSize) => {
     setLoading(true);
     try {
       const [taskResponse, evaluationResponse]: any[] = await Promise.all([
         apiClient.get(`/tasks/${id}`),
-        apiClient.get(`/tasks/${id}/evaluations`, { params: { pageSize: 100 } }),
+        apiClient.get(`/tasks/${id}/evaluations`, { params: { page, pageSize } }),
       ]);
       setTask(taskResponse.data);
       setItems(evaluationResponse.data?.items || []);
+      setPagination({
+        page: evaluationResponse.data?.pagination?.page || page,
+        pageSize,
+        total: evaluationResponse.data?.pagination?.total || 0,
+      });
     } finally {
       setLoading(false);
     }
@@ -73,7 +93,9 @@ export default function EvaluationWorkbench() {
 
   const submit = async (item: any) => {
     try {
-      await apiClient.post(`/evaluations/${item.id}/submit`);
+      await apiClient.post(`/evaluations/${item.id}/submit`, {}, {
+        headers: { 'If-Match': `"${item.lockVersion}"` },
+      });
       message.success('评估单元已提交复核');
       load();
     } catch (error) {
@@ -83,7 +105,9 @@ export default function EvaluationWorkbench() {
 
   const review = async (values: any) => {
     try {
-      await apiClient.post(`/evaluations/${reviewing.id}/review`, values);
+      await apiClient.post(`/evaluations/${reviewing.id}/review`, values, {
+        headers: { 'If-Match': `"${reviewing.lockVersion}"` },
+      });
       message.success(values.return ? '已退回' : '复核完成');
       setReviewing(undefined);
       load();
@@ -178,6 +202,18 @@ export default function EvaluationWorkbench() {
           />
         </div>
       ))}
+      <Pagination
+        current={pagination.page}
+        pageSize={pagination.pageSize}
+        total={pagination.total}
+        showSizeChanger
+        pageSizeOptions={[20, 50, 100]}
+        showTotal={(total) => `共 ${total} 个评估单元`}
+        onChange={(page, pageSize) => {
+          setSelected([]);
+          void load(page, pageSize);
+        }}
+      />
       <Modal title="填写评估单元" open={Boolean(editing)} onCancel={() => setEditing(undefined)} onOk={() => answerForm.submit()}>
         <Form form={answerForm} layout="vertical" onFinish={saveAnswer}>
           <Form.Item name="description" label="现状说明" rules={[{ required: true }]}>

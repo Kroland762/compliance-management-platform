@@ -32,6 +32,7 @@ export { default as RemediationAction } from './RemediationAction';
 export { default as RiskActionLink } from './RiskActionLink';
 export { default as AssessmentPlan } from './AssessmentPlan';
 export { default as AssessmentPlanExecution } from './AssessmentPlanExecution';
+export { default as IdempotencyRecord } from './IdempotencyRecord';
 export { default as ControlEvaluation } from './QuestionItem';
 export type { PermissionMatrix, PermissionScopeMatrix, PermissionResource, PermissionAction, DataScope } from './Role';
 export { setupAssociations } from './associations';

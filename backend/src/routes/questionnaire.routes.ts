@@ -65,15 +65,11 @@ router.get('/tasks/:taskId/questions', authorize('tasks', 'read'), asyncHandler(
 
 // 保存问题答案
 router.put('/questions/:id/answer', authorize('tasks', 'update'), asyncHandler(async (req: Request, res: Response) => {
-  try {
-    await assertCanAccessQuestion(req, req.params.id, true);
-    const { currentStatusDescription } = req.body;
-    const item = await questionnaireService.saveAnswer(req.params.id, currentStatusDescription || '');
-    res.json({ success: true, data: item });
-  } catch (error: any) {
-    if (error instanceof AppError) throw error;
-    res.status(400).json({ success: false, error: { code: 'UPDATE_FAILED', message: error.message } });
-  }
+  throw new AppError(
+    410,
+    'LEGACY_WRITE_PATH_DISABLED',
+    '旧问卷写入接口已停用，请使用 /api/evaluations/:id/answer',
+  );
 }));
 
 // 上传证据文件

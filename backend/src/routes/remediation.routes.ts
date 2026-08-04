@@ -9,6 +9,7 @@ import { fileStorage } from '../services/file-storage.service';
 import objectAccessService from '../services/object-access.service';
 import auditLogService from '../services/audit-log.service';
 import { uploadOperations } from '../services/metrics.service';
+import { parseExpectedLockVersion } from '../utils/optimistic-lock';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: config.upload.maxFileSize } });
 const router = Router();
@@ -49,11 +50,27 @@ router.post('/', authorize('remediation_actions', 'create'), asyncHandler(async 
 }));
 
 router.put('/:id', authorize('remediation_actions', 'update'), asyncHandler(async (req: Request, res: Response) => {
-  res.json({ success: true, data: await remediationService.update(req.params.id, req.body, req.user!) });
+  res.json({
+    success: true,
+    data: await remediationService.update(
+      req.params.id,
+      req.body,
+      req.user!,
+      parseExpectedLockVersion(req),
+    ),
+  });
 }));
 
 router.put('/:id/risks', authorize('remediation_actions', 'link'), asyncHandler(async (req: Request, res: Response) => {
-  res.json({ success: true, data: await remediationService.replaceRisks(req.params.id, req.body.riskLinks, req.user!) });
+  res.json({
+    success: true,
+    data: await remediationService.replaceRisks(
+      req.params.id,
+      req.body.riskLinks,
+      req.user!,
+      parseExpectedLockVersion(req),
+    ),
+  });
 }));
 
 router.post('/:id/evidence', authorize('remediation_actions', 'update'), evidenceUpload, asyncHandler(async (req: Request, res: Response) => {
@@ -69,16 +86,41 @@ router.post('/:id/evidence', authorize('remediation_actions', 'update'), evidenc
 }));
 
 router.get('/:id/evidence/:evidenceId/download', authorize('remediation_actions', 'read'), asyncHandler(async (req: Request, res: Response) => {
-  await objectAccessService.remediationOrNotFound(req.params.id, req.user!);
+  const action = await objectAccessService.remediationOrNotFound(req.params.id, req.user!);
   const evidence = await EvidenceFile.findOne({
     where: { id: req.params.evidenceId, remediationActionId: req.params.id, status: 'active' },
   });
   if (!evidence?.storageKey) throw new AppError(404, 'NOT_FOUND', '证据不存在');
+  if (!(await fileStorage.exists(evidence.storageKey))) {
+    throw new AppError(404, 'NOT_FOUND', '证据文件不存在');
+  }
+  await auditLogService.log({
+    userId: req.user!.userId,
+    operationType: OperationType.QUERY,
+    resourceType: 'evidence',
+    resourceId: evidence.id,
+    operationDetails: `下载整改行动 ${action.code} 的证据`,
+    success: true,
+    departmentId: action.ownerDepartmentId,
+  });
   res.download(fileStorage.absolutePath(evidence.storageKey), evidence.originalFilename);
 }));
 
+router.delete('/:id/evidence/:evidenceId', authorize('remediation_actions', 'update'), asyncHandler(async (req: Request, res: Response) => {
+  await remediationService.deleteEvidence(req.params.id, req.params.evidenceId, req.user!);
+  res.status(204).send();
+}));
+
 router.post('/:id/submit', authorize('remediation_actions', 'submit'), asyncHandler(async (req: Request, res: Response) => {
-  res.json({ success: true, data: await remediationService.submit(req.params.id, req.user!) });
+  res.json({
+    success: true,
+    data: await remediationService.submit(
+      req.params.id,
+      req.user!,
+      parseExpectedLockVersion(req),
+      req.header('Idempotency-Key'),
+    ),
+  });
 }));
 
 export default router;

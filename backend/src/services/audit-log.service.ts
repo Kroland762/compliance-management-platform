@@ -10,23 +10,34 @@ class AuditLogService {
     userId: string; operationType: OperationType; resourceType: string;
     resourceId?: string | null; operationDetails?: string; success: boolean;
     ipAddress?: string; tenantId?: string; departmentId?: string;
+    eventType?: string; relatedResourceIds?: Record<string, unknown>;
+    reasonCode?: string; durationMs?: number;
   }, transaction?: Transaction) {
-    const tenantId = data.tenantId || getTenantStore()?.tenantId || null;
+    const store = getTenantStore();
+    const tenantId = data.tenantId || store?.tenantId || null;
     let departmentId = data.departmentId || null;
     if (!departmentId && tenantId) {
       const context = await memberContextService.resolve(data.userId, false);
       departmentId = context?.primaryDepartmentId || null;
     }
     return AuditLog.create({
+      eventType: data.eventType || `${data.resourceType}.${data.operationType}`,
+      requestId: store?.requestId || null,
       userId: data.userId,
+      memberId: store?.memberId || null,
       operationType: data.operationType,
       resourceType: data.resourceType,
       resourceId: data.resourceId || null,
+      relatedResourceIds: data.relatedResourceIds || {},
       operationDetails: data.operationDetails || null,
       success: data.success,
+      result: data.success ? 'success' : 'failure',
+      reasonCode: data.reasonCode || null,
+      durationMs: data.durationMs ?? null,
       ipAddress: data.ipAddress || null,
       tenantId,
       departmentId,
+      departmentIdSnapshot: departmentId,
     } as any, { transaction });
   }
 
