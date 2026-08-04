@@ -3,6 +3,7 @@ import { Op } from 'sequelize';
 import { authenticate, authorize } from '../middlewares/auth';
 import taskService from '../services/task.service';
 import taskLifecycleService from '../services/task-lifecycle.service';
+import { requireObjectAccess } from '../middlewares/objectAccess';
 
 const router = Router();
 router.use(authenticate);
@@ -10,33 +11,37 @@ router.use(authenticate);
 router.post('/', authorize('tasks', 'create'), async (req: Request, res: Response) => {
   try {
     // assignedTo 不再必填 — 创建草稿任务，后续再指派
-    const task = await taskService.createTask({ ...req.body, createdBy: req.user!.userId });
+    const task = await taskService.createTask({ ...req.body, createdBy: req.user!.userId, tenantId: req.user!.tenantId });
     res.status(201).json({ success: true, data: task });
   } catch (error: any) {
     res.status(400).json({ success: false, error: { code: 'CREATE_FAILED', message: error.message } });
   }
 });
 
-router.get('/', async (req: Request, res: Response) => {
+router.get('/', authorize('tasks', 'read'), async (req: Request, res: Response) => {
   try {
-    const result = await taskService.getTasksWithStats({ ...req.query, userId: req.user!.userId, userRole: req.user!.role } as any);
+    const result = await taskService.getTasksWithStats({
+      ...req.query,
+      userId: req.user!.userId,
+      tenantWideScope: req.user!.permissions.tasks?.includes('delete') === true,
+    } as any);
     res.json({ success: true, data: result });
   } catch (error: any) {
     res.status(500).json({ success: false, error: { code: 'QUERY_FAILED', message: error.message } });
   }
 });
 
-router.get('/:id/questions', async (req: Request, res: Response) => {
+router.get('/:id/questions', authorize('tasks', 'read'), requireObjectAccess('task', 'id', 'read'), async (req: Request, res: Response) => {
   try {
     const questionnaireService = (await import('../services/questionnaire.service')).default;
-    const questions = await questionnaireService.getQuestions(req.params.id, req.user!.userId);
+    const questions = await questionnaireService.getQuestions(req.params.id, req.user!);
     res.json({ success: true, data: { questions } });
   } catch (error: any) {
     res.status(500).json({ success: false, error: { code: 'QUERY_FAILED', message: error.message } });
   }
 });
 
-router.get('/:id', async (req: Request, res: Response) => {
+router.get('/:id', authorize('tasks', 'read'), requireObjectAccess('task', 'id', 'read'), async (req: Request, res: Response) => {
   try {
     const task = await taskService.getTaskById(req.params.id);
     res.json({ success: true, data: task });
@@ -45,7 +50,7 @@ router.get('/:id', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/:id/submit', async (req: Request, res: Response) => {
+router.post('/:id/submit', authorize('tasks', 'submit'), requireObjectAccess('task', 'id', 'respond'), async (req: Request, res: Response) => {
   try {
     const task = await taskLifecycleService.submitTask(req.params.id, req.user!.userId);
     res.json({ success: true, data: task });
@@ -54,7 +59,7 @@ router.post('/:id/submit', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/:id/return', authorize('tasks', 'update'), async (req: Request, res: Response) => {
+router.post('/:id/return', authorize('tasks', 'update'), requireObjectAccess('task', 'id', 'review'), async (req: Request, res: Response) => {
   try {
     const { assigneeIds, reason } = req.body;
     const task = await taskLifecycleService.returnTask(req.params.id, assigneeIds, reason, req.user!.userId);
@@ -64,7 +69,7 @@ router.post('/:id/return', authorize('tasks', 'update'), async (req: Request, re
   }
 });
 
-router.post('/:id/complete-review', authorize('tasks', 'update'), async (req: Request, res: Response) => {
+router.post('/:id/complete-review', authorize('tasks', 'update'), requireObjectAccess('task', 'id', 'review'), async (req: Request, res: Response) => {
   try {
     const task = await taskLifecycleService.completeReview(req.params.id, req.user!.userId);
     res.json({ success: true, data: task });
@@ -74,21 +79,26 @@ router.post('/:id/complete-review', authorize('tasks', 'update'), async (req: Re
 });
 
 // 审计员配置任务：更新问题责任分配
-router.put('/:id/configure', authorize('tasks', 'update'), async (req: Request, res: Response) => {
+router.put('/:id/configure', authorize('tasks', 'update'), requireObjectAccess('task', 'id', 'manage'), async (req: Request, res: Response) => {
   try {
     const { questionAssignments } = req.body;
-    const { QuestionItem, AuditTask, TaskStatus, NotificationType } = await import('../models');
+    const { QuestionItem, AuditTask, TaskStatus, User } = await import('../models');
     const notificationService = (await import('../services/notification.service')).default;
 
     const notifiedUsers = new Set<string>();
 
     if (questionAssignments) {
       for (const qa of questionAssignments) {
+        if (qa.assignedTo) {
+          const assignee = await User.findByPk(qa.assignedTo, { attributes: ['tenantId'] });
+          if (!assignee || (assignee.tenantId || undefined) !== req.user!.tenantId) {
+            throw new Error('不能将问题指派给其他租户的用户');
+          }
+        }
         await QuestionItem.update(
           { responsibleDepartment: qa.responsibleDepartment, responsiblePerson: qa.responsiblePerson,
-            referenceAnswer: qa.referenceAnswer, historicalEvidencePath: qa.historicalEvidencePath,
-            assignedTo: qa.assignedTo || null },
-          { where: { id: qa.questionId } }
+            referenceAnswer: qa.referenceAnswer, assignedTo: qa.assignedTo || null },
+          { where: { id: qa.questionId, taskId: req.params.id } }
         );
         if (qa.assignedTo) {
           if (!notifiedUsers.has(qa.assignedTo)) {
@@ -129,7 +139,7 @@ router.put('/:id/configure', authorize('tasks', 'update'), async (req: Request, 
 });
 
 // 删除任务（仅管理员）
-router.delete('/:id', authorize('tasks', 'delete'), async (req: Request, res: Response) => {
+router.delete('/:id', authorize('tasks', 'delete'), requireObjectAccess('task', 'id', 'delete'), async (req: Request, res: Response) => {
   try {
     const { AuditTask, QuestionItem, EvidenceFile, Notification, AuditLog, OperationType } = await import('../models');
     const task = await AuditTask.findByPk(req.params.id);
@@ -151,7 +161,7 @@ router.delete('/:id', authorize('tasks', 'delete'), async (req: Request, res: Re
 });
 
 // 手动发送催办邮件
-router.post('/:id/remind', authenticate, async (req: Request, res: Response) => {
+router.post('/:id/remind', authorize('tasks', 'update'), requireObjectAccess('task', 'id', 'manage'), async (req: Request, res: Response) => {
   try {
     const { AuditTask, User } = await import('../models');
     const emailService = (await import('../services/email.service')).default;

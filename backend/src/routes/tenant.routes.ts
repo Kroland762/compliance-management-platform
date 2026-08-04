@@ -3,7 +3,7 @@ import sequelize from '../config/database';
 import { authenticate, authorize, superAdminOnly } from '../middlewares/auth';
 import Tenant, { TenantStatus } from '../models/Tenant';
 import auditLogService from '../services/audit-log.service';
-import { OperationType } from '../models';
+import { OperationType, TaskSchedule } from '../models';
 
 const router = Router();
 router.use(authenticate);
@@ -61,6 +61,11 @@ router.post('/', authorize('tenants', 'create'), async (req: Request, res: Respo
     const { name, slug, domain } = req.body;
     if (!name || !slug) {
       res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: '租户名称和标识为必填项' } });
+      return;
+    }
+
+    if (!/^[a-z0-9][a-z0-9_-]{1,40}$/.test(slug)) {
+      res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: '租户标识仅允许小写字母、数字、下划线和连字符' } });
       return;
     }
 
@@ -172,6 +177,7 @@ router.delete('/:id', authorize('tenants', 'delete'), async (req: Request, res: 
     }
 
     const schemaName = tenant.schemaName;
+    await TaskSchedule.destroy({ where: { tenantId: tenant.id } });
     await tenant.destroy();
 
     // 删除整个 schema（级联删除所有数据）

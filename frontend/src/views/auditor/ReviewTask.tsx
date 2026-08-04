@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Table, Select, Input, Button, Space, message, Typography, Modal, Tag } from 'antd';
-import { DownloadOutlined, PaperClipOutlined, ClearOutlined, EditOutlined } from '@ant-design/icons';
+import { DownloadOutlined, PaperClipOutlined, ClearOutlined, EditOutlined, HistoryOutlined } from '@ant-design/icons';
 import apiClient from '../../api/client';
 import { useAuthStore } from '../../store/auth';
 import { getApiErrorMessage } from '../../utils/error';
 import { CAN_REVIEW_STATUS } from '../../constants/status';
+import FilePreviewModal, { downloadEvidenceFile, type PreviewableEvidenceFile } from '../../components/FilePreviewModal';
 
 const { Title, Text } = Typography;
 
@@ -24,6 +25,7 @@ export default function ReviewTask() {
   const [riskLevelFilter, setRiskLevelFilter] = useState<string | undefined>();
   const [deptFilter, setDeptFilter] = useState<string | undefined>();
   const [personFilter, setPersonFilter] = useState<string | undefined>();
+  const [previewFile, setPreviewFile] = useState<PreviewableEvidenceFile | null>(null);
 
   const loadQuestions = () => {
     if (!id) return;
@@ -163,6 +165,11 @@ export default function ReviewTask() {
     { title: '参考回答', dataIndex: 'referenceAnswer', width: 150,
       render: (v: string) => v ? <Text style={{ fontSize: 12, color: '#8E8E93' }}>{v}</Text> : '—'
     },
+    { title: '历史证据', dataIndex: 'historicalEvidence', width: 120,
+      render: (evidence: PreviewableEvidenceFile | null) => evidence ? (
+        <Button size="small" type="link" icon={<HistoryOutlined />} onClick={() => setPreviewFile(evidence)}>预览</Button>
+      ) : <Text type="secondary" style={{ fontSize: 12 }}>无</Text>
+    },
     { title: '责任部门', dataIndex: 'responsibleDepartment', width: 90,
       render: (v: string) => v || '—'
     },
@@ -181,10 +188,10 @@ export default function ReviewTask() {
         return record.evidenceFiles.map((ef: any) => (
           <div key={ef.id} style={{ marginBottom: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
             <PaperClipOutlined style={{ fontSize: 11, color: '#8E8E93' }} />
-            <a href={`/api/evidence/${ef.id}/download`} download={ef.originalFilename}
-              style={{ fontSize: 12, maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {ef.originalFilename}
-            </a>
+            <Button type="link" size="small" onClick={() => setPreviewFile(ef)}
+              style={{ padding: 0, fontSize: 12, maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {ef.originalFilename}</Button>
+            <Button type="text" size="small" icon={<DownloadOutlined />} title="下载" style={{ padding: 0 }} onClick={() => downloadEvidenceFile(ef)} />
           </div>
         ));
       },
@@ -353,6 +360,7 @@ export default function ReviewTask() {
           placeholder="请输入退回原因"
         />
       </Modal>
+      <FilePreviewModal file={previewFile} open={Boolean(previewFile)} onClose={() => setPreviewFile(null)} />
     </div>
   );
 }

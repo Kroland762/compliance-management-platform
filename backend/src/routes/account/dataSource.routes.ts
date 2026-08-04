@@ -44,9 +44,9 @@ router.get('/:id', authorize('data_sources', 'read'), async (req: Request, res: 
  * POST /api/account/data-sources
  * 创建 - ADMIN only
  */
-router.post('/', authorize('data_sources', 'update'), async (req: Request, res: Response) => {
+router.post('/', authorize('data_sources', 'create'), async (req: Request, res: Response) => {
   try {
-    const result = await dataSourceService.createDataSource(req.body);
+    const result = await dataSourceService.createDataSource(req.body, req.user!.userId);
     res.status(201).json({ success: true, data: result });
   } catch (error: any) {
     res.status(400).json({ success: false, error: { code: 'CREATE_FAILED', message: error.message } });
@@ -57,13 +57,13 @@ router.post('/', authorize('data_sources', 'update'), async (req: Request, res: 
  * POST /api/account/data-sources/upload
  * CSV 文件上传创建 - ADMIN only
  */
-router.post('/upload', authorize('data_sources', 'update'), upload.single('file'), async (req: Request, res: Response) => {
+router.post('/upload', authorize('data_sources', 'create'), upload.single('file'), async (req: Request, res: Response) => {
   try {
     if (!req.file) {
       res.status(400).json({ success: false, error: { code: 'NO_FILE', message: '请上传 CSV 文件' } });
       return;
     }
-    const result = await dataSourceService.createFromUpload(req.file, req.body);
+    const result = await dataSourceService.createFromUpload(req.file, req.body, req.user!.userId);
     res.status(201).json({ success: true, data: result });
   } catch (error: any) {
     res.status(400).json({ success: false, error: { code: 'CREATE_FAILED', message: error.message } });
@@ -89,7 +89,7 @@ router.post('/preview-fields', authorize('data_sources', 'update'), async (req: 
  */
 router.put('/:id', authorize('data_sources', 'update'), async (req: Request, res: Response) => {
   try {
-    const result = await dataSourceService.updateDataSource(req.params.id, req.body);
+    const result = await dataSourceService.updateDataSource(req.params.id, req.body, req.user!.userId);
     res.json({ success: true, data: result });
   } catch (error: any) {
     const status = error.message === '数据源不存在' ? 404 : 400;
@@ -103,7 +103,7 @@ router.put('/:id', authorize('data_sources', 'update'), async (req: Request, res
  */
 router.patch('/:id/toggle', authorize('data_sources', 'update'), async (req: Request, res: Response) => {
   try {
-    const result = await dataSourceService.toggleDataSource(req.params.id);
+    const result = await dataSourceService.toggleDataSource(req.params.id, req.user!.userId);
     res.json({ success: true, data: result });
   } catch (error: any) {
     const status = error.message === '数据源不存在' ? 404 : 400;
@@ -115,9 +115,9 @@ router.patch('/:id/toggle', authorize('data_sources', 'update'), async (req: Req
  * DELETE /api/account/data-sources/:id
  * 删除 - ADMIN only
  */
-router.delete('/:id', authorize('data_sources', 'update'), async (req: Request, res: Response) => {
+router.delete('/:id', authorize('data_sources', 'delete'), async (req: Request, res: Response) => {
   try {
-    await dataSourceService.deleteDataSource(req.params.id);
+    await dataSourceService.deleteDataSource(req.params.id, req.user!.userId);
     res.json({ success: true, message: '数据源已删除' });
   } catch (error: any) {
     const status = error.message === '数据源不存在' ? 404 : 400;
@@ -155,10 +155,10 @@ router.get('/:id/preview', authorize('data_sources', 'read'), async (req: Reques
  * POST /api/account/data-sources/:id/sync
  * 同步数据 - ADMIN only
  */
-router.post('/:id/sync', authorize('data_sources', 'update'), async (req: Request, res: Response) => {
+router.post('/:id/sync', authorize('data_sources', 'sync'), async (req: Request, res: Response) => {
   try {
     const force = req.query.force === 'true';
-    const result = await dataSourceService.syncData(req.params.id, undefined, force);
+    const result = await dataSourceService.syncData(req.params.id, req.user!.userId, force);
     res.json({ success: true, data: result });
   } catch (error: any) {
     res.status(400).json({ success: false, error: { code: 'SYNC_FAILED', message: error.message } });

@@ -1,170 +1,226 @@
 import cron from 'node-cron';
-import { AccountAuditTask, ScheduleType, TaskStatus } from '../../models/account';
+import os from 'os';
+import { Op } from 'sequelize';
+import sequelize from '../../config/database';
+import { AccountAuditTask, ExecutionStatus, ScheduleType, TaskExecution, TaskStatus } from '../../models/account';
+import { PersistentScheduleStatus, TaskSchedule, Tenant } from '../../models';
+import { TenantStatus } from '../../models/Tenant';
+import { runWithTenantContext, type TenantExecutionContext } from '../../middlewares/tenant';
 import auditTaskService from './auditTask.service';
-import { v4 as uuidv4 } from 'uuid';
 
-type ScheduledTask = ReturnType<typeof cron.schedule>;
+const TIMEZONE = process.env.TASK_SCHEDULER_TIMEZONE || 'Asia/Shanghai';
+const STALE_LOCK_MS = Math.max(Number(process.env.TASK_SCHEDULER_STALE_LOCK_MS || 10 * 60 * 1000), 60_000);
+const POLL_MS = Math.max(Number(process.env.TASK_SCHEDULER_POLL_MS || 5000), 1000);
+const MAX_RETRIES = Math.max(Number(process.env.TASK_SCHEDULER_MAX_RETRIES || 3), 1);
 
-/**
- * Cron-based task scheduler for account audit tasks.
- *
- * On startup, loads all ACTIVE tasks with scheduleType != MANUAL and registers cron jobs.
- * Provides methods to register/unregister jobs when tasks are created/updated/deleted.
- * When a scheduled task fires, it creates an execution record with triggerType=SCHEDULED.
- */
+export interface ScheduleTenantContext {
+  tenantId: string | null;
+  schemaName: string;
+}
+
+/** PostgreSQL-backed scheduler. Schedule state and leases survive restarts. */
 class CronSchedulerService {
-  private jobs: Map<string, ScheduledTask> = new Map();
+  private pollTimer: NodeJS.Timeout | null = null;
+  private polling = false;
   private initialized = false;
+  private readonly workerId = `${os.hostname()}:${process.pid}`;
 
-  /**
-   * Initialize scheduler: load all active scheduled tasks from DB and register cron jobs.
-   * Call once on app startup.
-   */
   async initialize(): Promise<void> {
     if (this.initialized) return;
     this.initialized = true;
-
-    try {
-      const tasks = await AccountAuditTask.findAll({
-        where: {
-          status: TaskStatus.ACTIVE,
-          scheduleType: {
-            [require('sequelize').Op.not]: ScheduleType.MANUAL,
-          },
-        },
-      });
-
-      console.log(`[CronScheduler] Loading ${tasks.length} active scheduled task(s)...`);
-
-      for (const task of tasks) {
-        this.registerJob(task.id, task.scheduleType, task.scheduleConfig as any);
-      }
-
-      console.log(`[CronScheduler] Initialization complete. ${this.jobs.size} cron job(s) registered.`);
-    } catch (error: any) {
-      console.error(`[CronScheduler] Initialization failed: ${error.message}`);
-    }
+    await this.reconcileAllSchemas();
+    await this.processDueSchedules();
+    this.pollTimer = setInterval(() => {
+      void this.processDueSchedules();
+    }, POLL_MS);
+    this.pollTimer.unref();
+    console.log(`[TaskScheduler] persistent scheduler started as ${this.workerId}`);
   }
 
-  /**
-   * Register (or re-register) a cron job for a given task.
-   * Unregisters any existing job for this taskId first.
-   */
-  registerJob(taskId: string, scheduleType: ScheduleType, scheduleConfig?: Record<string, any> | null): void {
-    const expr = this.buildCronExpression(scheduleType, scheduleConfig);
-    if (!expr) {
-      console.log(`[CronScheduler] Task ${taskId} has scheduleType ${scheduleType} but no valid config — skipping.`);
+  buildCronExpression(scheduleType: ScheduleType, config?: Record<string, any> | null): string | null {
+    const numberInRange = (value: unknown, fallback: number, min: number, max: number): number => {
+      const number = value === undefined ? fallback : Number(value);
+      if (!Number.isInteger(number) || number < min || number > max) throw new Error('任务调度参数无效');
+      return number;
+    };
+    let expression: string | null = null;
+    if (scheduleType === ScheduleType.DAILY) {
+      expression = `${numberInRange(config?.minute, 0, 0, 59)} ${numberInRange(config?.hour, 0, 0, 23)} * * *`;
+    } else if (scheduleType === ScheduleType.WEEKLY) {
+      expression = `${numberInRange(config?.minute, 0, 0, 59)} ${numberInRange(config?.hour, 0, 0, 23)} * * ${numberInRange(config?.dayOfWeek, 1, 0, 6)}`;
+    } else if (scheduleType === ScheduleType.MONTHLY) {
+      expression = `${numberInRange(config?.minute, 0, 0, 59)} ${numberInRange(config?.hour, 0, 0, 23)} ${numberInRange(config?.dayOfMonth, 1, 1, 28)} * *`;
+    } else if (scheduleType === ScheduleType.CRON) {
+      expression = typeof config?.expression === 'string' ? config.expression.trim() : null;
+    }
+    if (!expression) return null;
+    if (!cron.validate(expression)) throw new Error('Cron表达式无效');
+    return expression;
+  }
+
+  async registerJob(
+    taskId: string,
+    scheduleType: ScheduleType,
+    scheduleConfig?: Record<string, any> | null,
+    tenant: ScheduleTenantContext = { tenantId: null, schemaName: 'public' },
+  ): Promise<void> {
+    const expression = this.buildCronExpression(scheduleType, scheduleConfig);
+    if (!expression) {
+      await this.unregisterJob(taskId, tenant);
       return;
     }
-
-    // Unregister any existing job for this taskId
-    this.unregisterJob(taskId);
-
-    try {
-      const job = cron.schedule(expr, async () => {
-        await this.executeScheduledTask(taskId);
-      }, {
-        timezone: 'Asia/Shanghai',
-      });
-
-      this.jobs.set(taskId, job);
-      console.log(`[CronScheduler] Registered cron job for task ${taskId}: "${expr}"`);
-    } catch (error: any) {
-      console.error(`[CronScheduler] Failed to register cron job for task ${taskId}: ${error.message}`);
-    }
-  }
-
-  /**
-   * Unregister the cron job for a given taskId.
-   */
-  unregisterJob(taskId: string): void {
-    const existing = this.jobs.get(taskId);
+    const existing = await TaskSchedule.findOne({ where: { schemaName: tenant.schemaName, taskId } });
+    const nextRunAt = existing?.cronExpression === expression && existing.nextRunAt
+      ? existing.nextRunAt
+      : this.calculateNextRun(expression);
     if (existing) {
-      existing.stop();
-      this.jobs.delete(taskId);
-      console.log(`[CronScheduler] Unregistered cron job for task ${taskId}`);
+      await existing.update({
+        tenantId: tenant.tenantId,
+        cronExpression: expression,
+        timezone: TIMEZONE,
+        status: PersistentScheduleStatus.ACTIVE,
+        nextRunAt,
+        lockedAt: null,
+        lockedBy: null,
+      });
+      return;
     }
+    await TaskSchedule.create({
+      tenantId: tenant.tenantId,
+      schemaName: tenant.schemaName,
+      taskId,
+      cronExpression: expression,
+      timezone: TIMEZONE,
+      status: PersistentScheduleStatus.ACTIVE,
+      nextRunAt,
+    });
   }
 
-  /**
-   * Build a cron expression from scheduleType and scheduleConfig.
-   */
-  private buildCronExpression(scheduleType: ScheduleType, config?: Record<string, any> | null): string | null {
-    switch (scheduleType) {
-      case ScheduleType.MANUAL:
-        return null;
-
-      case ScheduleType.DAILY: {
-        const hour = config?.hour ?? 0;
-        const minute = config?.minute ?? 0;
-        return `${minute} ${hour} * * *`;
-      }
-
-      case ScheduleType.WEEKLY: {
-        const dayOfWeek = config?.dayOfWeek ?? 1; // 0=Sun, 1=Mon, ...
-        const hour = config?.hour ?? 0;
-        const minute = config?.minute ?? 0;
-        return `${minute} ${hour} * * ${dayOfWeek}`;
-      }
-
-      case ScheduleType.MONTHLY: {
-        const dayOfMonth = config?.dayOfMonth ?? 1;
-        const hour = config?.hour ?? 0;
-        const minute = config?.minute ?? 0;
-        return `${minute} ${hour} ${dayOfMonth} * *`;
-      }
-
-      case ScheduleType.CRON: {
-        const expression = config?.expression;
-        if (!expression || typeof expression !== 'string') {
-          console.warn(`[CronScheduler] CRON scheduleType but no expression in config.`);
-          return null;
-        }
-        return expression;
-      }
-
-      default:
-        return null;
-    }
+  async unregisterJob(
+    taskId: string,
+    tenant: ScheduleTenantContext = { tenantId: null, schemaName: 'public' },
+  ): Promise<void> {
+    await TaskSchedule.destroy({ where: { schemaName: tenant.schemaName, taskId } });
   }
 
-  /**
-   * Execute a task triggered by cron. Sets triggerType=SCHEDULED.
-   */
-  private async executeScheduledTask(taskId: string): Promise<void> {
-    console.log(`[CronScheduler] Scheduled execution triggered for task ${taskId}`);
-
+  private calculateNextRun(expression: string): Date {
+    const task = cron.createTask(expression, () => undefined, { timezone: TIMEZONE });
     try {
-      // Re-fetch the task to ensure it's still ACTIVE
-      const task = await AccountAuditTask.findByPk(taskId);
-      if (!task || task.status !== TaskStatus.ACTIVE) {
-        console.log(`[CronScheduler] Task ${taskId} is no longer active — skipping.`);
-        this.unregisterJob(taskId);
-        return;
-      }
-
-      // Execute with a system user as the triggeredBy
-      const result = await auditTaskService.executeTaskScheduled(taskId);
-
-      console.log(
-        `[CronScheduler] Task ${taskId} executed: ` +
-        `${result.accountsProcessed} accounts, ${result.problemsFound} problems found.`
-      );
-    } catch (error: any) {
-      console.error(`[CronScheduler] Scheduled task ${taskId} failed: ${error.message}`);
+      const nextRun = task.getNextRun();
+      if (!nextRun) throw new Error('无法计算下次执行时间');
+      return nextRun;
+    } finally {
+      void task.destroy();
     }
   }
 
-  /**
-   * Stop all cron jobs. Useful for graceful shutdown.
-   */
-  shutdown(): void {
-    console.log(`[CronScheduler] Shutting down ${this.jobs.size} cron job(s)...`);
-    for (const [taskId, job] of this.jobs) {
-      job.stop();
+  private async reconcileAllSchemas(): Promise<void> {
+    await this.reconcileSchema({ schema: 'public', tenantId: null });
+    const tenants = await Tenant.findAll({ where: { status: TenantStatus.ACTIVE } });
+    for (const tenant of tenants) {
+      await this.reconcileSchema({ schema: tenant.schemaName, tenantId: tenant.id });
     }
-    this.jobs.clear();
-    console.log('[CronScheduler] All cron jobs stopped.');
+  }
+
+  private async reconcileSchema(context: TenantExecutionContext): Promise<void> {
+    await runWithTenantContext(context, async () => {
+      const staleBefore = new Date(Date.now() - STALE_LOCK_MS);
+      await TaskExecution.update({
+        status: ExecutionStatus.FAILED,
+        endTime: new Date(),
+        errorMessage: 'Worker心跳超时，执行已自动回收',
+      }, { where: { status: ExecutionStatus.RUNNING, heartbeatAt: { [Op.lt]: staleBefore } } });
+
+      const tasks = await AccountAuditTask.findAll({
+        where: { status: TaskStatus.ACTIVE, scheduleType: { [Op.ne]: ScheduleType.MANUAL } },
+      });
+      for (const task of tasks) {
+        await this.registerJob(task.id, task.scheduleType, task.scheduleConfig as any, {
+          tenantId: context.tenantId,
+          schemaName: context.schema,
+        });
+      }
+    });
+  }
+
+  private async claimDueSchedule(): Promise<TaskSchedule | null> {
+    const transaction = await sequelize.transaction();
+    try {
+      const staleBefore = new Date(Date.now() - STALE_LOCK_MS);
+      const schedule = await TaskSchedule.findOne({
+        where: {
+          status: PersistentScheduleStatus.ACTIVE,
+          nextRunAt: { [Op.lte]: new Date() },
+          [Op.or]: [{ lockedAt: null }, { lockedAt: { [Op.lt]: staleBefore } }],
+        },
+        order: [['nextRunAt', 'ASC']],
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+        skipLocked: true,
+      });
+      if (!schedule) {
+        await transaction.commit();
+        return null;
+      }
+      await schedule.update({ lockedAt: new Date(), lockedBy: this.workerId }, { transaction });
+      await transaction.commit();
+      return schedule;
+    } catch (error) {
+      await transaction.rollback();
+      throw error;
+    }
+  }
+
+  private async processDueSchedules(): Promise<void> {
+    if (this.polling) return;
+    this.polling = true;
+    try {
+      for (;;) {
+        const schedule = await this.claimDueSchedule();
+        if (!schedule) break;
+        await this.executeClaimedSchedule(schedule);
+      }
+    } catch (error: any) {
+      console.error(`[TaskScheduler] poll failed: ${error.message}`);
+    } finally {
+      this.polling = false;
+    }
+  }
+
+  private async executeClaimedSchedule(schedule: TaskSchedule): Promise<void> {
+    const scheduledFor = new Date(schedule.nextRunAt);
+    const attempt = schedule.failureCount + 1;
+    const idempotencyKey = `schedule:${schedule.id}:${scheduledFor.toISOString()}:attempt:${attempt}`;
+    try {
+      await runWithTenantContext({ schema: schedule.schemaName, tenantId: schedule.tenantId }, () =>
+        auditTaskService.executeTaskScheduled(schedule.taskId, idempotencyKey, attempt, MAX_RETRIES));
+      await schedule.update({
+        nextRunAt: this.calculateNextRun(schedule.cronExpression),
+        lastRunAt: new Date(),
+        failureCount: 0,
+        lastError: null,
+        lockedAt: null,
+        lockedBy: null,
+      });
+    } catch (error: any) {
+      const failures = schedule.failureCount + 1;
+      const exhausted = failures >= MAX_RETRIES;
+      const retryDelayMs = Math.min(60_000 * (2 ** Math.max(failures - 1, 0)), 15 * 60_000);
+      await schedule.update({
+        nextRunAt: exhausted ? this.calculateNextRun(schedule.cronExpression) : new Date(Date.now() + retryDelayMs),
+        failureCount: exhausted ? 0 : failures,
+        lastError: String(error.message || error).slice(0, 2000),
+        lockedAt: null,
+        lockedBy: null,
+      });
+    }
+  }
+
+  shutdown(): void {
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    this.pollTimer = null;
+    this.initialized = false;
+    console.log('[TaskScheduler] stopped');
   }
 }
 

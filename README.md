@@ -7,6 +7,7 @@
 ### 资质合规
 - 问卷模版管理（CSV 导入/导出、版本管理）
 - 审计任务创建 → 题目配置 → 指派 → 填写 → 审阅 → 退回/通过
+- 作答证据与历史证据在线预览（图片、CSV、PDF）
 - 风险项追踪与状态管理
 - 可视化仪表盘（任务分布、风险分布饼图）
 
@@ -32,7 +33,7 @@
 | 后端 | Node.js + Express + TypeScript + Sequelize ORM |
 | 数据库 | PostgreSQL |
 | 认证 | JWT (access + refresh) + bcrypt + SVG 验证码 |
-| 调度 | node-cron（定时审计任务） |
+| 调度 | PostgreSQL 持久化计划 + 数据库租约 Worker（Cron 表达式） |
 
 ## 快速开始
 
@@ -59,6 +60,24 @@ cd frontend && npm run dev
 - admin / Admin1234（管理员）
 - auditor / Auditor1234（审计员）
 - respondent / Respondent1234（普通用户）
+
+## P0-A/B/D/E 升级
+
+从旧版本升级时，先备份数据库与 `UPLOAD_DIR`，再执行：
+
+```bash
+cd backend
+npm run migrate:p0
+npm run build
+npm test
+```
+
+- P0-A：租户令牌与数据库租户实时校验；任务、题目、证据按创建人、复核人和被指派人做对象级授权。
+- P0-B：证据随机存储名、内容签名检查、SHA-256、版本链、软删除、锁定和下载/预览审计。
+- P0-D：数据源凭据版本化 AES-GCM 加密、主机校验、TLS 证书校验、只读表连接并禁用任意 SQL。
+- P0-E：调度计划持久化、数据库租约、多实例互斥、心跳回收、失败重试和幂等执行。
+
+生产环境必须设置强随机的 `JWT_SECRET` 和 `ENCRYPTION_KEY`。数据库连接器仅支持 PostgreSQL，建议使用只能 `SELECT` 指定表的独立账号并启用 TLS。
 
 ## 项目结构
 

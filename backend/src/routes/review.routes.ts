@@ -1,12 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { authenticate, authorize } from '../middlewares/auth';
 import reviewService from '../services/review.service';
+import { requireObjectAccess } from '../middlewares/objectAccess';
 
 const router = Router();
 router.use(authenticate);
 router.use(authorize('tasks', 'update'));
 
-router.get('/tasks/:taskId', async (req: Request, res: Response) => {
+router.get('/tasks/:taskId', requireObjectAccess('task', 'taskId', 'review'), async (req: Request, res: Response) => {
   try {
     const data = await reviewService.getReviewData(req.params.taskId);
     res.json({ success: true, data });
@@ -15,7 +16,7 @@ router.get('/tasks/:taskId', async (req: Request, res: Response) => {
   }
 });
 
-router.put('/questions/:id', async (req: Request, res: Response) => {
+router.put('/questions/:id', requireObjectAccess('question', 'id', 'review'), async (req: Request, res: Response) => {
   try {
     const item = await reviewService.saveReview(req.params.id, req.body);
     res.json({ success: true, data: item });

@@ -1,8 +1,16 @@
 import { Op } from 'sequelize';
+import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import { DataSource, DataSourceType, DataSourceStatus, MappingStatus, DataTier, AccountData } from '../../models/account';
-import { encrypt, decrypt } from '../../utils/crypto';
 import auditLogService from '../audit-log.service';
 import { OperationType } from '../../models';
+import {
+  createSecureDataSourceConnection,
+  normalizeConnectionConfig,
+  sanitizeConnectionConfig,
+  validateDataSourceHost,
+} from './dataSource-security.service';
 
 interface ListQuery {
   page?: number;
@@ -78,13 +86,10 @@ class DataSourceService {
       throw new Error(`无效的数据源类型: ${sourceType}`);
     }
 
-    // 对数据库连接配置中的密码字段进行加密
     let sanitizedConnConfig = connectionConfig || null;
     if (sourceType === DataSourceType.DATABASE && connectionConfig) {
-      const cfg = { ...(connectionConfig as any) };
-      if (cfg.password) {
-        cfg.password = encrypt(cfg.password);
-      }
+      const cfg = normalizeConnectionConfig(connectionConfig);
+      await validateDataSourceHost(cfg.host);
       sanitizedConnConfig = cfg;
     }
 
@@ -97,6 +102,7 @@ class DataSourceService {
       mappingStatus: MappingStatus.UNCONFIGURED,
       status: DataSourceStatus.ACTIVE,
       totalAccounts: 0,
+      createdBy: userId || null,
     } as any);
 
     if (userId) {
@@ -117,31 +123,24 @@ class DataSourceService {
    * 预览数据库字段名
    */
   async previewDbFields(config: any) {
-    const { dbType, host, port, database, username, password } = config;
-    if (!dbType || !host || !port || !database) {
-      throw new Error('数据库连接信息不完整');
-    }
-
-    // 仅支持 MySQL/PostgreSQL
-    const { Sequelize } = require('sequelize');
-    let dialect = 'postgres';
-    if (dbType.toLowerCase() === 'mysql') dialect = 'mysql';
-    else if (dbType.toLowerCase() === 'mssql' || dbType === 'SQL Server') dialect = 'mssql';
-    
-    const testConn = new Sequelize(database, username, password, {
-      host, port: parseInt(port), dialect,
-      logging: false,
-      dialectOptions: { connectTimeout: 5000 },
-    });
+    const secureConfig = normalizeConnectionConfig(config);
+    const testConn = await createSecureDataSourceConnection(secureConfig);
 
     try {
       await testConn.authenticate();
-      // 查询 INFORMATION_SCHEMA 获取列名
       const [results] = await testConn.query(
-        `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' ORDER BY ordinal_position LIMIT 100`
+        `SELECT table_name, column_name
+           FROM information_schema.columns
+          WHERE table_schema = :schema
+            AND (:tableName IS NULL OR table_name = :tableName)
+          ORDER BY table_name, ordinal_position
+          LIMIT 500`,
+        { replacements: { schema: secureConfig.schema, tableName: secureConfig.table || null } },
       );
-      const columns = (results as any[]).map((r: any) => r.column_name);
-      return { columns };
+      const fieldDetails = (results as any[]).map((r: any) => ({ table: r.table_name, name: r.column_name }));
+      return { columns: [...new Set(fieldDetails.map(field => field.name))], fieldDetails };
+    } catch {
+      throw new Error('无法读取字段，请检查网络、只读账号、TLS证书和Schema配置');
     } finally {
       await testConn.close();
     }
@@ -154,14 +153,28 @@ class DataSourceService {
     const { name, delimiter, encoding, hasHeader, fieldMappingConfig } = body;
 
     if (!name) throw new Error('数据源名称不能为空');
+    const originalName = path.basename(file.originalname);
+    const extension = path.extname(originalName).toLowerCase();
+    if (extension !== '.csv') {
+      await fs.promises.unlink(file.path).catch(() => {});
+      throw new Error('仅允许上传 CSV 文件');
+    }
+    const fileHash = await new Promise<string>((resolve, reject) => {
+      const hash = crypto.createHash('sha256');
+      const stream = fs.createReadStream(file.path);
+      stream.on('data', chunk => hash.update(chunk));
+      stream.on('error', reject);
+      stream.on('end', () => resolve(hash.digest('hex')));
+    });
 
     const csvConfig = {
       filePath: file.path,
-      originalName: file.originalname,
+      originalName,
       delimiter: delimiter || ',',
       encoding: encoding || 'UTF-8',
       hasHeader: hasHeader === 'true' || hasHeader === true,
       size: file.size,
+      sha256: fileHash,
     };
 
     let fieldMapping = {};
@@ -182,6 +195,7 @@ class DataSourceService {
       mappingStatus: Object.keys(fieldMapping).length > 0 ? MappingStatus.CONFIGURED : MappingStatus.UNCONFIGURED,
       status: DataSourceStatus.ACTIVE,
       totalAccounts: 0,
+      createdBy: userId || null,
     } as any);
 
     if (userId) {
@@ -221,11 +235,8 @@ class DataSourceService {
     if (data.status !== undefined) updates.status = data.status;
 
     if (data.connectionConfig !== undefined) {
-      const cfg = { ...(data.connectionConfig as any) };
-      // 如果密码字段存在且未加密（不以 iv:tag:cipher 格式出现），则加密
-      if (cfg.password && !cfg.password.includes(':')) {
-        cfg.password = encrypt(cfg.password);
-      }
+      const cfg = normalizeConnectionConfig(data.connectionConfig, ds.connectionConfig as any);
+      await validateDataSourceHost(cfg.host);
       updates.connectionConfig = cfg;
     }
 
@@ -306,36 +317,16 @@ class DataSourceService {
       throw new Error('仅支持测试数据库类型的数据源连接');
     }
 
-    const config = ds.connectionConfig as any;
-    let password = config.password || '';
-    try {
-      password = decrypt(password);
-    } catch {
-      // 密码可能未加密
-    }
-
-    // 使用 Sequelize 测试连接
-    const { Sequelize } = require('sequelize');
-    const testConn = new Sequelize({
-      dialect: config.dialect || 'postgres',
-      host: config.host,
-      port: config.port || 5432,
-      database: config.database,
-      username: config.username,
-      password: password,
-      logging: false,
-      dialectOptions: config.ssl
-        ? { ssl: { require: true, rejectUnauthorized: false } }
-        : {},
-    });
+    const secureConfig = normalizeConnectionConfig(ds.connectionConfig);
+    const testConn = await createSecureDataSourceConnection(secureConfig);
 
     try {
       await testConn.authenticate();
       await testConn.close();
       return { success: true, message: '连接成功' };
-    } catch (error: any) {
+    } catch {
       await testConn.close().catch(() => {});
-      return { success: false, message: `连接失败: ${error.message}` };
+      return { success: false, message: '连接失败，请检查网络、只读账号、TLS证书和数据库配置' };
     }
   }
 
@@ -500,7 +491,7 @@ class DataSourceService {
     const fs = await import('fs');
 
     const filePath = csvCfg.filePath;
-    if (!fs.existsSync(filePath)) throw new Error(`CSV 文件不存在: ${filePath}`);
+    if (!fs.existsSync(filePath)) throw new Error('CSV 数据源文件不存在或已被移除');
 
     const delimiter = csvCfg.delimiter || ',';
     const encoding = csvCfg.encoding || 'UTF-8';
@@ -566,29 +557,15 @@ class DataSourceService {
    * 查询数据库获取账户数据
    */
   private async queryDatabase(connCfg: any, mappingConfig: Record<string, string>): Promise<any[]> {
-    const { Sequelize } = require('sequelize');
-    const { decrypt } = require('../../utils/crypto');
-
-    let password = connCfg.password || '';
-    // 尝试解密
-    try { password = decrypt(password); } catch {}
-
-    let dialect = 'postgres';
-    if (connCfg.dbType?.toLowerCase() === 'mysql') dialect = 'mysql';
-    else if (connCfg.dbType?.toLowerCase() === 'mssql' || connCfg.dbType === 'SQL Server') dialect = 'mssql';
-
-    const conn = new Sequelize(connCfg.database, connCfg.username, password, {
-      host: connCfg.host,
-      port: parseInt(connCfg.port) || 5432,
-      dialect,
-      logging: false,
-      dialectOptions: { connectTimeout: 10000 },
-    });
+    const secureConfig = normalizeConnectionConfig(connCfg);
+    if (!secureConfig.table) throw new Error('数据库数据源必须配置只读表名');
+    const conn = await createSecureDataSourceConnection(secureConfig);
 
     try {
       await conn.authenticate();
-      // 使用简单查询获取数据
-      const sql = connCfg.sql || `SELECT * FROM ${connCfg.table || 'users'} LIMIT 10000`;
+      const quotedSchema = `"${secureConfig.schema.replace(/"/g, '""')}"`;
+      const quotedTable = `"${secureConfig.table.replace(/"/g, '""')}"`;
+      const sql = `SELECT * FROM ${quotedSchema}.${quotedTable} LIMIT ${secureConfig.maxRows}`;
       const [results] = await conn.query(sql);
 
       return (results as any[]).map((row: any) => {
@@ -610,6 +587,8 @@ class DataSourceService {
         }
         return mapped;
       });
+    } catch {
+      throw new Error('数据库同步失败，请检查网络、只读账号、TLS证书、Schema和表配置');
     } finally {
       await conn.close();
     }
@@ -686,11 +665,7 @@ class DataSourceService {
    */
   private sanitizeDataSource(ds: any) {
     if (ds.connectionConfig) {
-      const cfg = { ...ds.connectionConfig };
-      if (cfg.password) {
-        cfg.password = '******';
-      }
-      ds.connectionConfig = cfg;
+      ds.connectionConfig = sanitizeConnectionConfig(ds.connectionConfig);
     }
     return ds;
   }

@@ -6,6 +6,8 @@ import {
   UserRole, AssessmentType, TaskStatus, AnswerStatus,
   ComplianceStatus, RiskLevel, RemediationStatus, RiskStatus,
   NotificationType, OperationType,
+  EvidenceType,
+  EvidenceStatus, EvidenceScanStatus,
 } from './enums';
 
 // ---- User ----
@@ -113,6 +115,12 @@ export interface IQuestionItem {
 export interface IEvidenceFile {
   id: string;
   questionItemId: string;
+  evidenceType: EvidenceType;
+  version: number;
+  sha256: string | null;
+  scanStatus: EvidenceScanStatus;
+  status: EvidenceStatus;
+  isLocked: boolean;
   originalFilename: string;
   storedFilename: string;
   filePath: string;
@@ -120,6 +128,8 @@ export interface IEvidenceFile {
   mimeType: string;
   uploadedBy: string;
   uploadedAt: Date;
+  deletedAt: Date | null;
+  deletedBy: string | null;
 }
 
 // ---- RiskRecord ----

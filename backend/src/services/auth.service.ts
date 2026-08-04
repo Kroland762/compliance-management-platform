@@ -109,14 +109,18 @@ class AuthService {
       if (role) { roleName = role.name; permissions = role.permissions; }
     }
     // Token 吊销检查：比对 JWT 中的 tokenVersion 与 DB 中当前值
-    const user = await User.findByPk(decoded.userId, { attributes: ['tokenVersion', 'isActive'] });
+    const user = await User.findByPk(decoded.userId, { attributes: ['tokenVersion', 'isActive', 'tenantId'] });
     if (!user || !user.isActive) {
       throw new Error('用户不存在或已禁用');
     }
     if (user.tokenVersion !== decoded.tokenVersion) {
       throw new Error('令牌已失效，请重新登录');
     }
-    return { userId: decoded.userId, username: decoded.username, role: roleName, roleId: decoded.roleId, tenantId: decoded.tenantId, permissions };
+    const databaseTenantId = user.tenantId || undefined;
+    if (databaseTenantId !== decoded.tenantId) {
+      throw new Error('租户上下文已变更，请重新登录');
+    }
+    return { userId: decoded.userId, username: decoded.username, role: roleName, roleId: decoded.roleId, tenantId: databaseTenantId, permissions };
   }
 
   async verifyToken(token: string): Promise<TokenPayload> {

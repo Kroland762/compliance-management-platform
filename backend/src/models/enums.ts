@@ -30,6 +30,24 @@ export enum AnswerStatus {
   ANSWERED = 'answered',
 }
 
+export enum EvidenceType {
+  CURRENT = 'current',
+  HISTORICAL = 'historical',
+}
+
+export enum EvidenceStatus {
+  ACTIVE = 'active',
+  DELETED = 'deleted',
+  QUARANTINED = 'quarantined',
+}
+
+export enum EvidenceScanStatus {
+  PENDING = 'pending',
+  CLEAN = 'clean',
+  REJECTED = 'rejected',
+  ERROR = 'error',
+}
+
 export enum ComplianceStatus {
   COMPLIANT = 'compliant',
   PARTIALLY_COMPLIANT = 'partially_compliant',

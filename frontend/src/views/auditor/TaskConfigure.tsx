@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Table, Input, AutoComplete, Button, Upload, message, Typography, Tag, Select, Space } from 'antd';
-import { SaveOutlined, UserSwitchOutlined, UploadOutlined, DeleteOutlined, PaperClipOutlined } from '@ant-design/icons';
+import { SaveOutlined, UserSwitchOutlined, UploadOutlined, DeleteOutlined, PaperClipOutlined, DownloadOutlined } from '@ant-design/icons';
 import apiClient from '../../api/client';
 import { getApiErrorMessage } from '../../utils/error';
+import FilePreviewModal, { downloadEvidenceFile, type PreviewableEvidenceFile } from '../../components/FilePreviewModal';
 
 const { Title, Text } = Typography;
 
@@ -18,6 +19,7 @@ export default function TaskConfigure() {
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [batchUser, setBatchUser] = useState<string | null>(null);
   const [usersList, setUsersList] = useState<any[]>([]);
+  const [previewFile, setPreviewFile] = useState<PreviewableEvidenceFile | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -83,7 +85,6 @@ export default function TaskConfigure() {
         questionAssignments: questions.map(q => ({
           questionId: q.id,
           referenceAnswer: q.referenceAnswer || null,
-          historicalEvidencePath: q.historicalEvidencePath || null,
           responsibleDepartment: q.responsibleDepartment || null,
           responsiblePerson: q.responsiblePerson || null,
           assignedTo: q.assignedTo || null,
@@ -108,8 +109,8 @@ export default function TaskConfigure() {
       ),
     },
     {
-      title: '历史证据', dataIndex: 'historicalEvidencePath', width: 180,
-      render: (v: string, _: any, i: number) => (
+      title: '历史证据', dataIndex: 'historicalEvidence', width: 230,
+      render: (_: any, record: any, i: number) => (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <Upload
             maxCount={1}
@@ -121,31 +122,44 @@ export default function TaskConfigure() {
                 const res: any = await apiClient.post(`/questions/${questions[i].id}/historical-evidence`, formData, {
                   headers: { 'Content-Type': 'multipart/form-data' },
                 });
-                updateQuestion(i, 'historicalEvidencePath', res.data.path);
-                updateQuestion(i, '_evidenceFilename', file.name);
+                setQuestions(current => current.map((question, index) => index === i
+                  ? { ...question, historicalEvidence: res.data, historicalEvidencePath: res.data.filePath }
+                  : question));
                 onSuccess(res, file);
+                message.success(`“${file.name}”上传成功`);
               } catch (err) {
                 onError(err);
+                message.error(getApiErrorMessage(err, '上传失败'));
               }
             }}
           >
-            <Button size="small" icon={<UploadOutlined />}>上传文件</Button>
+            <Button size="small" icon={<UploadOutlined />}>{record.historicalEvidence ? '替换文件' : '上传文件'}</Button>
           </Upload>
           {(() => {
-            const filename = questions[i]._evidenceFilename || (v ? v.split('/').pop() : '');
+            const evidence = record.historicalEvidence as PreviewableEvidenceFile | undefined;
+            const filename = evidence?.originalFilename || (record.historicalEvidencePath ? record.historicalEvidencePath.split('/').pop() : '');
             if (filename) {
               return (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                   <PaperClipOutlined style={{ fontSize: 11, color: '#007AFF' }} />
-                  <Text style={{ fontSize: 12, flex: 1 }} ellipsis={{ tooltip: filename }}>{filename}</Text>
+                  {evidence ? (
+                    <Button type="link" size="small" style={{ padding: 0, fontSize: 12, flex: 1, minWidth: 0, textAlign: 'left' }} onClick={() => setPreviewFile(evidence)}>
+                      <Text ellipsis={{ tooltip: filename }} style={{ maxWidth: 105 }}>{filename}</Text>
+                    </Button>
+                  ) : <Text style={{ fontSize: 12, flex: 1 }} ellipsis={{ tooltip: filename }}>{filename}</Text>}
+                  {evidence && (
+                    <Button type="text" size="small" icon={<DownloadOutlined />} title="下载" onClick={() => downloadEvidenceFile(evidence)} />
+                  )}
                   <Button
                     type="text" size="small" danger
                     icon={<DeleteOutlined />}
                     onClick={async () => {
                       try {
                         await apiClient.delete(`/questions/${questions[i].id}/historical-evidence`);
-                        updateQuestion(i, 'historicalEvidencePath', '');
-                        updateQuestion(i, '_evidenceFilename', '');
+                        setQuestions(current => current.map((question, index) => index === i
+                          ? { ...question, historicalEvidence: null, historicalEvidencePath: null }
+                          : question));
+                        message.success('历史证据已删除');
                       } catch (err: any) {
                         message.error(getApiErrorMessage(err, '删除失败'));
                       }
@@ -239,6 +253,7 @@ export default function TaskConfigure() {
           columns={columns} dataSource={questions} rowKey="id" pagination={false}
           scroll={{ x: 1200 }} size="small" />
       </div>
+      <FilePreviewModal file={previewFile} open={Boolean(previewFile)} onClose={() => setPreviewFile(null)} />
     </div>
   );
 }

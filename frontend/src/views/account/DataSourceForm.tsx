@@ -8,7 +8,7 @@ import apiClient from '../../api/client';
 
 const { Title, Text } = Typography;
 
-const DB_TYPES = ['MySQL', 'PostgreSQL', 'SQL Server', 'Oracle', 'SQLite'];
+const DB_TYPES = ['PostgreSQL'];
 const ENCODINGS = ['UTF-8', 'GBK', 'GB2312', 'ISO-8859-1', 'UTF-16'];
 
 interface ConvertPair {
@@ -116,8 +116,9 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
       database: ds.connectionConfig?.database,
       username: ds.connectionConfig?.username,
       password: ds.connectionConfig?.password,
+      schema: ds.connectionConfig?.schema || 'public',
+      ssl: ds.connectionConfig?.ssl ?? true,
       table: ds.connectionConfig?.table,
-      sql: ds.connectionConfig?.sql,
       delimiter: ds.csvConfig?.delimiter || ',',
       encoding: ds.csvConfig?.encoding || 'UTF-8',
       hasHeader: ds.csvConfig?.hasHeader ?? true,
@@ -166,7 +167,7 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
   // DB field preview
   const handlePreviewDbFields = async () => {
     try {
-      const values = await form.validateFields(['dbType', 'host', 'port', 'database', 'username', 'password']);
+      const values = await form.validateFields(['dbType', 'host', 'port', 'database', 'username', 'password', 'schema', 'table', 'ssl']);
       setPreviewingFields(true);
       const res: any = await apiClient.post('/account/data-sources/preview-fields', {
         dbType: values.dbType,
@@ -175,6 +176,9 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
         database: values.database,
         username: values.username,
         password: values.password,
+        schema: values.schema,
+        table: values.table,
+        ssl: values.ssl,
       });
       setDbColumns(res.data?.columns || []);
       if ((res.data?.columns || []).length > 0) {
@@ -210,8 +214,9 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
             database: values.database,
             username: values.username,
             password: values.password,
+            schema: values.schema || 'public',
+            ssl: values.ssl === true,
             table: values.table || undefined,
-            sql: values.sql || undefined,
           },
         };
         if (isEdit) {
@@ -315,7 +320,7 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
 
   const formContent = (
     <div style={{ maxWidth: inModal ? '100%' : 720 }}>
-      <Form form={form} layout="vertical" initialValues={{ type: 'DATABASE', delimiter: ',', encoding: 'UTF-8', hasHeader: true }}>
+      <Form form={form} layout="vertical" initialValues={{ type: 'DATABASE', dbType: 'PostgreSQL', port: 5432, schema: 'public', ssl: true, delimiter: ',', encoding: 'UTF-8', hasHeader: true }}>
         {/* Basic Info */}
         <div style={{
           background: 'rgba(255,255,255,0.8)',
@@ -367,10 +372,10 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
               </Form.Item>
               <div style={{ display: 'flex', gap: 12 }}>
                 <Form.Item name="host" label="主机地址" rules={[{ required: true }]} style={{ flex: 1 }}>
-                  <Input placeholder="localhost" />
+                  <Input placeholder="db.internal.example.com" />
                 </Form.Item>
                 <Form.Item name="port" label="端口" rules={[{ required: true }]} style={{ width: 140 }}>
-                  <InputNumber placeholder="3306" style={{ width: '100%' }} />
+                  <InputNumber placeholder="5432" style={{ width: '100%' }} />
                 </Form.Item>
               </div>
               <Form.Item name="database" label="数据库名" rules={[{ required: true }]}>
@@ -378,17 +383,22 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
               </Form.Item>
               <div style={{ display: 'flex', gap: 12 }}>
                 <Form.Item name="username" label="用户名" style={{ flex: 1 }}>
-                  <Input placeholder="root" />
+                  <Input placeholder="compliance_readonly" />
                 </Form.Item>
                 <Form.Item name="password" label="密码" style={{ flex: 1 }}>
                   <Input.Password placeholder="••••••" />
                 </Form.Item>
               </div>
-              <Form.Item name="table" label="查询表名">
-                <Input placeholder="不填则默认读取 users 表" />
-              </Form.Item>
-              <Form.Item name="sql" label="自定义SQL（可选）" extra="优先于表名，如 SELECT * FROM orders WHERE status='active'">
-                <Input.TextArea placeholder="自定义查询语句，不填则 SELECT * FROM [表名]" rows={2} />
+              <div style={{ display: 'flex', gap: 12 }}>
+                <Form.Item name="schema" label="Schema" rules={[{ required: true }]} style={{ flex: 1 }}>
+                  <Input placeholder="public" />
+                </Form.Item>
+                <Form.Item name="table" label="只读表名" rules={[{ required: true }]} style={{ flex: 1 }}>
+                  <Input placeholder="users" />
+                </Form.Item>
+              </div>
+              <Form.Item name="ssl" label="TLS 加密" rules={[{ required: true }]}>
+                <Select options={[{ value: true, label: '启用（推荐）' }, { value: false, label: '停用（仅限受控开发环境）' }]} />
               </Form.Item>
             </>
           ) : (

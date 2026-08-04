@@ -1,12 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { authenticate, authorize } from '../middlewares/auth';
 import exportService from '../services/export.service';
+import { requireObjectAccess } from '../middlewares/objectAccess';
 
 const router = Router();
 router.use(authenticate);
 router.use(authorize('export', 'create'));
 
-router.get('/tasks/:id', async (req: Request, res: Response) => {
+router.get('/tasks/:id', requireObjectAccess('task', 'id', 'read'), async (req: Request, res: Response) => {
   try {
     const buffer = await exportService.exportAuditTask(req.params.id, req.user!.username);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

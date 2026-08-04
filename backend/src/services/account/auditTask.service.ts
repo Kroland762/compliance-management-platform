@@ -1,4 +1,5 @@
-import { Op, fn, col } from 'sequelize';
+import { Op } from 'sequelize';
+import crypto from 'crypto';
 import {
   AccountAuditTask,
   ScheduleType,
@@ -43,6 +44,13 @@ interface UpdateTaskInput {
   scheduleConfig?: object;
   status?: TaskStatus;
 }
+
+interface TaskTenantContext {
+  tenantId: string | null;
+  schemaName: string;
+}
+
+const PUBLIC_TASK_CONTEXT: TaskTenantContext = { tenantId: null, schemaName: 'public' };
 
 class AuditTaskService {
   /**
@@ -106,7 +114,7 @@ class AuditTaskService {
   /**
    * 创建任务
    */
-  async createTask(data: CreateTaskInput, userId?: string) {
+  async createTask(data: CreateTaskInput, userId?: string, tenantContext: TaskTenantContext = PUBLIC_TASK_CONTEXT) {
     const ds = await DataSource.findByPk(data.sourceId);
     if (!ds) throw new Error('数据源不存在');
     if (ds.status === DataSourceStatus.INACTIVE) throw new Error('数据源已停用，无法创建任务');
@@ -135,7 +143,7 @@ class AuditTaskService {
 
     // Register cron job for non-MANUAL tasks
     if (task.scheduleType !== ScheduleType.MANUAL && task.status === TaskStatus.ACTIVE) {
-      cronSchedulerService.registerJob(task.id, task.scheduleType, task.scheduleConfig as any);
+      await cronSchedulerService.registerJob(task.id, task.scheduleType, task.scheduleConfig as any, tenantContext);
     }
 
     if (userId) {
@@ -155,7 +163,7 @@ class AuditTaskService {
   /**
    * 更新任务
    */
-  async updateTask(id: string, data: UpdateTaskInput, userId?: string) {
+  async updateTask(id: string, data: UpdateTaskInput, userId?: string, tenantContext: TaskTenantContext = PUBLIC_TASK_CONTEXT) {
     const task = await AccountAuditTask.findByPk(id);
     if (!task) throw new Error('审计任务不存在');
 
@@ -180,9 +188,9 @@ class AuditTaskService {
     // Re-register cron job based on new schedule
     const updated = await task.reload();
     if (updated.scheduleType !== ScheduleType.MANUAL && updated.status === TaskStatus.ACTIVE) {
-      cronSchedulerService.registerJob(updated.id, updated.scheduleType, updated.scheduleConfig as any);
+      await cronSchedulerService.registerJob(updated.id, updated.scheduleType, updated.scheduleConfig as any, tenantContext);
     } else {
-      cronSchedulerService.unregisterJob(updated.id);
+      await cronSchedulerService.unregisterJob(updated.id, tenantContext);
     }
 
     if (userId) {
@@ -202,12 +210,12 @@ class AuditTaskService {
   /**
    * 删除任务
    */
-  async deleteTask(id: string, userId?: string) {
+  async deleteTask(id: string, userId?: string, tenantContext: TaskTenantContext = PUBLIC_TASK_CONTEXT) {
     const task = await AccountAuditTask.findByPk(id);
     if (!task) throw new Error('审计任务不存在');
 
     // Unregister cron job
-    cronSchedulerService.unregisterJob(id);
+    await cronSchedulerService.unregisterJob(id, tenantContext);
 
     // 删除执行记录
     await TaskExecution.destroy({ where: { taskId: id } });
@@ -232,23 +240,42 @@ class AuditTaskService {
   /**
    * 执行审计任务（通过 cron 调度触发，triggerType=SCHEDULED，无需 userId）
    */
-  async executeTaskScheduled(id: string) {
-    return this.executeTaskInternal(id, undefined, TriggerType.SCHEDULED);
+  async executeTaskScheduled(id: string, idempotencyKey: string, attempt = 1, maxAttempts = 3) {
+    return this.executeTaskInternal(id, undefined, TriggerType.SCHEDULED, idempotencyKey, attempt, maxAttempts);
   }
 
   /**
    * 执行审计任务（手动触发，triggerType=MANUAL）
    */
-  async executeTask(id: string, userId: string) {
-    return this.executeTaskInternal(id, userId, TriggerType.MANUAL);
+  async executeTask(id: string, userId: string, idempotencyKey?: string) {
+    const key = idempotencyKey || `manual:${id}:${crypto.randomUUID()}`;
+    return this.executeTaskInternal(id, userId, TriggerType.MANUAL, key, 1, 1);
   }
 
   /**
    * 执行审计任务：完整的执行流水线
    */
-  private async executeTaskInternal(id: string, userId: string | undefined, triggerType: TriggerType) {
+  private async executeTaskInternal(
+    id: string,
+    userId: string | undefined,
+    triggerType: TriggerType,
+    idempotencyKey: string,
+    attempt: number,
+    maxAttempts: number,
+  ) {
     const task = await AccountAuditTask.findByPk(id);
     if (!task) throw new Error('审计任务不存在');
+
+    const priorExecution = await TaskExecution.findOne({ where: { idempotencyKey } });
+    if (priorExecution) {
+      return {
+        executionId: priorExecution.id,
+        status: priorExecution.status,
+        accountsProcessed: priorExecution.accountsProcessed,
+        problemsFound: priorExecution.problemsFound,
+        idempotentReplay: true,
+      };
+    }
 
     // 并发保护：检查是否有正在运行的执行
     const runningExecution = await TaskExecution.findOne({
@@ -267,19 +294,31 @@ class AuditTaskService {
     const batchId = uuidv4();
 
     // 创建执行记录
-    const execution = await TaskExecution.create({
-      taskId: id,
-      status: ExecutionStatus.RUNNING,
-      currentPhase: ExecutionPhase.SYNCING,
-      phaseProgress: 0,
-      startTime: new Date(),
-      triggerType,
-      triggeredBy: userId || null,
-    } as any);
+    let execution: TaskExecution;
+    try {
+      execution = await TaskExecution.create({
+        taskId: id,
+        status: ExecutionStatus.RUNNING,
+        currentPhase: ExecutionPhase.SYNCING,
+        phaseProgress: 0,
+        startTime: new Date(),
+        heartbeatAt: new Date(),
+        triggerType,
+        triggeredBy: userId || null,
+        attempt,
+        maxAttempts,
+        idempotencyKey,
+      } as any);
+    } catch (error: any) {
+      if (error?.name === 'SequelizeUniqueConstraintError') {
+        throw new Error('该任务正在执行中，或相同幂等请求已被受理');
+      }
+      throw error;
+    }
 
     try {
       // === 阶段1: 同步数据 ===
-      await execution.update({ currentPhase: ExecutionPhase.SYNCING, phaseProgress: 10 });
+      await execution.update({ currentPhase: ExecutionPhase.SYNCING, phaseProgress: 10, heartbeatAt: new Date() });
 
       // 检查是否需要同步（如果数据源上次同步时间较久或没有HOT数据）
       const hotCount = await AccountData.count({
@@ -292,10 +331,10 @@ class AuditTaskService {
       }
 
       // === 阶段2: 字段映射 ===
-      await execution.update({ currentPhase: ExecutionPhase.MAPPING, phaseProgress: 30 });
+      await execution.update({ currentPhase: ExecutionPhase.MAPPING, phaseProgress: 30, heartbeatAt: new Date() });
 
       // === 阶段3: 规则匹配 ===
-      await execution.update({ currentPhase: ExecutionPhase.MATCHING, phaseProgress: 50 });
+      await execution.update({ currentPhase: ExecutionPhase.MATCHING, phaseProgress: 50, heartbeatAt: new Date() });
 
       // 查询本数据源的 HOT 数据
       const hotAccounts = await AccountData.findAll({
@@ -321,7 +360,7 @@ class AuditTaskService {
       const matchedResults = evaluationResults.filter(r => r.matched);
 
       // === 阶段4: 去重 & 自动解决 ===
-      await execution.update({ currentPhase: ExecutionPhase.SAVING, phaseProgress: 80 });
+      await execution.update({ currentPhase: ExecutionPhase.SAVING, phaseProgress: 80, heartbeatAt: new Date() });
 
       // 4a. 去重：accountId + ruleId 唯一
       const newProblems = new Map<string, typeof matchedResults[0]>();
@@ -426,6 +465,7 @@ class AuditTaskService {
         batchId,
         accountsProcessed: accountIds.length,
         problemsFound: newProblems.size,
+        heartbeatAt: endTime,
         newProblems: newProblemCount,
         autoResolved: autoResolvedCount,
         skippedSameTask,
@@ -471,6 +511,7 @@ class AuditTaskService {
         phaseProgress: 0,
         endTime: new Date(),
         errorMessage: error.message,
+        heartbeatAt: new Date(),
       });
 
       throw error;

@@ -6,11 +6,11 @@ import { config } from '../config';
 import Tenant, { TenantStatus } from '../models/Tenant';
 
 // 请求级租户上下文存储（Node.js 内置 AsyncLocalStorage，替代 cls-hooked）
-interface TenantStore {
+export interface TenantExecutionContext {
   schema: string;
   tenantId: string | null;
 }
-const tenantAls = new AsyncLocalStorage<TenantStore>();
+const tenantAls = new AsyncLocalStorage<TenantExecutionContext>();
 
 // Patch Sequelize 连接池 —— 每次取连接时根据当前请求上下文设 search_path + RLS
 let poolPatched = false;
@@ -29,7 +29,7 @@ function patchConnectionPool() {
     const tenantId = store?.tenantId;
     if (schema && schema !== 'public') {
       await conn.query('RESET app.current_tenant_id');
-      await conn.query(`SET app.current_tenant_id = '${tenantId || ''}'`);
+      await conn.query(`SELECT set_config('app.current_tenant_id', '${tenantId || ''}', false)`);
       await conn.query(`SET search_path TO "${schema}", public`);
     } else {
       await conn.query('RESET app.current_tenant_id');
@@ -37,6 +37,14 @@ function patchConnectionPool() {
     }
     return conn;
   };
+}
+
+export function runWithTenantContext<T>(context: TenantExecutionContext, callback: () => T): T {
+  if (!/^[A-Za-z_][A-Za-z0-9_]{0,62}$/.test(context.schema)) {
+    throw new Error('非法租户 Schema');
+  }
+  patchConnectionPool();
+  return tenantAls.run(context, callback);
 }
 
 // 扩展 Express Request
@@ -93,7 +101,7 @@ export function tenantContext(req: Request, res: Response, next: NextFunction): 
         schemaName: tenant.schemaName,
       };
 
-      tenantAls.run(
+      runWithTenantContext(
         { schema: tenant.schemaName, tenantId: tenant.id },
         () => next()
       );

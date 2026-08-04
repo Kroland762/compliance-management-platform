@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Table, Input, Button, Upload, message, Typography, Modal, Tag } from 'antd';
-import { UploadOutlined, DeleteOutlined, SaveOutlined, SendOutlined, HistoryOutlined, PaperClipOutlined } from '@ant-design/icons';
+import { Table, Input, Button, Upload, message, Typography, Tag } from 'antd';
+import { UploadOutlined, SaveOutlined, SendOutlined, HistoryOutlined, PaperClipOutlined, DownloadOutlined } from '@ant-design/icons';
 import apiClient from '../../api/client';
 import { getApiErrorMessage } from '../../utils/error';
 import { useAuthStore } from '../../store/auth';
 import useQuestionsSync from '../../hooks/useQuestionsSync';
 import { CAN_EDIT_TASK_STATUS } from '../../constants/status';
+import FilePreviewModal, { downloadEvidenceFile, type PreviewableEvidenceFile } from '../../components/FilePreviewModal';
 
 const { Title, Text } = Typography;
 
@@ -18,8 +19,7 @@ export default function FillQuestionnaire() {
   const [questions, setQuestions] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [historyVisible, setHistoryVisible] = useState(false);
-  const [historyData, setHistoryData] = useState<any[]>([]);
+  const [previewFile, setPreviewFile] = useState<PreviewableEvidenceFile | null>(null);
   const refreshQuestions = useQuestionsSync(id);
 
   useEffect(() => {
@@ -90,14 +90,6 @@ export default function FillQuestionnaire() {
     finally { setSubmitting(false); }
   };
 
-  const handleViewHistory = async (questionId: string) => {
-    try {
-      const res: any = await apiClient.get(`/questions/${questionId}/historical-evidence`);
-      setHistoryData(res.data || []);
-      setHistoryVisible(true);
-    } catch { message.error('获取历史证据失败'); }
-  };
-
   if (loading) return <div style={{ textAlign: 'center', padding: 60, color: '#8E8E93' }}>加载中...</div>;
   if (!task) return <div style={{ textAlign: 'center', padding: 60, color: '#8E8E93' }}>任务不存在</div>;
 
@@ -113,9 +105,9 @@ export default function FillQuestionnaire() {
     { title: '控制点', dataIndex: 'controlPoint', width: 180 },
     { title: '参考回答', dataIndex: 'referenceAnswer', width: 180,
       render: (v: string) => v ? <Text style={{ fontSize: 12, color: '#8E8E93' }}>{v}</Text> : <Text type="secondary">—</Text> },
-    { title: '历史证据', dataIndex: 'historicalEvidencePath', width: 130,
-      render: (v: string, record: any) => v ? (
-        <Button size="small" type="link" icon={<HistoryOutlined />} onClick={() => handleViewHistory(record.id)}>查看</Button>
+    { title: '历史证据', dataIndex: 'historicalEvidence', width: 150,
+      render: (evidence: PreviewableEvidenceFile | null) => evidence ? (
+        <Button size="small" type="link" icon={<HistoryOutlined />} onClick={() => setPreviewFile(evidence)}>预览</Button>
       ) : <Text type="secondary">无</Text> },
     { title: '责任部门', dataIndex: 'responsibleDepartment', width: 100, render: (v: string) => v || <Text type="secondary">—</Text> },
     { title: '责任人', dataIndex: 'responsiblePerson', width: 90, render: (v: string) => v || <Text type="secondary">—</Text> },
@@ -135,9 +127,10 @@ export default function FillQuestionnaire() {
           {record.evidenceFiles?.map((ef: any) => (
             <div key={ef.id} style={{ marginBottom: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
               <PaperClipOutlined style={{ fontSize: 11, color: '#8E8E93' }} />
-              <a href={`/api/evidence/${ef.id}/download`} download={ef.originalFilename}
-                style={{ fontSize: 12, maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {ef.originalFilename}</a>
+              <Button type="link" size="small" onClick={() => setPreviewFile(ef)}
+                style={{ padding: 0, fontSize: 12, maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {ef.originalFilename}</Button>
+              <Button type="text" size="small" icon={<DownloadOutlined />} title="下载" style={{ padding: 0 }} onClick={() => downloadEvidenceFile(ef)} />
               {canEdit && <Button type="link" size="small" danger style={{ padding: 0, fontSize: 11 }} onClick={() => handleDeleteEvidence(ef.id)}>删除</Button>}
             </div>
           ))}
@@ -174,11 +167,7 @@ export default function FillQuestionnaire() {
         </div>
         <Table columns={columns} dataSource={questions} rowKey="id" pagination={false} scroll={{ x: 1500 }} size="small" />
       </div>
-      <Modal title="历史证据" open={historyVisible} onCancel={() => setHistoryVisible(false)} footer={null}>
-        {historyData.length === 0 ? <Text type="secondary">无历史证据</Text> : historyData.map((h, i) => (
-          <div key={i} style={{ padding: '4px 0' }}><PaperClipOutlined style={{ marginRight: 8 }} /><Text>{typeof h === 'string' ? h : h.name || h.path}</Text></div>
-        ))}
-      </Modal>
+      <FilePreviewModal file={previewFile} open={Boolean(previewFile)} onClose={() => setPreviewFile(null)} />
     </div>
   );
 }

@@ -19,6 +19,7 @@ interface CreateTaskInput {
   assignedTo?: string | null;
   reviewerId?: string | null;
   createdBy: string;
+  tenantId?: string;
 }
 
 interface TaskQuery {
@@ -29,6 +30,7 @@ interface TaskQuery {
   userId?: string;
   userRole?: UserRole;
   my?: string;
+  tenantWideScope?: boolean;
 }
 
 class TaskService {
@@ -44,6 +46,11 @@ class TaskService {
     if (input.assignedTo) {
       const assignee = await User.findByPk(input.assignedTo);
       if (!assignee) throw new Error('被指派的用户不存在');
+      if ((assignee.tenantId || undefined) !== input.tenantId) throw new Error('不能指派其他租户的用户');
+    }
+    if (input.reviewerId) {
+      const reviewer = await User.findByPk(input.reviewerId);
+      if (!reviewer || (reviewer.tenantId || undefined) !== input.tenantId) throw new Error('复核人不存在或不属于当前租户');
     }
 
     const task = await AuditTask.create({
@@ -100,10 +107,10 @@ class TaskService {
   // ============ 查询（带过滤 + 统计）============
 
   private async getTasks(query: TaskQuery) {
-    const { page = 1, pageSize = 20, status, assessmentType, userId, userRole } = query;
+    const { page = 1, pageSize = 20, status, assessmentType, userId } = query;
     const where: any = {};
 
-    if (userId) {
+    if (userId && !query.tenantWideScope) {
       if (query.my === 'true') {
         // 「我的任务」：只看有题目分给自己的任务
         const assignedTaskIds = await QuestionItem.findAll({
@@ -119,13 +126,7 @@ class TaskService {
           where.id = { [Op.in]: [] }; // 无匹配任务
         }
         where.status = { [Op.ne]: TaskStatus.DRAFT };
-      } else if (userRole === UserRole.AUDITOR) {
-        where[Op.or] = [
-          { createdBy: userId },
-          { assignedTo: userId },
-          { reviewerId: userId },
-        ];
-      } else if (userRole === UserRole.USER) {
+      } else {
         const assignedTaskIds = await QuestionItem.findAll({
           where: { assignedTo: userId },
           attributes: [['taskId', 'taskId']],
@@ -133,12 +134,12 @@ class TaskService {
           raw: true,
         });
         const ids = assignedTaskIds.map((r: any) => r.taskId);
-        if (ids.length > 0) {
-          where.id = { [Op.in]: ids };
-        } else {
-          where.id = { [Op.in]: [] };
-        }
-        where.status = { [Op.ne]: TaskStatus.DRAFT };
+        where[Op.or] = [
+          { createdBy: userId },
+          { assignedTo: userId },
+          { reviewerId: userId },
+          { id: { [Op.in]: ids } },
+        ];
       }
     }
 
