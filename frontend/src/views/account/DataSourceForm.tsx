@@ -1,15 +1,14 @@
 import { useState, useEffect } from 'react';
-import { Modal, Form, Input, Select, InputNumber, Button, Typography, message, Divider, Space, Tag, Tooltip, Upload } from 'antd';
+import { Modal, Form, Input, Select, InputNumber, Button, Typography, message, Divider, Space, Tag, Tooltip, Switch } from 'antd';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeftOutlined, PlusOutlined, DeleteOutlined, InfoCircleOutlined, UploadOutlined, DownOutlined, RightOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, PlusOutlined, DeleteOutlined, InfoCircleOutlined, DownOutlined, RightOutlined } from '@ant-design/icons';
 import { dataSourceApi, type DataSource } from '../../api/account';
 import { getApiErrorMessage } from '../../utils/error';
 import apiClient from '../../api/client';
 
 const { Title, Text } = Typography;
 
-const DB_TYPES = ['PostgreSQL'];
-const ENCODINGS = ['UTF-8', 'GBK', 'GB2312', 'ISO-8859-1', 'UTF-16'];
+const DB_TYPES = [{ value: 'postgres', label: 'PostgreSQL' }];
 
 interface ConvertPair {
   sourceValue: string;
@@ -86,10 +85,7 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
   const navigate = useNavigate();
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
-  const [sourceType, setSourceType] = useState<string>('DATABASE');
   const [mappings, setMappings] = useState<MappingItem[]>([...defaultMappings]);
-  const [csvFile, setCsvFile] = useState<File | null>(null);
-  const [csvColumns, setCsvColumns] = useState<string[]>([]);
   const [dbColumns, setDbColumns] = useState<string[]>([]);
   const [previewingFields, setPreviewingFields] = useState(false);
   const [expandedConverts, setExpandedConverts] = useState<Set<string>>(new Set());
@@ -98,76 +94,48 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
   const isEdit = !!editingDataSource;
 
   // Available source field column names
-  const availableColumns = sourceType === 'CSV' ? csvColumns : dbColumns;
+  const availableColumns = dbColumns;
 
   // Pre-fill form when editing
   useEffect(() => {
     if (!isEdit || !editingDataSource || !inModal) return;
     const ds = editingDataSource;
-    setSourceType(ds.sourceType);
-
     // Basic fields
     form.setFieldsValue({
       name: ds.name,
-      type: ds.sourceType,
-      dbType: ds.connectionConfig?.dbType,
+      type: 'DATABASE',
+      dbType: 'postgres',
       host: ds.connectionConfig?.host,
       port: ds.connectionConfig?.port,
       database: ds.connectionConfig?.database,
       username: ds.connectionConfig?.username,
-      password: ds.connectionConfig?.password,
+      password: undefined,
       schema: ds.connectionConfig?.schema || 'public',
-      ssl: ds.connectionConfig?.ssl ?? true,
       table: ds.connectionConfig?.table,
-      delimiter: ds.csvConfig?.delimiter || ',',
-      encoding: ds.csvConfig?.encoding || 'UTF-8',
-      hasHeader: ds.csvConfig?.hasHeader ?? true,
+      ssl: ds.connectionConfig?.ssl === true,
     });
 
     // Restore mappings from fieldMappingConfig
     setMappings(configToMappings(ds.fieldMappingConfig || {}));
 
-    // For CSV, try to fetch columns from preview
-    if (ds.sourceType === 'CSV' && ds.id) {
-      dataSourceApi.preview(ds.id).then((res: any) => {
-        if (res.data?.columns) setCsvColumns(res.data.columns);
-      }).catch(() => {});
-    }
   }, [open, editingDataSource]);
 
   // Reset on close / open for create
   useEffect(() => {
     if (inModal && !isEdit) {
       form.resetFields();
-      setSourceType('DATABASE');
       setMappings([...defaultMappings]);
-      setCsvFile(null);
-      setCsvColumns([]);
       setDbColumns([]);
       setExpandedConverts(new Set());
     }
   }, [open, editingDataSource]);
 
-  // CSV file selection — parse header
-  const handleCsvSelect = (file: File) => {
-    setCsvFile(file);
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const text = e.target?.result as string;
-      if (text) {
-        const firstLine = text.split('\n')[0];
-        const cols = firstLine.split(',').map(c => c.trim().replace(/^"|"$/g, ''));
-        setCsvColumns(cols);
-      }
-    };
-    reader.readAsText(file);
-    return false;
-  };
-
   // DB field preview
   const handlePreviewDbFields = async () => {
     try {
-      const values = await form.validateFields(['dbType', 'host', 'port', 'database', 'username', 'password', 'schema', 'table', 'ssl']);
+      const values = await form.validateFields([
+        'dbType', 'host', 'port', 'database', 'username', 'password', 'schema', 'table', 'ssl',
+      ]);
       setPreviewingFields(true);
       const res: any = await apiClient.post('/account/data-sources/preview-fields', {
         dbType: values.dbType,
@@ -176,9 +144,9 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
         database: values.database,
         username: values.username,
         password: values.password,
-        schema: values.schema,
+        schema: values.schema || 'public',
         table: values.table,
-        ssl: values.ssl,
+        ssl: values.ssl === true,
       });
       setDbColumns(res.data?.columns || []);
       if ((res.data?.columns || []).length > 0) {
@@ -194,66 +162,41 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields();
-      if (sourceType === 'CSV' && !isEdit && !csvFile) {
-        message.error('请选择 CSV 文件');
+      const fieldMappingConfig = buildFieldMappingConfig(mappings);
+      const allowedColumns = [...new Set(
+        Object.values(fieldMappingConfig)
+          .map((value: any) => typeof value === 'string' ? value : value?.sourceField)
+          .filter(Boolean),
+      )];
+      if (!fieldMappingConfig.accountId || allowedColumns.length === 0) {
+        message.error('必须将账户ID映射到一个 PostgreSQL 字段');
         return;
       }
       setLoading(true);
 
-      const fieldMappingConfig = buildFieldMappingConfig(mappings);
-
-      if (sourceType === 'DATABASE') {
-        const payload: any = {
-          name: values.name,
-          sourceType: 'DATABASE',
-          fieldMappingConfig,
-          connectionConfig: {
-            dbType: values.dbType,
-            host: values.host,
-            port: values.port,
-            database: values.database,
-            username: values.username,
-            password: values.password,
-            schema: values.schema || 'public',
-            ssl: values.ssl === true,
-            table: values.table || undefined,
-          },
-        };
-        if (isEdit) {
-          await dataSourceApi.update(editingDataSource!.id, payload);
-          message.success('数据源已更新');
-        } else {
-          await dataSourceApi.create(payload);
-          message.success('数据源创建成功');
-        }
+      const payload: any = {
+        name: values.name,
+        sourceType: 'DATABASE',
+        fieldMappingConfig,
+        connectionConfig: {
+          dbType: 'postgres',
+          host: values.host,
+          port: values.port,
+          database: values.database,
+          username: values.username,
+          password: values.password,
+          schema: values.schema || 'public',
+          table: values.table,
+          allowedColumns,
+          ssl: values.ssl === true,
+        },
+      };
+      if (isEdit) {
+        await dataSourceApi.update(editingDataSource!.id, payload);
+        message.success('数据源已更新');
       } else {
-        if (isEdit) {
-          // Edit CSV source: update metadata (no file re-upload required unless user picks a new file)
-          const payload: any = {
-            name: values.name,
-            sourceType: 'CSV',
-            delimiter: values.delimiter || ',',
-            encoding: values.encoding || 'UTF-8',
-            hasHeader: values.hasHeader ?? true,
-            fieldMappingConfig,
-          };
-          await dataSourceApi.update(editingDataSource!.id, payload);
-          message.success('数据源已更新');
-        } else {
-          const formData = new FormData();
-          formData.append('file', csvFile!);
-          formData.append('name', values.name);
-          formData.append('sourceType', 'CSV');
-          formData.append('delimiter', values.delimiter || ',');
-          formData.append('encoding', values.encoding || 'UTF-8');
-          formData.append('hasHeader', String(values.hasHeader ?? true));
-          formData.append('fieldMappingConfig', JSON.stringify(fieldMappingConfig));
-
-          await apiClient.post('/account/data-sources/upload', formData, {
-            headers: { 'Content-Type': 'multipart/form-data' },
-          });
-          message.success('数据源创建成功');
-        }
+        await dataSourceApi.create(payload);
+        message.success('数据源创建成功');
       }
 
       if (onSuccess) onSuccess();
@@ -320,7 +263,13 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
 
   const formContent = (
     <div style={{ maxWidth: inModal ? '100%' : 720 }}>
-      <Form form={form} layout="vertical" initialValues={{ type: 'DATABASE', dbType: 'PostgreSQL', port: 5432, schema: 'public', ssl: true, delimiter: ',', encoding: 'UTF-8', hasHeader: true }}>
+      <Form form={form} layout="vertical" initialValues={{
+        type: 'DATABASE',
+        dbType: 'postgres',
+        port: 5432,
+        schema: 'public',
+        ssl: false,
+      }}>
         {/* Basic Info */}
         <div style={{
           background: 'rgba(255,255,255,0.8)',
@@ -336,13 +285,9 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
           </Form.Item>
           <Form.Item name="type" label="数据源类型">
             <Select
-              value={sourceType}
-              onChange={v => { setSourceType(v); form.setFieldValue('type', v); }}
-              disabled={isEdit}
-              options={[
-                { value: 'DATABASE', label: '数据库' },
-                { value: 'CSV', label: 'CSV 文件' },
-              ]}
+              value="DATABASE"
+              disabled
+              options={[{ value: 'DATABASE', label: 'PostgreSQL 只读表' }]}
             />
           </Form.Item>
         </div>
@@ -357,85 +302,48 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
           marginBottom: 16,
         }}>
           <Text strong style={{ fontSize: 14, marginBottom: 12, display: 'block' }}>
-            {sourceType === 'DATABASE' ? '数据库连接' : '文件配置'}
+            PostgreSQL 只读连接
           </Text>
 
-          {sourceType === 'DATABASE' ? (
-            <>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-                <Button size="small" loading={previewingFields} onClick={handlePreviewDbFields}>
-                  获取数据库字段
-                </Button>
-              </div>
-              <Form.Item name="dbType" label="数据库类型" rules={[{ required: true }]}>
-                <Select placeholder="选择数据库类型" options={DB_TYPES.map(t => ({ value: t, label: t }))} />
-              </Form.Item>
-              <div style={{ display: 'flex', gap: 12 }}>
-                <Form.Item name="host" label="主机地址" rules={[{ required: true }]} style={{ flex: 1 }}>
-                  <Input placeholder="db.internal.example.com" />
-                </Form.Item>
-                <Form.Item name="port" label="端口" rules={[{ required: true }]} style={{ width: 140 }}>
-                  <InputNumber placeholder="5432" style={{ width: '100%' }} />
-                </Form.Item>
-              </div>
-              <Form.Item name="database" label="数据库名" rules={[{ required: true }]}>
-                <Input placeholder="accounts_db" />
-              </Form.Item>
-              <div style={{ display: 'flex', gap: 12 }}>
-                <Form.Item name="username" label="用户名" style={{ flex: 1 }}>
-                  <Input placeholder="compliance_readonly" />
-                </Form.Item>
-                <Form.Item name="password" label="密码" style={{ flex: 1 }}>
-                  <Input.Password placeholder="••••••" />
-                </Form.Item>
-              </div>
-              <div style={{ display: 'flex', gap: 12 }}>
-                <Form.Item name="schema" label="Schema" rules={[{ required: true }]} style={{ flex: 1 }}>
-                  <Input placeholder="public" />
-                </Form.Item>
-                <Form.Item name="table" label="只读表名" rules={[{ required: true }]} style={{ flex: 1 }}>
-                  <Input placeholder="users" />
-                </Form.Item>
-              </div>
-              <Form.Item name="ssl" label="TLS 加密" rules={[{ required: true }]}>
-                <Select options={[{ value: true, label: '启用（推荐）' }, { value: false, label: '停用（仅限受控开发环境）' }]} />
-              </Form.Item>
-            </>
-          ) : (
-            <>
-              <Form.Item label="选择文件" required={!isEdit}>
-                <Upload
-                  beforeUpload={(file) => {
-                    handleCsvSelect(file);
-                    return false;
-                  }}
-                  onRemove={() => setCsvFile(null)}
-                  accept=".csv"
-                  maxCount={1}
-                  fileList={csvFile ? [{ uid: '-1', name: csvFile.name, status: 'done' as const }] : []}
-                >
-                  <Button icon={<UploadOutlined />}>{isEdit ? '重新选择' : '选择 CSV 文件'}</Button>
-                </Upload>
-                {csvFile && <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>已选择: {csvFile.name}</Text>}
-                {isEdit && !csvFile && editingDataSource?.csvConfig && (
-                  <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
-                    当前文件已上传（可重新选择）
-                  </Text>
-                )}
-              </Form.Item>
-              <div style={{ display: 'flex', gap: 12 }}>
-                <Form.Item name="delimiter" label="分隔符" style={{ flex: 1 }}>
-                  <Input placeholder="," />
-                </Form.Item>
-                <Form.Item name="encoding" label="编码" style={{ flex: 1 }}>
-                  <Select options={ENCODINGS.map(e => ({ value: e, label: e }))} />
-                </Form.Item>
-              </div>
-              <Form.Item name="hasHeader" label="首行为列名" valuePropName="checked">
-                <Select options={[{ value: true, label: '是' }, { value: false, label: '否' }]} />
-              </Form.Item>
-            </>
-          )}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+            <Button size="small" loading={previewingFields} onClick={handlePreviewDbFields}>
+              获取数据库字段
+            </Button>
+          </div>
+          <Form.Item name="dbType" label="数据库类型" rules={[{ required: true }]}>
+            <Select disabled options={DB_TYPES} />
+          </Form.Item>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <Form.Item name="host" label="主机地址" rules={[{ required: true }]} style={{ flex: 1 }}>
+              <Input placeholder="readonly-db.example.com" />
+            </Form.Item>
+            <Form.Item name="port" label="端口" rules={[{ required: true }]} style={{ width: 140 }}>
+              <InputNumber placeholder="5432" style={{ width: '100%' }} />
+            </Form.Item>
+          </div>
+          <Form.Item name="database" label="数据库名" rules={[{ required: true }]}>
+            <Input placeholder="accounts_db" />
+          </Form.Item>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <Form.Item name="username" label="只读用户名" rules={[{ required: true }]} style={{ flex: 1 }}>
+              <Input placeholder="accounts_reader" />
+            </Form.Item>
+            <Form.Item name="password" label="密码" rules={[{ required: !isEdit }]} style={{ flex: 1 }}>
+              <Input.Password placeholder={isEdit ? '留空表示不修改' : '••••••'} />
+            </Form.Item>
+          </div>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <Form.Item name="schema" label="Schema" rules={[{ required: true }]} style={{ flex: 1 }}>
+              <Input placeholder="public" />
+            </Form.Item>
+            <Form.Item name="table" label="只读表名" rules={[{ required: true }]} style={{ flex: 1 }}>
+              <Input placeholder="accounts" />
+            </Form.Item>
+          </div>
+          <Form.Item name="ssl" label="TLS" valuePropName="checked"
+            extra="生产环境必须启用并校验证书；本地测试仅可在非生产环境关闭。">
+            <Switch checkedChildren="启用" unCheckedChildren="关闭" />
+          </Form.Item>
         </div>
 
         {/* Field Mapping */}

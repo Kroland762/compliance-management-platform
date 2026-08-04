@@ -11,6 +11,7 @@ export default function PrivateRoute({ children, permission }: PrivateRouteProps
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const initialized = useAuthStore((s) => s.initialized);
   const hasPermission = useAuthStore((s) => s.hasPermission);
+  const selectedTenant = useAuthStore((s) => s.selectedTenant);
   const location = useLocation();
 
   if (!initialized) {
@@ -19,6 +20,14 @@ export default function PrivateRoute({ children, permission }: PrivateRouteProps
 
   if (!isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  if (useAuthStore.getState().user?.mustChangePassword) {
+    return <Navigate to="/change-password" replace />;
+  }
+
+  if (!selectedTenant && location.pathname !== '/tenants') {
+    return <Navigate to="/tenant-select" replace />;
   }
 
   if (permission) {

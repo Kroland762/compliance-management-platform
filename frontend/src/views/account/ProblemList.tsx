@@ -136,57 +136,57 @@ export default function ProblemList() {
   return (
     <div>
       {/* Filters */}
-      <div style={{ marginBottom: 16, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        <Input
-          placeholder="搜索账户或描述"
-          prefix={<SearchOutlined style={{ color: '#AEAEB2' }} />}
-          value={keyword}
-          onChange={e => setKeyword(e.target.value)}
-          onPressEnter={handleSearch}
-          style={{ width: 200 }}
-          allowClear
-        />
-        <Select
-          placeholder="严重度"
-          value={severityFilter || undefined}
-          onChange={v => { setSeverityFilter(v || ''); setPage(1); }}
-          allowClear
-          style={{ width: 100 }}
-          options={[
-            { value: 'high', label: '高' },
-            { value: 'medium', label: '中' },
-            { value: 'low', label: '低' },
-          ]}
-        />
-        <Select
-          placeholder="状态"
-          value={statusFilter || undefined}
-          onChange={v => { setStatusFilter(v || ''); setPage(1); }}
-          allowClear
-          style={{ width: 110 }}
-          options={[
-            { value: 'open', label: '未处理' },
-            { value: 'acknowledged', label: '已确认' },
-            { value: 'resolved', label: '已解决' },
-            { value: 'false_positive', label: '误报' },
-          ]}
-        />
-        <RangePicker
-          size="middle"
-          placeholder={['开始日期', '结束日期']}
-          style={{ width: 240 }}
-          onChange={(dates, dateStrings) => {
-            if (dates) {
-              setDateRange([dateStrings[0], dateStrings[1]]);
-            } else {
-              setDateRange(null);
-            }
-          }}
-        />
-        <Button onClick={handleSearch}>查询</Button>
+      <div className="filter-toolbar">
+        <div className="filter-toolbar-content">
+          <Input
+            placeholder="搜索账户或描述"
+            prefix={<SearchOutlined style={{ color: '#AEAEB2' }} />}
+            value={keyword}
+            onChange={e => setKeyword(e.target.value)}
+            onPressEnter={handleSearch}
+            style={{ width: 200 }}
+            allowClear
+          />
+          <Select
+            placeholder="严重度"
+            value={severityFilter || undefined}
+            onChange={v => { setSeverityFilter(v || ''); setPage(1); }}
+            allowClear
+            style={{ width: 100 }}
+            options={[
+              { value: 'high', label: '高' },
+              { value: 'medium', label: '中' },
+              { value: 'low', label: '低' },
+            ]}
+          />
+          <Select
+            placeholder="状态"
+            value={statusFilter || undefined}
+            onChange={v => { setStatusFilter(v || ''); setPage(1); }}
+            allowClear
+            style={{ width: 110 }}
+            options={[
+              { value: 'open', label: '未处理' },
+              { value: 'acknowledged', label: '已确认' },
+              { value: 'resolved', label: '已解决' },
+              { value: 'false_positive', label: '误报' },
+            ]}
+          />
+          <RangePicker
+            size="middle"
+            placeholder={['开始日期', '结束日期']}
+            style={{ width: 240 }}
+            onChange={(dates, dateStrings) => {
+              if (dates) {
+                setDateRange([dateStrings[0], dateStrings[1]]);
+              } else {
+                setDateRange(null);
+              }
+            }}
+          />
+          <Button onClick={handleSearch}>查询</Button>
+          <Button icon={<ExportOutlined />} onClick={handleExport}>导出</Button>
         </div>
-        <Button icon={<ExportOutlined />} onClick={handleExport}>导出</Button>
       </div>
 
       {/* Bulk Actions */}

@@ -1,31 +1,64 @@
 import jwt from 'jsonwebtoken';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import authService from '../src/services/auth.service';
-import { Role, User } from '../src/models';
+import { RoleTemplate, Tenant, User } from '../src/models';
+import { TenantStatus } from '../src/models/Tenant';
 import { config } from '../src/config';
+
+const user = {
+  id: 'user-1',
+  username: 'auditor',
+  email: 'auditor@example.test',
+  isActive: true,
+  tokenVersion: 1,
+  mustChangePassword: false,
+  globalRoleTemplateId: 'global-role-1',
+};
+
+const globalRole = {
+  name: '全局管理员',
+  permissions: { tasks: ['read'] },
+  permissionScopes: { tasks: { read: 'all' } },
+};
+
+function tenantToken(tenantId = 'tenant-a') {
+  return jwt.sign({
+    kind: 'tenant',
+    userId: user.id,
+    username: user.username,
+    tenantId,
+    tokenVersion: 1,
+    isGlobalAdmin: true,
+  }, config.jwt.secret, { expiresIn: 60 });
+}
 
 describe('authenticated tenant context', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  test('rejects a valid token after the user tenant changes in the database', async () => {
-    vi.spyOn(Role, 'findByPk').mockResolvedValue({ name: '审计员', permissions: { tasks: ['read'] } });
-    vi.spyOn(User, 'findByPk').mockResolvedValue({ isActive: true, tokenVersion: 1, tenantId: 'tenant-b' });
-    const token = jwt.sign({
-      userId: 'user-1', username: 'auditor', role: '审计员', roleId: 'role-1',
-      tenantId: 'tenant-a', tokenVersion: 1,
-    }, config.jwt.secret, { expiresIn: 60 });
+  test('rejects a signed tenant token after the tenant becomes inactive', async () => {
+    vi.spyOn(User, 'findByPk').mockResolvedValue(user);
+    vi.spyOn(RoleTemplate, 'findByPk').mockResolvedValue(globalRole);
+    vi.spyOn(Tenant, 'findByPk').mockResolvedValue({
+      id: 'tenant-a',
+      status: TenantStatus.SUSPENDED,
+    });
 
-    await expect(authService.verifyTokenAndLoadUser(token)).rejects.toThrow(/租户上下文已变更/);
+    await expect(authService.verifyTokenAndLoadUser(tenantToken()))
+      .rejects.toMatchObject({ code: 'TENANT_INACTIVE', statusCode: 403 });
   });
 
-  test('uses the database-confirmed tenant when token and user match', async () => {
-    vi.spyOn(Role, 'findByPk').mockResolvedValue({ name: '审计员', permissions: { tasks: ['read'] } });
-    vi.spyOn(User, 'findByPk').mockResolvedValue({ isActive: true, tokenVersion: 1, tenantId: 'tenant-a' });
-    const token = jwt.sign({
-      userId: 'user-1', username: 'auditor', role: '审计员', roleId: 'role-1',
-      tenantId: 'tenant-a', tokenVersion: 1,
-    }, config.jwt.secret, { expiresIn: 60 });
+  test('uses the database-confirmed active tenant context', async () => {
+    vi.spyOn(User, 'findByPk').mockResolvedValue(user);
+    vi.spyOn(RoleTemplate, 'findByPk').mockResolvedValue(globalRole);
+    vi.spyOn(Tenant, 'findByPk').mockResolvedValue({
+      id: 'tenant-a',
+      name: '租户A',
+      slug: 'tenant-a',
+      status: TenantStatus.ACTIVE,
+      schemaName: 'tenant_a',
+    });
 
-    await expect(authService.verifyTokenAndLoadUser(token)).resolves.toMatchObject({ tenantId: 'tenant-a' });
+    await expect(authService.verifyTokenAndLoadUser(tenantToken()))
+      .resolves.toMatchObject({ tenantId: 'tenant-a', tokenKind: 'tenant' });
   });
 });

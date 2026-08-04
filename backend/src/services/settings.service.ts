@@ -1,4 +1,5 @@
 import SystemSetting from '../models/SystemSetting';
+import type { Transaction } from 'sequelize';
 
 export interface SecuritySettings {
   maxLoginAttempts: number;
@@ -22,8 +23,8 @@ class SettingsService {
   /**
    * 获取安全设置（带缓存）
    */
-  async getSecuritySettings(): Promise<SecuritySettings> {
-    if (this.cache && Date.now() - this.cacheTime < this.TTL) return this.cache;
+  async getSecuritySettings(transaction?: Transaction): Promise<SecuritySettings> {
+    if (!transaction && this.cache && Date.now() - this.cacheTime < this.TTL) return this.cache;
 
     const result: SecuritySettings = { ...DEFAULTS };
 
@@ -31,6 +32,7 @@ class SettingsService {
       where: {
         key: ['security.maxLoginAttempts', 'security.lockDurationMinutes', 'security.idleTimeoutMinutes', 'security.auditLogRetentionDays'],
       },
+      transaction,
     });
 
     for (const row of rows) {
@@ -51,15 +53,26 @@ class SettingsService {
       }
     }
 
-    this.cache = result;
-    this.cacheTime = Date.now();
+    if (!transaction) {
+      this.cache = result;
+      this.cacheTime = Date.now();
+    }
     return result;
+  }
+
+  invalidateCache(): void {
+    this.cache = null;
+    this.cacheTime = 0;
   }
 
   /**
    * 更新安全设置
    */
-  async updateSecuritySettings(settings: Partial<SecuritySettings>, userId: string): Promise<SecuritySettings> {
+  async updateSecuritySettings(
+    settings: Partial<SecuritySettings>,
+    userId: string,
+    transaction?: Transaction,
+  ): Promise<SecuritySettings> {
     const updates: Array<{ key: string; value: string }> = [];
 
     if (settings.maxLoginAttempts !== undefined) {
@@ -85,14 +98,12 @@ class SettingsService {
         value: u.value,
         updatedBy: userId,
         updatedAt: new Date(),
-      });
+      }, { transaction });
     }
 
-    // 清除缓存
-    this.cache = null;
-    this.cacheTime = 0;
+    if (!transaction) this.invalidateCache();
 
-    return this.getSecuritySettings();
+    return this.getSecuritySettings(transaction);
   }
 
   /**

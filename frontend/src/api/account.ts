@@ -5,7 +5,7 @@ import apiClient from './client';
 export interface DataSource {
   id: string;
   name: string;
-  sourceType: 'DATABASE' | 'CSV';
+  sourceType: 'DATABASE';
   mappingStatus: string;
   taskCount?: number;
   totalAccounts: number;
@@ -14,7 +14,6 @@ export interface DataSource {
   createdAt: string;
   updatedAt: string;
   connectionConfig?: Record<string, any> | null;
-  csvConfig?: Record<string, any> | null;
   fieldMappingConfig?: Record<string, any>;
 }
 
@@ -26,11 +25,10 @@ export interface DataSourceConfig {
   database?: string;
   username?: string;
   password?: string;
-  // CSV
-  filePath?: string;
-  delimiter?: string;
-  encoding?: string;
-  hasHeader?: boolean;
+  schema?: string;
+  table?: string;
+  allowedColumns?: string[];
+  ssl?: boolean;
 }
 
 export interface FieldMapping {

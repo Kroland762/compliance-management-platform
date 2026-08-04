@@ -1,209 +1,218 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
-import fs from 'fs';
-import path from 'path';
-import crypto from 'crypto';
 import { authenticate, authorize } from '../middlewares/auth';
-import { requireObjectAccess } from '../middlewares/objectAccess';
 import questionnaireService from '../services/questionnaire.service';
 import { config } from '../config';
-import { getPreviewKind, getSafeContentType, readCsvPreview } from '../services/evidence-preview.service';
-import { assertEvidenceReadable } from '../services/evidence-security.service';
+import { AppError, asyncHandler } from '../utils/http';
+import objectAccessService from '../services/object-access.service';
 import auditLogService from '../services/audit-log.service';
-import { OperationType } from '../models';
-
-const uploadRoot = path.resolve(config.upload.dir);
-fs.mkdirSync(uploadRoot, { recursive: true });
-
-function resolveStoredEvidencePath(filePath: string): string {
-  const resolved = path.resolve(filePath);
-  if (resolved !== uploadRoot && !resolved.startsWith(`${uploadRoot}${path.sep}`)) {
-    throw new Error('证据存储路径无效');
-  }
-  return resolved;
-}
+import { EvidenceType, OperationType } from '../models';
+import { uploadOperations } from '../services/metrics.service';
+import {
+  getPreviewKind,
+  getSafeContentType,
+  readCsvPreview,
+  resolveEvidencePath,
+} from '../services/evidence-preview.service';
 
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: path.resolve(config.upload.dir),
-    filename: (_req, _file, cb) => cb(null, crypto.randomUUID()),
-  }),
+  storage: multer.memoryStorage(),
   limits: { fileSize: config.upload.maxFileSize },
 });
 
 const router = Router();
 router.use(authenticate);
 
-// 获取任务的所有问题
-router.get('/tasks/:taskId/questions', authorize('tasks', 'read'), requireObjectAccess('task', 'taskId', 'read'), async (req: Request, res: Response) => {
-  try {
-    const questions = await questionnaireService.getQuestions(req.params.taskId, req.user!);
-    res.json({ success: true, data: { questions } });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: { code: 'QUERY_FAILED', message: error.message } });
+async function auditUploadFailure(req: Request) {
+  uploadOperations.inc({ outcome: 'failure' });
+  if (!req.user) return;
+  await auditLogService.log({
+    userId: req.user.userId,
+    operationType: OperationType.CREATE,
+    resourceType: 'evidence',
+    resourceId: req.params.id || null,
+    operationDetails: '证据上传失败',
+    success: false,
+    tenantId: req.tenant?.id,
+  }).catch(() => undefined);
+}
+
+function evidenceUpload(req: Request, res: Response, next: NextFunction) {
+  upload.single('file')(req, res, (error: any) => {
+    if (!error) return next();
+    void auditUploadFailure(req).finally(() => next(error));
+  });
+}
+
+async function assertCanAccessQuestion(req: Request, questionItemId: string, operatorOnly = false) {
+  return objectAccessService.questionOrNotFound(questionItemId, req.user!, operatorOnly);
+}
+
+async function assertCanAccessEvidence(req: Request, evidenceId: string, write = false) {
+  const { EvidenceFile } = await import('../models');
+  const evidence = await EvidenceFile.findOne({ where: { id: evidenceId, status: 'active' } });
+  if (!evidence) throw new AppError(404, 'NOT_FOUND', '文件不存在');
+  if (!evidence.questionItemId) throw new AppError(404, 'NOT_FOUND', '文件不存在');
+
+  const item = await assertCanAccessQuestion(req, evidence.questionItemId, write);
+  if (write && evidence.uploadedBy !== req.user!.userId && !objectAccessService.canReadAllTasks(req.user!)) {
+    throw new AppError(404, 'NOT_FOUND', '文件不存在');
   }
-});
+  return { evidence, item };
+}
+
+// 获取任务的所有问题
+router.get('/tasks/:taskId/questions', authorize('tasks', 'read'), asyncHandler(async (req: Request, res: Response) => {
+  await objectAccessService.taskOrNotFound(req.params.taskId, req.user!);
+  const questions = await questionnaireService.getQuestions(req.params.taskId, req.user!);
+  res.json({ success: true, data: { questions } });
+}));
 
 // 保存问题答案
-router.put('/questions/:id/answer', authorize('tasks', 'update'), requireObjectAccess('question', 'id', 'respond'), async (req: Request, res: Response) => {
-  try {
-    const { currentStatusDescription } = req.body;
-    const item = await questionnaireService.saveAnswer(req.params.id, currentStatusDescription || '');
-    res.json({ success: true, data: item });
-  } catch (error: any) {
-    res.status(400).json({ success: false, error: { code: 'UPDATE_FAILED', message: error.message } });
-  }
-});
+router.put('/questions/:id/answer', authorize('tasks', 'update'), asyncHandler(async (req: Request, res: Response) => {
+  throw new AppError(
+    410,
+    'LEGACY_WRITE_PATH_DISABLED',
+    '旧问卷写入接口已停用，请使用 /api/evaluations/:id/answer',
+  );
+}));
 
 // 上传证据文件
-router.post('/questions/:id/evidence', authorize('tasks', 'update'), requireObjectAccess('question', 'id', 'respond'), upload.single('file'), async (req: Request, res: Response) => {
+router.post('/questions/:id/evidence', authorize('tasks', 'update'), evidenceUpload, asyncHandler(async (req: Request, res: Response) => {
   try {
+    await assertCanAccessQuestion(req, req.params.id, true);
     if (!req.file) {
       res.status(400).json({ success: false, error: { code: 'NO_FILE', message: '请上传文件' } });
       return;
     }
-    const evidence = await questionnaireService.uploadEvidence(req.params.id, req.file, req.user!.userId);
+    const evidence = await questionnaireService.uploadEvidence(
+      req.params.id,
+      req.file,
+      req.user!.userId,
+      req.tenant!.id,
+      EvidenceType.CURRENT,
+    );
+    uploadOperations.inc({ outcome: 'success' });
     res.status(201).json({ success: true, data: evidence });
   } catch (error: any) {
+    await auditUploadFailure(req);
+    if (error instanceof AppError) throw error;
     res.status(400).json({ success: false, error: { code: 'UPLOAD_FAILED', message: error.message } });
   }
-});
+}));
 
 // 删除证据
-router.delete('/evidence/:id', authorize('tasks', 'update'), requireObjectAccess('evidence', 'id', 'respond'), async (req: Request, res: Response) => {
+router.delete('/evidence/:id', authorize('tasks', 'update'), asyncHandler(async (req: Request, res: Response) => {
   try {
+    await assertCanAccessEvidence(req, req.params.id, true);
     await questionnaireService.deleteEvidence(req.params.id, req.user!.userId);
     res.json({ success: true, message: '证据已删除' });
   } catch (error: any) {
+    if (error instanceof AppError) throw error;
     res.status(400).json({ success: false, error: { code: 'DELETE_FAILED', message: error.message } });
   }
-});
+}));
+
+// 图片/PDF 在线预览内容
+router.get('/evidence/:id/content', authorize('tasks', 'read'), asyncHandler(async (req: Request, res: Response) => {
+  const { evidence } = await assertCanAccessEvidence(req, req.params.id);
+  const kind = getPreviewKind(evidence.originalFilename, evidence.mimeType);
+  const contentType = getSafeContentType(evidence.originalFilename, evidence.mimeType);
+  if (!contentType || (kind !== 'image' && kind !== 'pdf')) {
+    throw new AppError(415, 'PREVIEW_UNSUPPORTED', '该文件格式不支持二进制在线预览');
+  }
+  const target = resolveEvidencePath(evidence);
+  res.setHeader('Content-Type', contentType);
+  res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(evidence.originalFilename)}`);
+  res.sendFile(target);
+}));
+
+// CSV 结构化分页预览
+router.get('/evidence/:id/preview', authorize('tasks', 'read'), asyncHandler(async (req: Request, res: Response) => {
+  const { evidence } = await assertCanAccessEvidence(req, req.params.id);
+  if (getPreviewKind(evidence.originalFilename, evidence.mimeType) !== 'csv') {
+    throw new AppError(415, 'PREVIEW_UNSUPPORTED', '该文件格式不支持结构化预览');
+  }
+  const page = Number(req.query.page || 1);
+  const pageSize = Number(req.query.pageSize || 50);
+  res.json({ success: true, data: await readCsvPreview(evidence, page, pageSize) });
+}));
 
 // 下载证据
-router.get('/evidence/:id/download', authorize('tasks', 'read'), requireObjectAccess('evidence', 'id', 'read'), async (req: Request, res: Response) => {
+router.get('/evidence/:id/download', authorize('tasks', 'read'), asyncHandler(async (req: Request, res: Response) => {
   try {
-    const { EvidenceFile } = await import('../models');
-    const evidence = await EvidenceFile.findByPk(req.params.id);
-    if (!evidence) {
-      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '文件不存在' } });
-      return;
-    }
-    assertEvidenceReadable(evidence);
-    const filePath = resolveStoredEvidencePath(evidence.filePath);
-    if (!fs.existsSync(filePath)) {
-      res.status(404).json({ success: false, error: { code: 'FILE_MISSING', message: '文件不存在或已被移除' } });
-      return;
-    }
-    res.setHeader('Cache-Control', 'private, no-store');
+    const { evidence } = await assertCanAccessEvidence(req, req.params.id);
+    const target = resolveEvidencePath(evidence);
     await auditLogService.log({
-      userId: req.user!.userId, operationType: OperationType.QUERY, resourceType: 'evidence_download',
-      resourceId: evidence.id, operationDetails: `下载证据 v${evidence.version}`, success: true,
+      userId: req.user!.userId,
+      operationType: OperationType.QUERY,
+      resourceType: 'evidence',
+      resourceId: evidence.id,
+      operationDetails: '下载证据文件',
+      success: true,
     });
-    res.download(filePath, evidence.originalFilename);
+    res.download(target, evidence.originalFilename);
   } catch (error: any) {
+    if (error instanceof AppError) throw error;
     res.status(500).json({ success: false, error: { code: 'DOWNLOAD_FAILED', message: error.message } });
   }
-});
-
-// 在线读取图片或 PDF 内容
-router.get('/evidence/:id/content', authorize('tasks', 'read'), requireObjectAccess('evidence', 'id', 'read'), async (req: Request, res: Response) => {
-  try {
-    const { EvidenceFile } = await import('../models');
-    const evidence = await EvidenceFile.findByPk(req.params.id);
-    if (!evidence) {
-      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '文件不存在' } });
-      return;
-    }
-    assertEvidenceReadable(evidence);
-    const contentType = getSafeContentType(evidence.originalFilename, evidence.mimeType);
-    if (!contentType) {
-      res.status(415).json({ success: false, error: { code: 'PREVIEW_UNSUPPORTED', message: '该格式暂不支持在线预览' } });
-      return;
-    }
-    const filePath = resolveStoredEvidencePath(evidence.filePath);
-    if (!fs.existsSync(filePath)) {
-      res.status(404).json({ success: false, error: { code: 'FILE_MISSING', message: '文件不存在或已被移除' } });
-      return;
-    }
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Disposition', `inline; filename="preview"; filename*=UTF-8''${encodeURIComponent(evidence.originalFilename)}`);
-    res.setHeader('Cache-Control', 'private, no-store');
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    await auditLogService.log({
-      userId: req.user!.userId, operationType: OperationType.QUERY, resourceType: 'evidence_preview',
-      resourceId: evidence.id, operationDetails: `在线预览证据 v${evidence.version}`, success: true,
-    });
-    res.sendFile(filePath);
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: { code: 'PREVIEW_FAILED', message: error.message } });
-  }
-});
-
-// CSV 结构化预览（最多前 1000 行）
-router.get('/evidence/:id/preview', authorize('tasks', 'read'), requireObjectAccess('evidence', 'id', 'read'), async (req: Request, res: Response) => {
-  try {
-    const { EvidenceFile } = await import('../models');
-    const evidence = await EvidenceFile.findByPk(req.params.id);
-    if (!evidence) {
-      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '文件不存在' } });
-      return;
-    }
-    assertEvidenceReadable(evidence);
-    resolveStoredEvidencePath(evidence.filePath);
-    if (getPreviewKind(evidence.originalFilename, evidence.mimeType) !== 'csv') {
-      res.status(415).json({ success: false, error: { code: 'PREVIEW_UNSUPPORTED', message: '该接口仅支持 CSV 文件' } });
-      return;
-    }
-    const result = await readCsvPreview(evidence, Number(req.query.page), Number(req.query.pageSize));
-    await auditLogService.log({
-      userId: req.user!.userId, operationType: OperationType.QUERY, resourceType: 'evidence_preview',
-      resourceId: evidence.id, operationDetails: `CSV预览证据 v${evidence.version}`, success: true,
-    });
-    res.json({ success: true, data: result });
-  } catch (error: any) {
-    const isMissing = error?.code === 'ENOENT';
-    res.status(isMissing ? 404 : 400).json({
-      success: false,
-      error: {
-        code: isMissing ? 'FILE_MISSING' : 'CSV_PREVIEW_FAILED',
-        message: isMissing ? '文件不存在或已被移除' : error.message,
-      },
-    });
-  }
-});
+}));
 
 // 查看历史证据
-router.get('/questions/:id/historical-evidence', authorize('tasks', 'read'), requireObjectAccess('question', 'id', 'read'), async (req: Request, res: Response) => {
+router.get('/questions/:id/historical-evidence', authorize('tasks', 'read'), asyncHandler(async (req: Request, res: Response) => {
   try {
+    await assertCanAccessQuestion(req, req.params.id);
     const evidence = await questionnaireService.getHistoricalEvidence(req.params.id);
     res.json({ success: true, data: evidence });
   } catch (error: any) {
+    if (error instanceof AppError) throw error;
     res.status(500).json({ success: false, error: { code: 'QUERY_FAILED', message: error.message } });
   }
-});
+}));
 
 // 上传历史证据文件（配置任务时使用）
-router.post('/questions/:id/historical-evidence', authorize('tasks', 'update'), requireObjectAccess('question', 'id', 'manage'), upload.single('file'), async (req: Request, res: Response) => {
+router.post('/questions/:id/historical-evidence', authorize('tasks', 'update'), evidenceUpload, asyncHandler(async (req: Request, res: Response) => {
   try {
+    const item = await assertCanAccessQuestion(req, req.params.id, true);
     if (!req.file) {
       res.status(400).json({ success: false, error: { code: 'NO_FILE', message: '请上传文件' } });
       return;
     }
-    const evidence = await questionnaireService.uploadHistoricalEvidence(req.params.id, req.file, req.user!.userId);
-    res.status(201).json({ success: true, data: evidence });
+    const evidence = await questionnaireService.uploadEvidence(
+      item.id,
+      req.file,
+      req.user!.userId,
+      req.tenant!.id,
+      EvidenceType.HISTORICAL,
+    );
+    uploadOperations.inc({ outcome: 'success' });
+    res.status(201).json({
+      success: true,
+      data: evidence,
+    });
   } catch (error: any) {
+    await auditUploadFailure(req);
+    if (error instanceof AppError) throw error;
     res.status(400).json({ success: false, error: { code: 'UPLOAD_FAILED', message: error.message } });
   }
-});
+}));
 
 // 删除历史证据
-router.delete('/questions/:id/historical-evidence', authorize('tasks', 'update'), requireObjectAccess('question', 'id', 'manage'), async (req: Request, res: Response) => {
+router.delete('/questions/:id/historical-evidence', authorize('tasks', 'update'), asyncHandler(async (req: Request, res: Response) => {
   try {
-    await questionnaireService.deleteHistoricalEvidence(req.params.id, req.user!.userId);
+    const item = await assertCanAccessQuestion(req, req.params.id, true);
+    const { EvidenceFile } = await import('../models');
+    const evidence = await EvidenceFile.findOne({
+      where: { questionItemId: item.id, evidenceType: 'historical', status: 'active' },
+    });
+    if (evidence) {
+      await questionnaireService.deleteEvidence(evidence.id, req.user!.userId);
+    }
     res.json({ success: true, message: '历史证据已删除' });
   } catch (error: any) {
+    if (error instanceof AppError) throw error;
     res.status(400).json({ success: false, error: { code: 'DELETE_FAILED', message: error.message } });
   }
-});
+}));
 
 export default router;

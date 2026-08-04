@@ -18,6 +18,14 @@ Object.defineProperty(globalThis, 'localStorage', {
   value: localStorageMock,
 });
 
+// jsdom reports pseudo-element style lookups as unimplemented; Ant Design only
+// needs the base element style when measuring scrollbars in component tests.
+const nativeGetComputedStyle = window.getComputedStyle.bind(window);
+Object.defineProperty(window, 'getComputedStyle', {
+  configurable: true,
+  value: (element: Element) => nativeGetComputedStyle(element),
+});
+
 afterEach(() => {
   cleanup();
   localStorage.clear();

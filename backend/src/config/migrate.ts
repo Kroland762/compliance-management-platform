@@ -1,26 +1,38 @@
-import sequelize from '../config/database';
+import sequelize from './database';
 import { setupAssociations } from '../models/associations';
-import '../models'; // 导入所有模型确保注册
-import '../models/account/associations'; // 账户审计模块模型
-import { migrateP0Abde } from './p0-abde-migration';
+import '../models';
+import '../models/account';
+import '../models/account/associations';
+import { migrateDown, migrateUp, status } from './migrations/runner';
 
-async function migrate() {
-  try {
-    // 建立关联
-    setupAssociations();
+function option(name: string): string | undefined {
+  const prefix = `--${name}=`;
+  return process.argv.find((value) => value.startsWith(prefix))?.slice(prefix.length);
+}
 
-    // 同步所有模型到数据库（开发环境用 alter，生产用 migrate）
-    await sequelize.sync({ alter: true });
-    console.log('✅ 数据库迁移完成：所有表已创建/更新');
-
-    await migrateP0Abde();
-
-    await sequelize.close();
-    process.exit(0);
-  } catch (error) {
-    console.error('❌ 数据库迁移失败:', error);
-    process.exit(1);
+async function main(): Promise<void> {
+  setupAssociations();
+  await sequelize.authenticate();
+  const command = process.argv[2] || 'up';
+  if (command === 'status') {
+    console.table(await status());
+  } else if (command === 'up') {
+    await migrateUp();
+    console.log('✅ 所有待执行迁移已完成');
+  } else if (command === 'down') {
+    const schema = option('schema');
+    const confirm = option('confirm');
+    if (!schema || !confirm) throw new Error('migrate:down 需要 --schema=<schema> --confirm=<migration_id>');
+    await migrateDown(schema, confirm);
+    console.log(`✅ ${schema} 已回滚 ${confirm}`);
+  } else {
+    throw new Error(`未知迁移命令: ${command}`);
   }
 }
 
-migrate();
+main()
+  .catch((error) => {
+    console.error('❌ 数据库迁移失败:', error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  })
+  .finally(() => sequelize.close());

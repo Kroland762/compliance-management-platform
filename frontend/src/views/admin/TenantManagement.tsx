@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { Table, Button, Modal, Form, Input, Select, Space, Tag, Popconfirm, App, Typography } from 'antd';
 import { PlusOutlined, ReloadOutlined, TeamOutlined, DeleteOutlined, StopOutlined, CheckCircleOutlined, UserOutlined } from '@ant-design/icons';
 import apiClient from '../../api/client';
+import { useAuthStore } from '../../store/auth';
+import { getApiErrorMessage } from '../../utils/error';
 
 const { Text, Title } = Typography;
 
@@ -24,12 +26,24 @@ export default function TenantManagement() {
   const [editingTenant, setEditingTenant] = useState<Tenant | null>(null);
   const [form] = Form.useForm();
   const { message } = App.useApp();
+  const selectContext = useAuthStore((state) => state.selectContext);
+  const refreshAuth = useAuthStore((state) => state.refreshToken);
+  const [credentials, setCredentials] = useState<{ username: string; temporaryPassword: string } | null>(null);
+
+  const enterTenant = async (tenant: Tenant) => {
+    try {
+      await selectContext(tenant.id);
+      navigate('/users');
+    } catch {
+      message.error('租户上下文切换失败');
+    }
+  };
 
   const fetchTenants = async () => {
     setLoading(true);
     try {
       const res: any = await apiClient.get('/tenants');
-      setTenants(res.data || []);
+      setTenants(res.data?.items || []);
     } catch {
       message.error('加载租户列表失败');
     } finally {
@@ -43,11 +57,13 @@ export default function TenantManagement() {
     try {
       const res: any = await apiClient.post('/tenants', values);
       message.success(res.message || '租户创建成功');
+      setCredentials(res.data?.bootstrapCredentials || null);
       setModalOpen(false);
       form.resetFields();
+      await refreshAuth();
       fetchTenants();
     } catch (err: any) {
-      message.error(err.response?.data?.error?.message || '创建失败');
+      message.error(getApiErrorMessage(err, '创建失败'));
     }
   };
 
@@ -61,7 +77,7 @@ export default function TenantManagement() {
       form.resetFields();
       fetchTenants();
     } catch (err: any) {
-      message.error(err.response?.data?.error?.message || '更新失败');
+      message.error(getApiErrorMessage(err, '更新失败'));
     }
   };
 
@@ -71,7 +87,7 @@ export default function TenantManagement() {
       message.success(res.message || '租户已删除');
       fetchTenants();
     } catch (err: any) {
-      message.error(err.response?.data?.error?.message || '删除失败');
+      message.error(getApiErrorMessage(err, '删除失败'));
     }
   };
 
@@ -135,19 +151,19 @@ export default function TenantManagement() {
       render: (_: any, record: Tenant) => (
         <Space>
           <Button type="primary" size="small" icon={<UserOutlined />}
-            onClick={() => navigate(`/users?tenantId=${record.id}&tenantName=${encodeURIComponent(record.name)}`)}>
+            onClick={() => enterTenant(record)}>
             查看用户
           </Button>
           <Button type="link" size="small" onClick={() => openEdit(record)}>编辑</Button>
           <Popconfirm
             title="确定删除此租户？"
-            description="将级联删除该租户的所有数据（schema + 表），不可恢复！"
+            description="将停用该租户并保留数据 schema；停用用户会被拒绝访问。"
             onConfirm={() => handleDelete(record.id)}
             okText="确认删除"
             cancelText="取消"
             okButtonProps={{ danger: true }}
           >
-            <Button type="link" size="small" danger icon={<DeleteOutlined />}>删除</Button>
+            <Button type="link" size="small" danger icon={<DeleteOutlined />}>停用</Button>
           </Popconfirm>
         </Space>
       ),
@@ -187,12 +203,23 @@ export default function TenantManagement() {
             <Input placeholder="例如：技术部" disabled={!!editingTenant} />
           </Form.Item>
           {!editingTenant && (
-            <Form.Item name="slug" label="租户标识" rules={[
-              { required: true, message: '请输入租户标识' },
-              { pattern: /^[a-z][a-z0-9_]*$/, message: '仅小写字母/数字/下划线，字母开头' },
-            ]}>
-              <Input placeholder="例如：tech" />
-            </Form.Item>
+            <>
+              <Form.Item name="slug" label="租户标识" rules={[
+                { required: true, message: '请输入租户标识' },
+                { pattern: /^[a-z][a-z0-9_]*$/, message: '仅小写字母/数字/下划线，字母开头' },
+              ]}>
+                <Input placeholder="例如：tech" />
+              </Form.Item>
+              <Form.Item name={['admin', 'username']} label="首位管理员用户名" rules={[{ required: true }]}>
+                <Input autoComplete="off" />
+              </Form.Item>
+              <Form.Item name={['admin', 'displayName']} label="首位管理员姓名" rules={[{ required: true }]}>
+                <Input />
+              </Form.Item>
+              <Form.Item name={['admin', 'email']} label="首位管理员邮箱">
+                <Input />
+              </Form.Item>
+            </>
           )}
           <Form.Item name="domain" label="域名（可选）">
             <Input placeholder="例如：tech.audit.example.com" />
@@ -204,6 +231,21 @@ export default function TenantManagement() {
             </Select>
           </Form.Item>
         </Form>
+      </Modal>
+      <Modal
+        title="首位管理员一次性凭据"
+        open={Boolean(credentials)}
+        closable={false}
+        maskClosable={false}
+        okText="我已安全保存"
+        cancelButtonProps={{ style: { display: 'none' } }}
+        onOk={() => setCredentials(null)}
+      >
+        <Text type="warning">此临时密码关闭后无法再次查看，首次登录必须修改。</Text>
+        <div style={{ marginTop: 16 }}>
+          <Input value={credentials?.username} readOnly addonBefore="用户名" />
+          <Input.TextArea value={credentials?.temporaryPassword} readOnly autoSize style={{ marginTop: 8 }} />
+        </div>
       </Modal>
     </div>
   );

@@ -3,8 +3,13 @@ import crypto from 'crypto';
 const ALGORITHM = 'aes-256-gcm';
 const isProd = process.env.NODE_ENV === 'production';
 const rawKey = process.env.ENCRYPTION_KEY || (isProd ? '' : 'audit-platform-field-encryption-key-2026');
-if (isProd && !process.env.ENCRYPTION_KEY) {
-  throw new Error('❌ ENCRYPTION_KEY 环境变量为生产环境必填项');
+const INSECURE_ENCRYPTION_KEYS = new Set([
+  'change-this-to-another-random-string',
+  'change-me-to-another-random-64-char-string',
+  'audit-platform-field-encryption-key-2026',
+]);
+if (isProd && (!process.env.ENCRYPTION_KEY || INSECURE_ENCRYPTION_KEYS.has(process.env.ENCRYPTION_KEY))) {
+  throw new Error('❌ 生产环境必须设置非占位 ENCRYPTION_KEY 环境变量');
 }
 if (isProd && rawKey.length < 32) {
   throw new Error('❌ ENCRYPTION_KEY 长度至少为32字符');

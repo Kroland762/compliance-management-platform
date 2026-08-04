@@ -27,11 +27,11 @@ export default function TaskConfigure() {
     Promise.all([
       apiClient.get(`/tasks/${id}`),
       apiClient.get(`/tasks/${id}/questions`),
-      apiClient.get('/users?isActive=true'),
+      apiClient.get('/lookup/personnel'),
     ]).then(([tRes, qRes, rRes]: any[]) => {
       setTask(tRes.data);
       setQuestions(qRes.data?.questions || []);
-      setUsersList(rRes.data?.items || []);
+      setUsersList(rRes.data || []);
     }).finally(() => setLoading(false));
   }, [id]);
 
@@ -45,16 +45,20 @@ export default function TaskConfigure() {
     if (!q) { setDeptOptions([]); return; }
     try {
       const res: any = await apiClient.get(`/lookup/departments?q=${encodeURIComponent(q)}`);
-      setDeptOptions((res.data || []).map((r: any) => ({ value: r.department })));
+      setDeptOptions((res.data || []).map((r: any) => ({ value: r.name, label: `${r.name} (${r.code})`, departmentId: r.id })));
     } catch { }
   };
 
   const searchPersonnel = async (q: string, idx: number) => {
     if (!q) return;
     try {
-      const dept = questions[idx]?.responsibleDepartment || '';
-      const res: any = await apiClient.get(`/lookup/personnel?q=${encodeURIComponent(q)}${dept ? '&department=' + encodeURIComponent(dept) : ''}`);
-      const opts = (res.data || []).map((r: any) => ({ value: r.username, label: `${r.username}（${r.department || '-'}）`, userId: r.id, department: r.department }));
+      const res: any = await apiClient.get(`/lookup/personnel?q=${encodeURIComponent(q)}`);
+      const opts = (res.data || []).map((r: any) => ({
+        value: r.displayName || r.username,
+        label: `${r.displayName || r.username}（${r.primaryDepartmentName || '-'}）`,
+        userId: r.userId,
+        department: r.primaryDepartmentName,
+      }));
       setPersonnelCache(prev => ({ ...prev, [idx]: opts }));
     } catch { }
   };
@@ -62,9 +66,9 @@ export default function TaskConfigure() {
   const handleBatchAssign = () => {
     if (!batchUser) { message.warning('请先选择一个用户'); return; }
     if (selectedRowKeys.length === 0) { message.warning('请先勾选需要指派的题目'); return; }
-    const selectedUser = usersList.find((u: any) => u.id === batchUser);
-    const username = selectedUser?.username || '';
-    const department = selectedUser?.department || '';
+    const selectedUser = usersList.find((u: any) => u.userId === batchUser);
+    const username = selectedUser?.displayName || selectedUser?.username || '';
+    const department = selectedUser?.primaryDepartmentName || '';
     const newQs = [...questions];
     selectedRowKeys.forEach(key => {
       const idx = newQs.findIndex(q => q.id === key);
@@ -235,7 +239,10 @@ export default function TaskConfigure() {
               allowClear
               size="small"
               style={{ width: 160 }}
-              options={usersList.map((u: any) => ({ value: u.id, label: u.username + (u.department ? '（' + u.department + '）' : '') }))}
+              options={usersList.map((u: any) => ({
+                value: u.userId,
+                label: `${u.displayName || u.username}${u.primaryDepartmentName ? `（${u.primaryDepartmentName}）` : ''}`,
+              }))}
             />
             <Button size="small" icon={<UserSwitchOutlined />} onClick={handleBatchAssign}
               disabled={selectedRowKeys.length === 0 || !batchUser}>

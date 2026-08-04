@@ -19,9 +19,17 @@ let refreshPromise: Promise<{ token: string; user: unknown }> | null = null;
 
 const clearAuthState = () => {
   localStorage.removeItem('user');
+  sessionStorage.removeItem('selectedTenant');
   try {
     const setState = (window as any).__authSetState;
-    if (setState) setState({ token: null, user: null, isAuthenticated: false, refreshPending: null });
+    if (setState) setState({
+      token: null,
+      user: null,
+      contexts: [],
+      selectedTenant: null,
+      isAuthenticated: false,
+      refreshPending: null,
+    });
   } catch {}
 };
 
@@ -54,6 +62,7 @@ apiClient.interceptors.request.use((config) => {
   try {
     const store = (window as any).__authStore;
     if (store?.token) config.headers.Authorization = `Bearer ${store.token}`;
+    if (store?.selectedTenant?.id) config.headers['X-Tenant-ID'] = store.selectedTenant.id;
   } catch {}
   return config;
 });
@@ -83,6 +92,16 @@ apiClient.interceptors.response.use(
       }
     }
 
+    const code = error.response?.data?.error?.code;
+    if (code === 'PASSWORD_CHANGE_REQUIRED') {
+      if (window.location.pathname !== '/change-password') window.location.replace('/change-password');
+    }
+    if (['TENANT_INACTIVE', 'TENANT_NOT_FOUND', 'MEMBERSHIP_INACTIVE'].includes(code)) {
+      sessionStorage.removeItem('selectedTenant');
+      const setState = (window as any).__authSetState;
+      if (setState) setState({ selectedTenant: null });
+      if (window.location.pathname !== '/tenant-select') window.location.replace('/tenant-select');
+    }
     return Promise.reject(error.response?.data || error);
   },
 );

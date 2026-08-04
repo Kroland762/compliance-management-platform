@@ -40,10 +40,131 @@ body {
   color: var(--apple-gray-900);
   letter-spacing: -0.01em;
   line-height: 1.5;
+  overflow-x: hidden;
 }
 
 #root {
   min-height: 100vh;
+  min-width: 0;
+}
+
+.app-content,
+.app-body,
+.ant-layout,
+.ant-card,
+.ant-card-body,
+.ant-table-wrapper,
+.ant-table-container {
+  min-width: 0;
+}
+
+.app-topnav {
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.app-topnav::-webkit-scrollbar {
+  display: none;
+}
+
+.app-content {
+  overflow-x: hidden;
+}
+
+.ant-table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.ant-table {
+  min-width: 0;
+}
+
+.toolbar-row,
+.toolbar-filters {
+  min-width: 0;
+}
+
+.filter-toolbar {
+  margin-bottom: 16px;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+.filter-toolbar-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: max-content;
+}
+
+.filter-toolbar .ant-input-affix-wrapper,
+.filter-toolbar .ant-picker,
+.filter-toolbar .ant-select,
+.filter-toolbar .ant-btn {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 900px) {
+  .app-topbar-main {
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+    gap: 8px;
+  }
+
+  .app-topbar-actions {
+    flex-shrink: 0;
+  }
+
+  .app-username {
+    display: none;
+  }
+
+  .app-content {
+    padding: 18px 14px !important;
+  }
+
+  .organization-layout {
+    grid-template-columns: 1fr !important;
+    gap: 16px !important;
+  }
+
+  .responsive-form-grid,
+  .responsive-form-grid-narrow {
+    grid-template-columns: 1fr !important;
+  }
+
+  .settings-field-row {
+    align-items: flex-start !important;
+    flex-direction: column;
+  }
+
+  .settings-password-rules {
+    columns: 1 !important;
+  }
+
+  .qualification-stat-grid {
+    grid-template-columns: 1fr 1fr !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .app-content {
+    padding: 14px 10px !important;
+  }
+
+  .ant-card .ant-card-body {
+    padding: 16px !important;
+  }
+
+  .qualification-stat-grid {
+    grid-template-columns: 1fr !important;
+  }
+
 }
 
 /* Apple-style scrollbar */

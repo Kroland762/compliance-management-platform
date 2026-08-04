@@ -1,12 +1,9 @@
-import { describe, expect, test, vi } from 'vitest';
-import { authorize, authorizeAny, superAdminOnly } from '../src/middlewares/auth';
-
-const jest = vi;
-
-vi.mock('../src/services/auth.service', () => ({
+jest.mock('../src/services/auth.service', () => ({
   __esModule: true,
-  default: { verifyTokenAndLoadUser: vi.fn() },
+  default: { verifyTokenAndLoadUser: jest.fn() },
 }));
+
+const { authorize, authorizeAny, superAdminOnly } = require('../src/middlewares/auth');
 
 function createResponse() {
   return {
@@ -28,8 +25,13 @@ function createUser(overrides = {}) {
     userId: 'user-1',
     username: 'tester',
     role: '测试角色',
-    roleId: 'role-1',
+    roleIds: ['role-1'],
     permissions: {},
+    permissionScopes: {},
+    departmentIds: [],
+    mustChangePassword: false,
+    isGlobalAdmin: false,
+    tokenKind: 'tenant',
     ...overrides,
   };
 }
@@ -42,9 +44,7 @@ describe('auth authorization middleware', () => {
 
     authorize('users', 'read')(req, res, next);
 
-    expect(res.status).toHaveBeenCalledWith(401);
-    expect(res.body.error.code).toBe('UNAUTHORIZED');
-    expect(next).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 401, code: 'UNAUTHORIZED' }));
   });
 
   test('authorize allows users with the requested permission', () => {
@@ -65,14 +65,16 @@ describe('auth authorization middleware', () => {
 
     authorize('tenants', 'read')(req, res, next);
 
-    expect(res.status).toHaveBeenCalledWith(403);
-    expect(res.body.error.code).toBe('FORBIDDEN');
-    expect(next).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 403, code: 'FORBIDDEN' }));
   });
 
   test('authorize allows requests after superAdminOnly sets the explicit bypass flag', () => {
     const req = {
-      user: createUser({ permissions: { tenants: ['create', 'read', 'update', 'delete'] } }),
+      user: createUser({
+        isGlobalAdmin: true,
+        tokenKind: 'control',
+        permissions: { tenants: ['create', 'read', 'update', 'delete'] },
+      }),
     };
     const res = createResponse();
     const next = jest.fn();
@@ -99,23 +101,19 @@ describe('auth authorization middleware', () => {
 
     superAdminOnly(req, res, next);
 
-    expect(res.status).toHaveBeenCalledWith(403);
-    expect(res.body.error.code).toBe('FORBIDDEN');
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 403, code: 'FORBIDDEN' }));
     expect(req._isSuperAdmin).toBeUndefined();
-    expect(next).not.toHaveBeenCalled();
   });
 
   test('superAdminOnly rejects global users without full tenant management permissions', () => {
-    const req = { user: createUser({ permissions: { tenants: ['read'] } }) };
+    const req = { user: createUser({ isGlobalAdmin: true, tokenKind: 'control', permissions: { tenants: ['read'] } }) };
     const res = createResponse();
     const next = jest.fn();
 
     superAdminOnly(req, res, next);
 
-    expect(res.status).toHaveBeenCalledWith(403);
-    expect(res.body.error.code).toBe('FORBIDDEN');
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 403, code: 'FORBIDDEN' }));
     expect(req._isSuperAdmin).toBeUndefined();
-    expect(next).not.toHaveBeenCalled();
   });
 
   test('authorizeAny allows one matching permission and denies when none match', () => {
@@ -128,7 +126,6 @@ describe('auth authorization middleware', () => {
     const deniedRes = createResponse();
     const deniedNext = jest.fn();
     authorizeAny(['users', 'read'], ['risks', 'update'])(deniedReq, deniedRes, deniedNext);
-    expect(deniedRes.status).toHaveBeenCalledWith(403);
-    expect(deniedNext).not.toHaveBeenCalled();
+    expect(deniedNext).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 403, code: 'FORBIDDEN' }));
   });
 });

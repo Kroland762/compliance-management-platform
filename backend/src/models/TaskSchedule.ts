@@ -1,65 +1,64 @@
 import { DataTypes, Model, type Optional } from 'sequelize';
 import sequelize from '../config/database';
 
-export enum PersistentScheduleStatus {
-  ACTIVE = 'active',
-  INACTIVE = 'inactive',
-}
-
-interface TaskScheduleAttributes {
+interface Attributes {
   id: string;
-  tenantId: string | null;
-  schemaName: string;
-  taskId: string;
+  tenantId: string;
+  tenantSchema: string;
+  taskId: string | null;
+  resourceType: 'account_audit' | 'assessment_plan' | 'risk_review';
+  resourceId: string;
   cronExpression: string;
-  timezone: string;
-  status: PersistentScheduleStatus;
-  nextRunAt: Date;
+  enabled: boolean;
+  workerId: string | null;
+  leasedUntil: Date | null;
+  heartbeatAt: Date | null;
   lastRunAt: Date | null;
-  lockedAt: Date | null;
-  lockedBy: string | null;
-  failureCount: number;
-  lastError: string | null;
+  lastOutcome: string | null;
+  consecutiveFailures: number;
   createdAt: Date;
   updatedAt: Date;
 }
 
-type CreationAttributes = Optional<TaskScheduleAttributes,
-  'id' | 'tenantId' | 'timezone' | 'status' | 'lastRunAt' | 'lockedAt' | 'lockedBy' |
-  'failureCount' | 'lastError' | 'createdAt' | 'updatedAt'>;
+type CreationAttributes = Optional<Attributes,
+  'id' | 'taskId' | 'resourceType' | 'enabled' | 'workerId' | 'leasedUntil' |
+  'heartbeatAt' | 'lastRunAt' | 'lastOutcome' | 'consecutiveFailures' |
+  'createdAt' | 'updatedAt'>;
 
-class TaskSchedule extends Model<TaskScheduleAttributes, CreationAttributes> implements TaskScheduleAttributes {
+class TaskSchedule extends Model<Attributes, CreationAttributes> implements Attributes {
   declare id: string;
-  declare tenantId: string | null;
-  declare schemaName: string;
-  declare taskId: string;
+  declare tenantId: string;
+  declare tenantSchema: string;
+  declare taskId: string | null;
+  declare resourceType: 'account_audit' | 'assessment_plan' | 'risk_review';
+  declare resourceId: string;
   declare cronExpression: string;
-  declare timezone: string;
-  declare status: PersistentScheduleStatus;
-  declare nextRunAt: Date;
+  declare enabled: boolean;
+  declare workerId: string | null;
+  declare leasedUntil: Date | null;
+  declare heartbeatAt: Date | null;
   declare lastRunAt: Date | null;
-  declare lockedAt: Date | null;
-  declare lockedBy: string | null;
-  declare failureCount: number;
-  declare lastError: string | null;
+  declare lastOutcome: string | null;
+  declare consecutiveFailures: number;
   declare createdAt: Date;
   declare updatedAt: Date;
 }
 
 TaskSchedule.init({
   id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
-  tenantId: { type: DataTypes.UUID, allowNull: true },
-  schemaName: { type: DataTypes.STRING(63), allowNull: false, defaultValue: 'public' },
-  taskId: { type: DataTypes.UUID, allowNull: false },
-  cronExpression: { type: DataTypes.STRING(100), allowNull: false },
-  timezone: { type: DataTypes.STRING(64), allowNull: false, defaultValue: 'Asia/Shanghai' },
-  status: { type: DataTypes.STRING(20), allowNull: false, defaultValue: PersistentScheduleStatus.ACTIVE },
-  nextRunAt: { type: DataTypes.DATE, allowNull: false },
+  tenantId: { type: DataTypes.UUID, allowNull: false },
+  tenantSchema: { type: DataTypes.STRING(63), allowNull: false },
+  taskId: { type: DataTypes.UUID, allowNull: true },
+  resourceType: { type: DataTypes.STRING(30), allowNull: false, defaultValue: 'account_audit' },
+  resourceId: { type: DataTypes.UUID, allowNull: false },
+  cronExpression: { type: DataTypes.STRING(120), allowNull: false },
+  enabled: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+  workerId: { type: DataTypes.STRING(120), allowNull: true },
+  leasedUntil: { type: DataTypes.DATE, allowNull: true },
+  heartbeatAt: { type: DataTypes.DATE, allowNull: true },
   lastRunAt: { type: DataTypes.DATE, allowNull: true },
-  lockedAt: { type: DataTypes.DATE, allowNull: true },
-  lockedBy: { type: DataTypes.STRING(100), allowNull: true },
-  failureCount: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
-  lastError: { type: DataTypes.TEXT, allowNull: true },
+  lastOutcome: { type: DataTypes.STRING(30), allowNull: true },
+  consecutiveFailures: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
   createdAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
   updatedAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
 }, {
@@ -68,8 +67,8 @@ TaskSchedule.init({
   schema: 'public',
   timestamps: true,
   indexes: [
-    { name: 'uq_task_schedules_schema_task', unique: true, fields: ['schemaName', 'taskId'] },
-    { fields: ['status', 'nextRunAt'] },
+    { unique: true, fields: ['tenantId', 'resourceType', 'resourceId'] },
+    { fields: ['enabled', 'leasedUntil'] },
   ],
 });
 

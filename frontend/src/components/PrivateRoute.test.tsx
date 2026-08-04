@@ -33,6 +33,8 @@ describe('PrivateRoute', () => {
       isAuthenticated: false,
       initialized: false,
       refreshPending: null,
+      contexts: [],
+      selectedTenant: null,
     });
   });
 
@@ -51,9 +53,11 @@ describe('PrivateRoute', () => {
     useAuthStore.setState({
       initialized: true,
       isAuthenticated: true,
+      selectedTenant: { id: 'tenant-1', name: '测试租户', slug: 'test' },
       user: {
-        id: 'user-1', username: 'tester', role: 'viewer', roleId: 'role-1',
-        permissions: { users: ['read'] }, department: null, email: null,
+        id: 'user-1', username: 'tester', role: 'viewer', roleIds: ['role-1'],
+        permissions: { users: ['read'] }, permissionScopes: {}, departmentIds: [],
+        email: null, mustChangePassword: false, isGlobalAdmin: false,
       },
     });
     renderRoute(['users', 'delete']);
@@ -64,9 +68,11 @@ describe('PrivateRoute', () => {
     useAuthStore.setState({
       initialized: true,
       isAuthenticated: true,
+      selectedTenant: { id: 'tenant-1', name: '测试租户', slug: 'test' },
       user: {
-        id: 'user-1', username: 'tester', role: 'admin', roleId: 'role-1',
-        permissions: { users: ['read'] }, department: null, email: null,
+        id: 'user-1', username: 'tester', role: 'admin', roleIds: ['role-1'],
+        permissions: { users: ['read'] }, permissionScopes: {}, departmentIds: [],
+        email: null, mustChangePassword: false, isGlobalAdmin: false,
       },
     });
     renderRoute(['users', 'read']);

@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react';
 import { Typography, Row, Col, Card } from 'antd';
 import {
   AuditOutlined, FileTextOutlined, CheckCircleOutlined, WarningOutlined,
+  SafetyCertificateOutlined, ClockCircleOutlined, FundOutlined,
 } from '@ant-design/icons';
 import { useNavigate, Navigate } from 'react-router-dom';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend, LineChart, Line, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { useAuthStore } from '../store/auth';
 import apiClient from '../api/client';
 
@@ -65,45 +66,38 @@ export default function Dashboard() {
   const user = useAuthStore((s) => s.user);
   const can = useAuthStore((s) => s.hasPermission);
   const navigate = useNavigate();
-  const [stats, setStats] = useState({ tasks: 0, templates: 0, completed: 0, risks: 0 });
+  const [stats, setStats] = useState({
+    tasks: 0, templates: 0, qualifications: 0, completed: 0, risks: 0,
+    highRisks: 0, unresolvedRisks: 0, overdueActions: 0, assessmentCompletionRate: 0,
+  });
   const [taskPie, setTaskPie] = useState<any[]>([]);
   const [riskPie, setRiskPie] = useState<any[]>([]);
+  const [riskTrend, setRiskTrend] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     const fetchStats = async () => {
       try {
-        const results: PromiseSettledResult<any>[] = [];
-        const promises: Promise<any>[] = [];
-
-        if (can('tasks', 'read')) promises.push(apiClient.get('/tasks'));
-        if (can('templates', 'read')) promises.push(apiClient.get('/templates'));
-        if (can('risks', 'read')) promises.push(apiClient.get('/risks'));
-        promises.push(apiClient.get('/stats'));
-
-        const settled = await Promise.allSettled(promises);
+        const statsRes: any = await apiClient.get('/stats');
         if (cancelled) return;
-
-        let idx = 0;
-        const tasksRes = can('tasks', 'read') ? settled[idx++] : null;
-        const templatesRes = can('templates', 'read') ? settled[idx++] : null;
-        const risksRes = can('risks', 'read') ? settled[idx++] : null;
-        const statsRes = settled[idx++];
-
-        const tasks = tasksRes?.status === 'fulfilled' ? tasksRes.value?.data?.items || [] : [];
-        const templates = templatesRes?.status === 'fulfilled' ? templatesRes.value?.data?.items || [] : [];
-        const risks = risksRes?.status === 'fulfilled' ? risksRes.value?.data?.items || [] : [];
-        const pieData = statsRes?.status === 'fulfilled' ? statsRes.value?.data : {};
+        const pieData = statsRes?.data || {};
+        const summary = pieData.summary || {};
 
         setStats({
-          tasks: tasks.length,
-          templates: templates.length,
-          completed: tasks.filter((t: any) => t.status === 'completed').length,
-          risks: risks.length,
+          tasks: summary.tasks || 0,
+          templates: summary.templates || 0,
+          qualifications: summary.qualifications || 0,
+          completed: summary.completed || 0,
+          risks: summary.risks || 0,
+          highRisks: summary.highRisks || 0,
+          unresolvedRisks: summary.unresolvedRisks || 0,
+          overdueActions: summary.overdueActions || 0,
+          assessmentCompletionRate: summary.assessmentCompletionRate || 0,
         });
         setTaskPie(pieData.taskPie || []);
         setRiskPie(pieData.riskPie || []);
+        setRiskTrend(pieData.riskTrend || []);
       } catch {} finally {
         if (!cancelled) setLoading(false);
       }
@@ -112,7 +106,7 @@ export default function Dashboard() {
     return () => { cancelled = true; };
   }, []);
 
-  const hasAnyPermission = can('tasks', 'read') || can('risks', 'read');
+  const hasAnyPermission = can('tasks', 'read') || can('risks', 'read') || can('qualifications', 'read');
   if (!hasAnyPermission) {
     return <Navigate to="/my-tasks" replace />;
   }
@@ -141,20 +135,52 @@ export default function Dashboard() {
         {can('templates', 'read') && (
           <Col xs={24} sm={12} lg={6}>
             <StatCard
-              icon={<FileTextOutlined />} label="问卷模版" value={stats.templates}
+              icon={<FileTextOutlined />} label="合规模板" value={stats.templates}
               color="#5856D6" onClick={() => navigate('/templates')}
+            />
+          </Col>
+        )}
+        {can('qualifications', 'read') && (
+          <Col xs={24} sm={12} lg={6}>
+            <StatCard
+              icon={<SafetyCertificateOutlined />} label="资质台账" value={stats.qualifications}
+              color="#00A0A0" onClick={() => navigate('/qualifications')}
             />
           </Col>
         )}
         {can('risks', 'read') && (
           <Col xs={24} sm={12} lg={6}>
             <StatCard
-              icon={<WarningOutlined />} label="风险项" value={stats.risks}
+              icon={<WarningOutlined />} label="风险总数" value={stats.risks}
               color="#FF9500" onClick={() => navigate('/risks')}
             />
           </Col>
         )}
-        {!can('tasks', 'read') && !can('templates', 'read') && !can('risks', 'read') && (
+        {can('risks', 'read') && (
+          <Col xs={24} sm={12} lg={6}>
+            <StatCard icon={<WarningOutlined />} label="高风险数量" value={stats.highRisks}
+              color="#FF3B30" onClick={() => navigate('/risks')} />
+          </Col>
+        )}
+        {can('risks', 'read') && (
+          <Col xs={24} sm={12} lg={6}>
+            <StatCard icon={<FundOutlined />} label="未整改风险" value={stats.unresolvedRisks}
+              color="#AF52DE" onClick={() => navigate('/risks')} />
+          </Col>
+        )}
+        {can('remediation_actions', 'read') && (
+          <Col xs={24} sm={12} lg={6}>
+            <StatCard icon={<ClockCircleOutlined />} label="逾期行动" value={stats.overdueActions}
+              color="#FF2D55" onClick={() => navigate('/remediation-actions')} />
+          </Col>
+        )}
+        {can('tasks', 'read') && (
+          <Col xs={24} sm={12} lg={6}>
+            <StatCard icon={<CheckCircleOutlined />} label="评估完成率" value={`${stats.assessmentCompletionRate}%`}
+              color="#34C759" onClick={() => navigate('/tasks/review')} />
+          </Col>
+        )}
+        {!can('tasks', 'read') && !can('templates', 'read') && !can('qualifications', 'read') && !can('risks', 'read') && (
           <Col span={24}>
             <Text type="secondary">暂无权限查看统计数据</Text>
           </Col>
@@ -237,6 +263,21 @@ export default function Dashboard() {
             </Col>
           )}
         </Row>
+      )}
+      {riskTrend.length > 0 && (
+        <Card title="本月新增与关闭趋势" style={{ marginTop: 24, borderRadius: 18 }}>
+          <ResponsiveContainer width="100%" height={280}>
+            <LineChart data={riskTrend}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#E5E5EA" />
+              <XAxis dataKey="month" />
+              <YAxis allowDecimals={false} />
+              <Tooltip />
+              <Legend />
+              <Line type="monotone" dataKey="created" name="新增风险" stroke="#FF3B30" strokeWidth={2} />
+              <Line type="monotone" dataKey="closed" name="关闭风险" stroke="#34C759" strokeWidth={2} />
+            </LineChart>
+          </ResponsiveContainer>
+        </Card>
       )}
     </div>
   );

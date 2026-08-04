@@ -1,18 +1,24 @@
 # Compliance Management Platform
 
-企业合规审计管理平台，基于 B/S 架构，涵盖**资质合规**与**账户审计**两大模块，支持 RBAC 权限体系、多数据源接入、规则引擎自动化审计。
+企业合规审计管理平台，基于 B/S 架构，涵盖**资质合规**与**账户审计**两大模块，支持 schema 级租户隔离、RBAC 权限体系、PostgreSQL 只读数据源和规则引擎自动化审计。
 
 ## 功能模块
 
 ### 资质合规
 - 问卷模版管理（CSV 导入/导出、版本管理）
-- 审计任务创建 → 题目配置 → 指派 → 填写 → 审阅 → 退回/通过
-- 作答证据与历史证据在线预览（图片、CSV、PDF）
-- 风险项追踪与状态管理
-- 可视化仪表盘（任务分布、风险分布饼图）
+- 资产台账与组织级治理逻辑资产
+- 标准 → 资产范围 → 控制项资产矩阵 → 发布评估
+- 一个控制项可评估多个资产，每个组合生成独立“评估单元”
+- 风险可关联多个来源评估单元和多个受影响资产
+- 一个整改行动可关联多个风险，并在每个风险下独立复核
+- 风险关闭由服务端门禁计算，支持单人自审标识
+- 周期评估计划保存标准、资产范围和矩阵快照
+- 当前证据、历史证据和整改证据统一版本化管理，支持图片、PDF、CSV 在线预览
+- 证据上传执行类型与文件签名校验、SHA-256 完整性记录；删除采用可审计软删除
+- 管理驾驶舱与风险/来源/资产/行动/复核/证据多工作表导出
 
 ### 账户审计
-- 多数据源接入（数据库直连 / CSV 上传，支持字段映射）
+- PostgreSQL 只读数据源接入（表/字段白名单映射，不接受任意 SQL）
 - 账户数据 3 层生命周期（HOT → WARM → COLD）
 - 内置规则引擎 + 自定义规则（AND/OR 嵌套条件，10+ 运算符）
 - 定时/手动执行审计任务，自动匹配规则并生成问题
@@ -20,10 +26,12 @@
 - 可视化概览（统计卡片、风险分布、问题排行、趋势图）
 
 ### 安全体系
-- **RBAC 权限系统**：自定义角色 + 13 个资源 × 多操作权限矩阵
+- **成员与 RBAC**：全局登录身份 + 租户成员，多角色权限并集，资源 × 操作 × 数据范围矩阵
 - **登录安全**：图形验证码、失败锁定（次数/时长可配）、密码复杂度强制（8 位 + 大小写 + 数字 + 特殊字符）
 - **会话管理**：JWT Access/Refresh Token + 空闲超时自动登出（可配）
-- **审计日志**：全操作留痕
+- **对象级授权**：按租户、部门、负责人和分配关系校验数据范围，避免仅依赖前端隐藏
+- **数据源边界**：只允许 PostgreSQL、拒绝任意 SQL 与危险标识符，默认阻断内网和云元数据地址
+- **审计日志与可靠调度**：全操作留痕；定时任务使用 PostgreSQL 持久化租约，支持进程重启恢复
 
 ## 技术栈
 
@@ -33,21 +41,25 @@
 | 后端 | Node.js + Express + TypeScript + Sequelize ORM |
 | 数据库 | PostgreSQL |
 | 认证 | JWT (access + refresh) + bcrypt + SVG 验证码 |
-| 调度 | PostgreSQL 持久化计划 + 数据库租约 Worker（Cron 表达式） |
+| 调度 | PostgreSQL 持久化租约 + node-cron 触发 |
+
+支持基线：Node.js 22、PostgreSQL 14+。生产数据只允许通过版本化迁移器变更。
 
 ## 快速开始
 
 ```bash
 # 1. 安装依赖
-cd backend && npm install
-cd ../frontend && npm install
+cd backend && npm ci
+cd ../frontend && npm ci
 
 # 2. 配置环境变量
 cp backend/.env.example backend/.env
 # 编辑 .env 填写数据库连接信息
 
 # 3. 初始化数据库
-cd backend && npm run migrate && npm run seed
+cd backend
+npm run migrate:up
+SEED_ADMIN_PASSWORD='replace-with-strong-password' npm run seed
 
 # 4. 启动服务
 # 终端 1: 后端
@@ -56,28 +68,37 @@ cd backend && npm run dev
 cd frontend && npm run dev
 ```
 
-访问 http://localhost:5173 ，默认账号：
-- admin / Admin1234（管理员）
-- auditor / Auditor1234（审计员）
-- respondent / Respondent1234（普通用户）
+访问 http://localhost:5173。系统不再内置固定默认密码；控制面管理员仅在显式设置
+`SEED_ADMIN_PASSWORD` 时创建。全局管理员和多租户成员通过租户选择页签发租户态令牌；
+没有租户上下文时，业务 API 不接受请求。
 
-## P0-A/B/D/E 升级
-
-从旧版本升级时，先备份数据库与 `UPLOAD_DIR`，再执行：
+## 迁移与验证
 
 ```bash
 cd backend
-npm run migrate:p0
-npm run build
+npm run migrate:status
+npm run migrate:up
+npm run migrate:legacy-public          # 默认只生成 public 存量清单
+npm run migrate:legacy-public -- --apply --tenant=<tenant-id>
+npm run migrate:legacy-files -- --tenant=<tenant-id>  # 默认只生成文件清单
+npm run migrate:membership-plan       # 只读生成成员/角色/部门/对象归属清单
+npm run migrate:membership-plan -- --apply --mapping=/absolute/path/membership-map.json
+npm run migrate:relationship-plan   # 只读生成资产、风险来源和旧整改清单
+npm run migrate:relationship-plan -- --apply --mapping=/absolute/path/relationship-map.json
+
 npm test
+BENCHMARK_CONFIRM=temporary-only npm run benchmark:vnext  # 仅限临时数据库
+RUN_PG_INTEGRATION=true npm run test:ci  # 需要专用临时 PostgreSQL
+cd ../frontend && npm run test:ci && npm run build
+npm run test:e2e                        # 需要已迁移、已种子化的测试数据库
 ```
 
-- P0-A：租户令牌与数据库租户实时校验；任务、题目、证据按创建人、复核人和被指派人做对象级授权。
-- P0-B：证据随机存储名、内容签名检查、SHA-256、版本链、软删除、锁定和下载/预览审计。
-- P0-D：数据源凭据版本化 AES-GCM 加密、主机校验、TLS 证书校验、只读表连接并禁用任意 SQL。
-- P0-E：调度计划持久化、数据库租约、多实例互斥、心跳回收、失败重试和幂等执行。
+迁移记录以 `(migration_id, schema_name)` 为主键并校验迁移内容；迁移器使用 PostgreSQL
+advisory lock 防止并发执行。`migrate:down` 只允许对最后一个迁移进行显式确认回滚。
+关系图写接口使用 `If-Match` 乐观锁；风险创建、整改提交和风险导出使用持久化
+`Idempotency-Key`，以支持安全重试和并发防重。
 
-生产环境必须设置强随机的 `JWT_SECRET` 和 `ENCRYPTION_KEY`。数据库连接器仅支持 PostgreSQL，建议使用只能 `SELECT` 指定表的独立账号并启用 TLS。
+运维、升级、备份恢复和故障排查见 [部署与升级指南](./部署与升级指南.md)。
 
 ## 项目结构
 
@@ -110,16 +131,26 @@ compliance-management-platform/
 └── README.md
 ```
 
-## 权限体系
+## 身份、成员与权限体系
 
-系统内置 3 个角色，管理员可自由创建自定义角色并配置权限矩阵：
+`public.users` 只保存用户名、密码哈希和认证状态。同一身份可通过不同的
+`tenant_members` 加入多个租户，并在每个租户拥有独立的姓名、状态、主/兼职部门和多个角色。
+任务、证据、通知与审计人仍引用稳定的全局 User ID。
+
+租户内置 3 个锁定角色。系统角色不可编辑或删除；管理员应先复制为自定义角色，再配置权限。
+多角色权限按资源/操作取并集，数据范围按
+`all > department_tree > department > assigned > self` 选择最宽范围：
 
 | 资源 | 可选操作 |
 |------|---------|
-| 用户管理 | 创建、查看、更新、删除 |
+| 成员管理 | 创建、查看、更新、删除 |
 | 模版管理 | 创建、查看、更新、删除 |
-| 合规任务 | 创建、查看、更新、删除、提交、退回 |
-| 风险管理 | 查看、更新 |
+| 资产台账 | 创建、查看、更新、归档 |
+| 合规任务 | 创建、查看、更新、删除、提交、退回、发布、取消 |
+| 评估单元 | 查看、填写、提交、复核 |
+| 风险管理 | 创建、查看、更新、确认、分配、接受、复核、关闭、导出 |
+| 整改行动 | 创建、查看、更新、提交、复核、关联 |
+| 周期计划 | 创建、查看、更新、删除、执行 |
 | 操作日志 | 查看、导出 |
 | 通知管理 | 查看、更新 |
 | 数据导出 | 创建 |
@@ -130,6 +161,10 @@ compliance-management-platform/
 | 问题管理 | 查看、更新、导出 |
 | 审计概览 | 查看 |
 
+新本地成员由服务端生成一次性临时密码，成功响应只显示一次，首次登录必须改密。已有登录身份
+通过 72 小时、单次使用、数据库只存 SHA-256 哈希的邀请令牌加入其他租户。每个有效成员必须
+有且只有一个主部门，并至少绑定一个有效角色。
+
 ## 规则引擎
 
 支持 AND/OR 嵌套条件逻辑，内置运算符：
@@ -137,3 +172,6 @@ compliance-management-platform/
 `eq` `neq` `gt` `lt` `gte` `lte` `contains` `contains_any` `not_true` `is_null` `is_not_null` `lt_days` `lt_date`
 
 内置规则：长期未登录、未启用 MFA、高权限未启用 MFA、异常创建时间。
+
+vNext 关系图的数据库结构、状态机、接口与运行约束见
+[vNext 多对多评估与整改技术说明](./VNEXT_RELATIONSHIP_GRAPH.md)。

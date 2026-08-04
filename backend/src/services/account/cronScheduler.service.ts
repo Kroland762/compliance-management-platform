@@ -1,226 +1,247 @@
-import cron from 'node-cron';
 import os from 'os';
-import { Op } from 'sequelize';
+import cron from 'node-cron';
+import { Op, Transaction } from 'sequelize';
 import sequelize from '../../config/database';
-import { AccountAuditTask, ExecutionStatus, ScheduleType, TaskExecution, TaskStatus } from '../../models/account';
-import { PersistentScheduleStatus, TaskSchedule, Tenant } from '../../models';
-import { TenantStatus } from '../../models/Tenant';
-import { runWithTenantContext, type TenantExecutionContext } from '../../middlewares/tenant';
+import TaskSchedule from '../../models/TaskSchedule';
+import { ScheduleType } from '../../models/account';
+import { getTenantStore, runWithTenantContext } from '../../middlewares/tenant';
 import auditTaskService from './auditTask.service';
+import { scheduleOperations } from '../metrics.service';
+import { config } from '../../config';
 
-const TIMEZONE = process.env.TASK_SCHEDULER_TIMEZONE || 'Asia/Shanghai';
-const STALE_LOCK_MS = Math.max(Number(process.env.TASK_SCHEDULER_STALE_LOCK_MS || 10 * 60 * 1000), 60_000);
-const POLL_MS = Math.max(Number(process.env.TASK_SCHEDULER_POLL_MS || 5000), 1000);
-const MAX_RETRIES = Math.max(Number(process.env.TASK_SCHEDULER_MAX_RETRIES || 3), 1);
+type ScheduledTask = ReturnType<typeof cron.schedule>;
+const LEASE_MS = 5 * 60 * 1000;
+const HEARTBEAT_MS = 20 * 1000;
 
-export interface ScheduleTenantContext {
-  tenantId: string | null;
-  schemaName: string;
-}
-
-/** PostgreSQL-backed scheduler. Schedule state and leases survive restarts. */
-class CronSchedulerService {
-  private pollTimer: NodeJS.Timeout | null = null;
-  private polling = false;
+export class CronSchedulerService {
+  private jobs = new Map<string, ScheduledTask>();
+  private readonly workerId = `${os.hostname()}-${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
   private initialized = false;
-  private readonly workerId = `${os.hostname()}:${process.pid}`;
+  private healthy = true;
+
+  constructor(private readonly taskTimeoutMs = config.security.scheduleTaskTimeoutMs) {}
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
     this.initialized = true;
-    await this.reconcileAllSchemas();
-    await this.processDueSchedules();
-    this.pollTimer = setInterval(() => {
-      void this.processDueSchedules();
-    }, POLL_MS);
-    this.pollTimer.unref();
-    console.log(`[TaskScheduler] persistent scheduler started as ${this.workerId}`);
+    try {
+      const schedules = await TaskSchedule.findAll({ where: { enabled: true } });
+      schedules.forEach((schedule) => this.startLocalJob(schedule));
+      this.healthy = true;
+    } catch (error) {
+      this.healthy = false;
+      throw error;
+    }
   }
 
-  buildCronExpression(scheduleType: ScheduleType, config?: Record<string, any> | null): string | null {
+  status(): { initialized: boolean; healthy: boolean; workerId: string; jobs: number } {
+    return { initialized: this.initialized, healthy: this.healthy, workerId: this.workerId, jobs: this.jobs.size };
+  }
+
+  async runScheduleNow(scheduleId: string): Promise<void> {
+    await this.claimAndExecute(scheduleId);
+  }
+
+  async registerJob(taskId: string, scheduleType: ScheduleType, scheduleConfig?: Record<string, any> | null): Promise<void> {
+    const context = getTenantStore();
+    if (!context?.tenantId || context.schema === 'public') throw new Error('调度注册缺少租户上下文');
+    const expression = this.buildCronExpression(scheduleType, scheduleConfig);
+    if (!expression || !cron.validate(expression)) {
+      await this.unregisterJob(taskId);
+      return;
+    }
+    const [schedule] = await TaskSchedule.upsert({
+      tenantId: context.tenantId,
+      tenantSchema: context.schema,
+      taskId,
+      resourceType: 'account_audit',
+      resourceId: taskId,
+      cronExpression: expression,
+      enabled: true,
+      consecutiveFailures: 0,
+    }, { returning: true });
+    this.startLocalJob(schedule);
+  }
+
+  async registerResourceJob(
+    resourceType: 'assessment_plan' | 'risk_review',
+    resourceId: string,
+    cronExpression: string,
+  ): Promise<void> {
+    const context = getTenantStore();
+    if (!context?.tenantId || context.schema === 'public') throw new Error('调度注册缺少租户上下文');
+    if (!cron.validate(cronExpression)) throw new Error('Cron 表达式无效');
+    const [schedule] = await TaskSchedule.upsert({
+      tenantId: context.tenantId,
+      tenantSchema: context.schema,
+      taskId: null,
+      resourceType,
+      resourceId,
+      cronExpression,
+      enabled: true,
+      consecutiveFailures: 0,
+    }, { returning: true });
+    this.startLocalJob(schedule);
+  }
+
+  async unregisterResourceJob(resourceType: 'assessment_plan' | 'risk_review', resourceId: string): Promise<void> {
+    const context = getTenantStore();
+    const where: any = { resourceType, resourceId };
+    if (context?.tenantId) where.tenantId = context.tenantId;
+    const schedules = await TaskSchedule.findAll({ where });
+    schedules.forEach((schedule) => {
+      this.jobs.get(schedule.id)?.stop();
+      this.jobs.delete(schedule.id);
+    });
+    await TaskSchedule.update({ enabled: false }, { where });
+  }
+
+  async unregisterJob(taskId: string): Promise<void> {
+    const context = getTenantStore();
+    const where: any = { resourceType: 'account_audit', resourceId: taskId };
+    if (context?.tenantId) where.tenantId = context.tenantId;
+    const schedules = await TaskSchedule.findAll({ where });
+    schedules.forEach((schedule) => {
+      this.jobs.get(schedule.id)?.stop();
+      this.jobs.delete(schedule.id);
+    });
+    await TaskSchedule.update({ enabled: false }, { where });
+  }
+
+  private startLocalJob(schedule: TaskSchedule): void {
+    this.jobs.get(schedule.id)?.stop();
+    const job = cron.schedule(schedule.cronExpression, () => {
+      void this.claimAndExecute(schedule.id);
+    }, { timezone: config.businessTimeZone });
+    this.jobs.set(schedule.id, job);
+  }
+
+  private async claimAndExecute(scheduleId: string): Promise<void> {
+    const currentSlot = new Date();
+    currentSlot.setSeconds(0, 0);
+    const schedule = await sequelize.transaction({ isolationLevel: Transaction.ISOLATION_LEVELS.READ_COMMITTED }, async (transaction) => {
+      const row = await TaskSchedule.findOne({
+        where: {
+          id: scheduleId,
+          enabled: true,
+          [Op.and]: [
+            { [Op.or]: [{ leasedUntil: null }, { leasedUntil: { [Op.lt]: new Date() } }] },
+            { [Op.or]: [{ lastRunAt: null }, { lastRunAt: { [Op.lt]: currentSlot } }] },
+          ],
+        },
+        lock: Transaction.LOCK.UPDATE,
+        skipLocked: true,
+        transaction,
+      });
+      if (!row) return null;
+      await row.update({
+        workerId: this.workerId,
+        heartbeatAt: new Date(),
+        leasedUntil: new Date(Date.now() + LEASE_MS),
+      }, { transaction });
+      return row;
+    });
+    if (!schedule) return;
+
+    const heartbeat = setInterval(() => {
+      void TaskSchedule.update({
+        heartbeatAt: new Date(),
+        leasedUntil: new Date(Date.now() + LEASE_MS),
+      }, { where: { id: schedule.id, workerId: this.workerId } });
+    }, HEARTBEAT_MS);
+    heartbeat.unref();
+
+    const idempotencyKey = `${schedule.id}:${currentSlot.toISOString()}`;
+    try {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const execution = runWithTenantContext(
+        { schema: schedule.tenantSchema, tenantId: schedule.tenantId },
+        async () => {
+          if (schedule.resourceType === 'assessment_plan') {
+            const assessmentPlanService = (await import('../assessment-plan.service')).default;
+            return assessmentPlanService.executeScheduled(schedule.resourceId, idempotencyKey, this.workerId);
+          }
+          if (schedule.resourceType === 'risk_review') {
+            const riskDomainService = (await import('../risk-domain.service')).default;
+            return riskDomainService.sendAcceptedRiskReviewReminder(schedule.resourceId);
+          }
+          return auditTaskService.executeTaskScheduled(schedule.resourceId, idempotencyKey, this.workerId);
+        },
+      );
+      const timeoutFailure = new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`计划任务执行超过 ${this.taskTimeoutMs}ms`)),
+          this.taskTimeoutMs,
+        );
+        timeout.unref();
+      });
+      try {
+        const outcome: any = await Promise.race([execution, timeoutFailure]);
+        if (outcome?.disableSchedule) {
+          schedule.enabled = false;
+          this.jobs.get(schedule.id)?.stop();
+          this.jobs.delete(schedule.id);
+        }
+      } finally {
+        if (timeout) clearTimeout(timeout);
+      }
+      await schedule.update({
+        enabled: schedule.enabled,
+        lastRunAt: new Date(),
+        lastOutcome: 'success',
+        consecutiveFailures: 0,
+        workerId: null,
+        leasedUntil: null,
+        heartbeatAt: null,
+      });
+      scheduleOperations.inc({ outcome: 'success' });
+    } catch (error) {
+      const failures = schedule.consecutiveFailures + 1;
+      await schedule.update({
+        lastRunAt: new Date(),
+        lastOutcome: 'failed',
+        consecutiveFailures: failures,
+        workerId: null,
+        leasedUntil: new Date(Date.now() + Math.min(60 * 60 * 1000, 2 ** failures * 30_000)),
+        heartbeatAt: null,
+      });
+      scheduleOperations.inc({ outcome: 'failure' });
+    } finally {
+      clearInterval(heartbeat);
+    }
+  }
+
+  buildCronExpression(type: ScheduleType, scheduleConfig?: Record<string, any> | null): string | null {
     const numberInRange = (value: unknown, fallback: number, min: number, max: number): number => {
       const number = value === undefined ? fallback : Number(value);
-      if (!Number.isInteger(number) || number < min || number > max) throw new Error('任务调度参数无效');
+      if (!Number.isInteger(number) || number < min || number > max) {
+        throw new Error('任务调度参数无效');
+      }
       return number;
     };
+    const hour = numberInRange(scheduleConfig?.hour, 0, 0, 23);
+    const minute = numberInRange(scheduleConfig?.minute, 0, 0, 59);
     let expression: string | null = null;
-    if (scheduleType === ScheduleType.DAILY) {
-      expression = `${numberInRange(config?.minute, 0, 0, 59)} ${numberInRange(config?.hour, 0, 0, 23)} * * *`;
-    } else if (scheduleType === ScheduleType.WEEKLY) {
-      expression = `${numberInRange(config?.minute, 0, 0, 59)} ${numberInRange(config?.hour, 0, 0, 23)} * * ${numberInRange(config?.dayOfWeek, 1, 0, 6)}`;
-    } else if (scheduleType === ScheduleType.MONTHLY) {
-      expression = `${numberInRange(config?.minute, 0, 0, 59)} ${numberInRange(config?.hour, 0, 0, 23)} ${numberInRange(config?.dayOfMonth, 1, 1, 28)} * *`;
-    } else if (scheduleType === ScheduleType.CRON) {
-      expression = typeof config?.expression === 'string' ? config.expression.trim() : null;
+    if (type === ScheduleType.MANUAL) return null;
+    if (type === ScheduleType.DAILY) expression = `${minute} ${hour} * * *`;
+    if (type === ScheduleType.WEEKLY) {
+      expression = `${minute} ${hour} * * ${numberInRange(scheduleConfig?.dayOfWeek, 1, 0, 6)}`;
+    }
+    if (type === ScheduleType.MONTHLY) {
+      expression = `${minute} ${hour} ${numberInRange(scheduleConfig?.dayOfMonth, 1, 1, 28)} * *`;
+    }
+    if (type === ScheduleType.CRON) {
+      expression = typeof scheduleConfig?.expression === 'string' ? scheduleConfig.expression.trim() : null;
     }
     if (!expression) return null;
     if (!cron.validate(expression)) throw new Error('Cron表达式无效');
     return expression;
   }
 
-  async registerJob(
-    taskId: string,
-    scheduleType: ScheduleType,
-    scheduleConfig?: Record<string, any> | null,
-    tenant: ScheduleTenantContext = { tenantId: null, schemaName: 'public' },
-  ): Promise<void> {
-    const expression = this.buildCronExpression(scheduleType, scheduleConfig);
-    if (!expression) {
-      await this.unregisterJob(taskId, tenant);
-      return;
-    }
-    const existing = await TaskSchedule.findOne({ where: { schemaName: tenant.schemaName, taskId } });
-    const nextRunAt = existing?.cronExpression === expression && existing.nextRunAt
-      ? existing.nextRunAt
-      : this.calculateNextRun(expression);
-    if (existing) {
-      await existing.update({
-        tenantId: tenant.tenantId,
-        cronExpression: expression,
-        timezone: TIMEZONE,
-        status: PersistentScheduleStatus.ACTIVE,
-        nextRunAt,
-        lockedAt: null,
-        lockedBy: null,
-      });
-      return;
-    }
-    await TaskSchedule.create({
-      tenantId: tenant.tenantId,
-      schemaName: tenant.schemaName,
-      taskId,
-      cronExpression: expression,
-      timezone: TIMEZONE,
-      status: PersistentScheduleStatus.ACTIVE,
-      nextRunAt,
-    });
-  }
-
-  async unregisterJob(
-    taskId: string,
-    tenant: ScheduleTenantContext = { tenantId: null, schemaName: 'public' },
-  ): Promise<void> {
-    await TaskSchedule.destroy({ where: { schemaName: tenant.schemaName, taskId } });
-  }
-
-  private calculateNextRun(expression: string): Date {
-    const task = cron.createTask(expression, () => undefined, { timezone: TIMEZONE });
-    try {
-      const nextRun = task.getNextRun();
-      if (!nextRun) throw new Error('无法计算下次执行时间');
-      return nextRun;
-    } finally {
-      void task.destroy();
-    }
-  }
-
-  private async reconcileAllSchemas(): Promise<void> {
-    await this.reconcileSchema({ schema: 'public', tenantId: null });
-    const tenants = await Tenant.findAll({ where: { status: TenantStatus.ACTIVE } });
-    for (const tenant of tenants) {
-      await this.reconcileSchema({ schema: tenant.schemaName, tenantId: tenant.id });
-    }
-  }
-
-  private async reconcileSchema(context: TenantExecutionContext): Promise<void> {
-    await runWithTenantContext(context, async () => {
-      const staleBefore = new Date(Date.now() - STALE_LOCK_MS);
-      await TaskExecution.update({
-        status: ExecutionStatus.FAILED,
-        endTime: new Date(),
-        errorMessage: 'Worker心跳超时，执行已自动回收',
-      }, { where: { status: ExecutionStatus.RUNNING, heartbeatAt: { [Op.lt]: staleBefore } } });
-
-      const tasks = await AccountAuditTask.findAll({
-        where: { status: TaskStatus.ACTIVE, scheduleType: { [Op.ne]: ScheduleType.MANUAL } },
-      });
-      for (const task of tasks) {
-        await this.registerJob(task.id, task.scheduleType, task.scheduleConfig as any, {
-          tenantId: context.tenantId,
-          schemaName: context.schema,
-        });
-      }
-    });
-  }
-
-  private async claimDueSchedule(): Promise<TaskSchedule | null> {
-    const transaction = await sequelize.transaction();
-    try {
-      const staleBefore = new Date(Date.now() - STALE_LOCK_MS);
-      const schedule = await TaskSchedule.findOne({
-        where: {
-          status: PersistentScheduleStatus.ACTIVE,
-          nextRunAt: { [Op.lte]: new Date() },
-          [Op.or]: [{ lockedAt: null }, { lockedAt: { [Op.lt]: staleBefore } }],
-        },
-        order: [['nextRunAt', 'ASC']],
-        transaction,
-        lock: transaction.LOCK.UPDATE,
-        skipLocked: true,
-      });
-      if (!schedule) {
-        await transaction.commit();
-        return null;
-      }
-      await schedule.update({ lockedAt: new Date(), lockedBy: this.workerId }, { transaction });
-      await transaction.commit();
-      return schedule;
-    } catch (error) {
-      await transaction.rollback();
-      throw error;
-    }
-  }
-
-  private async processDueSchedules(): Promise<void> {
-    if (this.polling) return;
-    this.polling = true;
-    try {
-      for (;;) {
-        const schedule = await this.claimDueSchedule();
-        if (!schedule) break;
-        await this.executeClaimedSchedule(schedule);
-      }
-    } catch (error: any) {
-      console.error(`[TaskScheduler] poll failed: ${error.message}`);
-    } finally {
-      this.polling = false;
-    }
-  }
-
-  private async executeClaimedSchedule(schedule: TaskSchedule): Promise<void> {
-    const scheduledFor = new Date(schedule.nextRunAt);
-    const attempt = schedule.failureCount + 1;
-    const idempotencyKey = `schedule:${schedule.id}:${scheduledFor.toISOString()}:attempt:${attempt}`;
-    try {
-      await runWithTenantContext({ schema: schedule.schemaName, tenantId: schedule.tenantId }, () =>
-        auditTaskService.executeTaskScheduled(schedule.taskId, idempotencyKey, attempt, MAX_RETRIES));
-      await schedule.update({
-        nextRunAt: this.calculateNextRun(schedule.cronExpression),
-        lastRunAt: new Date(),
-        failureCount: 0,
-        lastError: null,
-        lockedAt: null,
-        lockedBy: null,
-      });
-    } catch (error: any) {
-      const failures = schedule.failureCount + 1;
-      const exhausted = failures >= MAX_RETRIES;
-      const retryDelayMs = Math.min(60_000 * (2 ** Math.max(failures - 1, 0)), 15 * 60_000);
-      await schedule.update({
-        nextRunAt: exhausted ? this.calculateNextRun(schedule.cronExpression) : new Date(Date.now() + retryDelayMs),
-        failureCount: exhausted ? 0 : failures,
-        lastError: String(error.message || error).slice(0, 2000),
-        lockedAt: null,
-        lockedBy: null,
-      });
-    }
-  }
-
   shutdown(): void {
-    if (this.pollTimer) clearInterval(this.pollTimer);
-    this.pollTimer = null;
+    this.jobs.forEach((job) => job.stop());
+    this.jobs.clear();
     this.initialized = false;
-    console.log('[TaskScheduler] stopped');
   }
 }
 

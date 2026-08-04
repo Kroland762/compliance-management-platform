@@ -2,6 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import Papa from 'papaparse';
 import type EvidenceFile from '../models/EvidenceFile';
+import { fileStorage } from './file-storage.service';
 
 export type PreviewKind = 'image' | 'pdf' | 'csv' | 'unsupported';
 
@@ -119,7 +120,13 @@ export async function readCsvPreview(
   if (getPreviewKind(evidence.originalFilename, evidence.mimeType) !== 'csv') {
     throw new Error('该文件不是 CSV 格式');
   }
-  const buffer = await fs.readFile(path.resolve(evidence.filePath));
+  const buffer = await fs.readFile(resolveEvidencePath(evidence));
   const decoded = decodeCsvBuffer(buffer);
   return parseCsvPreview(decoded.text, page, pageSize, decoded.encoding);
+}
+
+export function resolveEvidencePath(evidence: EvidenceFile): string {
+  if (evidence.storageKey) return fileStorage.absolutePath(evidence.storageKey);
+  if (evidence.filePath) return path.resolve(evidence.filePath);
+  throw new Error('证据文件没有可用的存储位置');
 }

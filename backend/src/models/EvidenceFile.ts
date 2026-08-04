@@ -4,10 +4,14 @@ import QuestionItem from './QuestionItem';
 import User from './User';
 import { EvidenceScanStatus, EvidenceStatus, EvidenceType } from './enums';
 
+export type EvidencePurpose = 'assessment_current' | 'assessment_historical' | 'remediation';
+
 interface EvidenceFileAttributes {
   id: string;
-  questionItemId: string;
+  questionItemId: string | null;
+  remediationActionId: string | null;
   evidenceType: EvidenceType;
+  evidencePurpose: EvidencePurpose;
   version: number;
   sha256: string | null;
   scanStatus: EvidenceScanStatus;
@@ -15,8 +19,9 @@ interface EvidenceFileAttributes {
   isLocked: boolean;
   supersedesId: string | null;
   originalFilename: string;
-  storedFilename: string;
-  filePath: string;
+  storedFilename: string | null;
+  filePath: string | null;
+  storageKey: string | null;
   fileSize: number;
   mimeType: string;
   uploadedBy: string;
@@ -25,12 +30,17 @@ interface EvidenceFileAttributes {
   deletedBy: string | null;
 }
 
-type CreationAttributes = Optional<EvidenceFileAttributes, 'id' | 'evidenceType' | 'version' | 'sha256' | 'scanStatus' | 'status' | 'isLocked' | 'supersedesId' | 'uploadedAt' | 'deletedAt' | 'deletedBy'>;
+type CreationAttributes = Optional<EvidenceFileAttributes,
+  'id' | 'questionItemId' | 'remediationActionId' | 'evidenceType' | 'evidencePurpose' |
+  'version' | 'sha256' | 'scanStatus' | 'status' | 'isLocked' | 'supersedesId' |
+  'storedFilename' | 'filePath' | 'storageKey' | 'uploadedAt' | 'deletedAt' | 'deletedBy'>;
 
 class EvidenceFile extends Model<EvidenceFileAttributes, CreationAttributes> implements EvidenceFileAttributes {
   declare id: string;
-  declare questionItemId: string;
+  declare questionItemId: string | null;
+  declare remediationActionId: string | null;
   declare evidenceType: EvidenceType;
+  declare evidencePurpose: EvidencePurpose;
   declare version: number;
   declare sha256: string | null;
   declare scanStatus: EvidenceScanStatus;
@@ -38,8 +48,9 @@ class EvidenceFile extends Model<EvidenceFileAttributes, CreationAttributes> imp
   declare isLocked: boolean;
   declare supersedesId: string | null;
   declare originalFilename: string;
-  declare storedFilename: string;
-  declare filePath: string;
+  declare storedFilename: string | null;
+  declare filePath: string | null;
+  declare storageKey: string | null;
   declare fileSize: number;
   declare mimeType: string;
   declare uploadedBy: string;
@@ -51,28 +62,40 @@ class EvidenceFile extends Model<EvidenceFileAttributes, CreationAttributes> imp
 EvidenceFile.init(
   {
     id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
-    questionItemId: { type: DataTypes.UUID, allowNull: false, references: { model: QuestionItem, key: 'id' } },
+    questionItemId: { type: DataTypes.UUID, allowNull: true, references: { model: QuestionItem, key: 'id' } },
+    remediationActionId: { type: DataTypes.UUID, allowNull: true },
     evidenceType: {
       type: DataTypes.STRING(20),
       allowNull: false,
       defaultValue: EvidenceType.CURRENT,
       validate: { isIn: [Object.values(EvidenceType)] },
     },
+    evidencePurpose: {
+      type: DataTypes.STRING(30),
+      allowNull: false,
+      defaultValue: 'assessment_current',
+      validate: { isIn: [['assessment_current', 'assessment_historical', 'remediation']] },
+    },
     version: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 1, validate: { min: 1 } },
     sha256: { type: DataTypes.STRING(64), allowNull: true },
     scanStatus: {
-      type: DataTypes.STRING(20), allowNull: false, defaultValue: EvidenceScanStatus.PENDING,
+      type: DataTypes.STRING(20),
+      allowNull: false,
+      defaultValue: EvidenceScanStatus.PENDING,
       validate: { isIn: [Object.values(EvidenceScanStatus)] },
     },
     status: {
-      type: DataTypes.STRING(20), allowNull: false, defaultValue: EvidenceStatus.ACTIVE,
+      type: DataTypes.STRING(20),
+      allowNull: false,
+      defaultValue: EvidenceStatus.ACTIVE,
       validate: { isIn: [Object.values(EvidenceStatus)] },
     },
     isLocked: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     supersedesId: { type: DataTypes.UUID, allowNull: true },
     originalFilename: { type: DataTypes.STRING(255), allowNull: false },
-    storedFilename: { type: DataTypes.STRING(255), allowNull: false },
-    filePath: { type: DataTypes.STRING(500), allowNull: false },
+    storedFilename: { type: DataTypes.STRING(255), allowNull: true },
+    filePath: { type: DataTypes.STRING(500), allowNull: true },
+    storageKey: { type: DataTypes.STRING(500), allowNull: true },
     fileSize: { type: DataTypes.INTEGER, allowNull: false },
     mimeType: { type: DataTypes.STRING(100), allowNull: false },
     uploadedBy: { type: DataTypes.UUID, allowNull: false, references: { model: User, key: 'id' } },
@@ -87,6 +110,7 @@ EvidenceFile.init(
     indexes: [
       { fields: ['questionItemId', 'evidenceType', 'status'] },
       { name: 'idx_evidence_files_question_type_version', fields: ['questionItemId', 'evidenceType', 'version'] },
+      { fields: ['remediationActionId', 'status'] },
       { fields: ['sha256'] },
     ],
   },

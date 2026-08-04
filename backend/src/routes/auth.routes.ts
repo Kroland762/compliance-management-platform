@@ -1,14 +1,38 @@
 import { Router, Request, Response } from 'express';
 import authService from '../services/auth.service';
 import captchaService from '../services/captcha.service';
-import { authenticate, authorize } from '../middlewares/auth';
+import { authenticate } from '../middlewares/auth';
 import { loginLimiter } from '../middlewares/rateLimiter';
 import { config } from '../config';
-import { UserRole } from '../models';
-import auditLogService from '../services/audit-log.service';
-import { OperationType } from '../models';
+import { ControlAuditEvent, OperationType, Tenant, User } from '../models';
+import { loginFailures } from '../services/metrics.service';
+import authAuditService from '../services/auth-audit.service';
+import logger from '../services/logger.service';
+import { asyncHandler } from '../utils/http';
+import memberService from '../services/member.service';
+import { runWithTenantContext } from '../middlewares/tenant';
 
 const router = Router();
+
+function setRefreshCookie(res: Response, refreshToken: string): void {
+  res.cookie('refreshToken', refreshToken, {
+    httpOnly: true,
+    secure: config.nodeEnv === 'production',
+    sameSite: 'lax',
+    maxAge: config.jwt.refreshExpiresIn * 1000,
+    path: '/api/auth',
+  });
+}
+
+function authResponse(result: Awaited<ReturnType<typeof authService.login>>) {
+  return {
+    token: result.token,
+    expiresIn: result.expiresIn,
+    user: result.user,
+    status: result.status,
+    contexts: result.contexts,
+  };
+}
 
 /**
  * GET /api/auth/captcha
@@ -27,9 +51,17 @@ router.get('/captcha', (_req: Request, res: Response) => {
  * POST /api/auth/login
  */
 router.post('/login', loginLimiter, async (req: Request, res: Response) => {
+  const { username, password, captchaId, captchaCode } = req.body;
   try {
-    const { username, password, captchaId, captchaCode } = req.body;
     if (!username || !password) {
+      await authAuditService.record({
+        operationType: OperationType.LOGIN,
+        userId: null,
+        success: false,
+        details: '登录失败：缺少必填凭据',
+        ipAddress: req.ip,
+        requestId: req.requestId,
+      });
       res.status(400).json({
         success: false,
         error: { code: 'VALIDATION_ERROR', message: '用户名和密码为必填项' },
@@ -37,20 +69,38 @@ router.post('/login', loginLimiter, async (req: Request, res: Response) => {
       return;
     }
     const result = await authService.login(username, password, captchaId, captchaCode);
-    // Refresh Token → HttpOnly Cookie
-    res.cookie('refreshToken', result.refreshToken, {
-      httpOnly: true,
-      secure: config.nodeEnv === 'production',
-      sameSite: 'lax',
-      maxAge: config.jwt.refreshExpiresIn * 1000,
-      path: '/api/auth',
-    });
-    // Access Token + User → JSON body（前端存内存）
-    res.json({
+    await authAuditService.record({
+      operationType: OperationType.LOGIN,
+      userId: result.user.id,
+      tenantId: result.user.tenantId || null,
       success: true,
-      data: { token: result.token, expiresIn: result.expiresIn, user: result.user },
+      details: '用户登录成功',
+      ipAddress: req.ip,
+      requestId: req.requestId,
     });
+    setRefreshCookie(res, result.refreshToken);
+    res.json({ success: true, data: authResponse(result) });
   } catch (error: any) {
+    loginFailures.inc();
+    try {
+      const candidate = typeof username === 'string'
+        ? await User.findOne({ where: { username }, attributes: ['id'] })
+        : null;
+      await authAuditService.record({
+        operationType: OperationType.LOGIN,
+        userId: candidate?.id || null,
+        tenantId: null,
+        success: false,
+        details: '用户登录失败',
+        ipAddress: req.ip,
+        requestId: req.requestId,
+      });
+    } catch (auditError) {
+      logger.error('login_audit_failed', {
+        requestId: req.requestId,
+        message: auditError instanceof Error ? auditError.message : String(auditError),
+      });
+    }
     res.status(401).json({
       success: false,
       error: { code: 'AUTH_FAILED', message: error.message },
@@ -61,10 +111,74 @@ router.post('/login', loginLimiter, async (req: Request, res: Response) => {
 /**
  * POST /api/auth/logout
  */
-router.post('/logout', authenticate, (_req: Request, res: Response) => {
+router.post('/logout', authenticate, asyncHandler(async (req, res) => {
+  await authAuditService.record({
+    operationType: OperationType.LOGOUT,
+    userId: req.user!.userId,
+    tenantId: req.tenant?.id || req.user!.tenantId || null,
+    success: true,
+    details: '用户登出',
+    ipAddress: req.ip,
+    requestId: req.requestId,
+  });
   res.clearCookie('refreshToken', { path: '/api/auth' });
   res.json({ success: true, message: '已登出' });
-});
+}));
+
+router.get('/contexts', authenticate, asyncHandler(async (req, res) => {
+  const user = await User.findByPk(req.user!.userId);
+  if (!user) {
+    res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '用户不存在' } });
+    return;
+  }
+  res.json({ success: true, data: { items: await authService.contextsForUser(user) } });
+}));
+
+router.post('/context', authenticate, asyncHandler(async (req, res) => {
+  const result = await authService.selectContext(req.user!.userId, String(req.body.tenantId || ''));
+  await ControlAuditEvent.create({
+    eventType: 'tenant.context.selected',
+    actorUserId: req.user!.userId,
+    tenantId: result.user.tenantId || null,
+    resourceType: 'tenant_context',
+    resourceId: result.user.tenantId || null,
+    outcome: 'success',
+    details: { memberId: result.user.memberId || null },
+    requestId: req.requestId || null,
+  });
+  setRefreshCookie(res, result.refreshToken);
+  res.json({ success: true, data: authResponse(result) });
+}));
+
+router.delete('/context', authenticate, asyncHandler(async (req, res) => {
+  const previousTenantId = req.user!.tenantId || null;
+  const result = await authService.clearContext(req.user!.userId);
+  await ControlAuditEvent.create({
+    eventType: 'tenant.context.cleared',
+    actorUserId: req.user!.userId,
+    tenantId: previousTenantId,
+    resourceType: 'tenant_context',
+    resourceId: previousTenantId,
+    outcome: 'success',
+    details: {},
+    requestId: req.requestId || null,
+  });
+  setRefreshCookie(res, result.refreshToken);
+  res.json({ success: true, data: authResponse(result) });
+}));
+
+router.post('/invitations/:token/accept', authenticate, asyncHandler(async (req, res) => {
+  const tenant = await Tenant.findByPk(String(req.body.tenantId || ''));
+  if (!tenant) {
+    res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '租户不存在' } });
+    return;
+  }
+  const member = await runWithTenantContext(
+    { schema: tenant.schemaName, tenantId: tenant.id },
+    () => memberService.acceptInvitation(req.params.token, req.user!.userId),
+  );
+  res.json({ success: true, data: { memberId: member.id, tenantId: tenant.id } });
+}));
 
 /**
  * POST /api/auth/refresh
@@ -80,18 +194,8 @@ router.post('/refresh', async (req: Request, res: Response) => {
       return;
     }
     const result = await authService.refreshToken(refreshToken);
-    // 刷新成功 → 更新 Cookie（滑动续期）
-    res.cookie('refreshToken', result.refreshToken, {
-      httpOnly: true,
-      secure: config.nodeEnv === 'production',
-      sameSite: 'lax',
-      maxAge: config.jwt.refreshExpiresIn * 1000,
-      path: '/api/auth',
-    });
-    res.json({
-      success: true,
-      data: { token: result.token, expiresIn: result.expiresIn, user: result.user },
-    });
+    setRefreshCookie(res, result.refreshToken);
+    res.json({ success: true, data: authResponse(result) });
   } catch (error: any) {
     res.status(401).json({
       success: false,
@@ -115,10 +219,17 @@ router.get('/me', authenticate, async (req: Request, res: Response) => {
     data: {
       id: user.id,
       username: user.username,
-      role: user.role,
-      department: user.department,
       email: user.email,
       lastLogin: user.lastLogin,
+      memberId: req.user!.memberId,
+      tenantId: req.user!.tenantId,
+      role: req.user!.role,
+      roleIds: req.user!.roleIds,
+      permissions: req.user!.permissions,
+      permissionScopes: req.user!.permissionScopes,
+      departmentIds: req.user!.departmentIds,
+      primaryDepartmentId: req.user!.primaryDepartmentId,
+      mustChangePassword: user.mustChangePassword,
     },
   });
 });
@@ -132,13 +243,15 @@ router.post('/change-password', authenticate, async (req: Request, res: Response
     const { oldPassword, newPassword } = req.body;
     await authService.changePassword(req.user!.userId, oldPassword, newPassword);
 
-    await auditLogService.log({
-      userId: req.user!.userId,
-      operationType: OperationType.UPDATE,
+    await ControlAuditEvent.create({
+      eventType: 'auth.password.changed',
+      actorUserId: req.user!.userId,
+      tenantId: req.user!.tenantId || null,
       resourceType: 'user',
       resourceId: req.user!.userId,
-      operationDetails: '修改密码',
-      success: true,
+      outcome: 'success',
+      details: { description: '用户修改密码' },
+      requestId: req.requestId || null,
     });
 
     res.json({ success: true, message: '密码修改成功' });

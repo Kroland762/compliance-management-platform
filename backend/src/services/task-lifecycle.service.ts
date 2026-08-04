@@ -1,13 +1,15 @@
-import { Op } from 'sequelize';
+import { Op, QueryTypes } from 'sequelize';
+import sequelize from '../config/database';
 import {
   AuditTask,
+  ComplianceStatus,
   QuestionItem,
   User,
   TaskStatus,
   AnswerStatus,
   OperationType,
   NotificationType,
-  RiskRecord,
+  EvaluationWorkflowStatus,
 } from '../models';
 import auditLogService from './audit-log.service';
 import notificationService from './notification.service';
@@ -101,7 +103,10 @@ class TaskLifecycleService {
 
     // 重置被退回责任人的题目状态
     await QuestionItem.update(
-      { answerStatus: AnswerStatus.PENDING },
+      {
+        answerStatus: AnswerStatus.PENDING,
+        workflowStatus: EvaluationWorkflowStatus.RETURNED,
+      },
       { where: { taskId, assignedTo: { [Op.in]: assigneeIds } } }
     );
 
@@ -142,46 +147,62 @@ class TaskLifecycleService {
   }
 
   async completeReview(taskId: string, reviewerId: string) {
-    const task = await AuditTask.findByPk(taskId);
-    if (!task) throw new Error('任务不存在');
-    if (task.status !== TaskStatus.UNDER_REVIEW && task.status !== TaskStatus.SUBMITTED) {
-      throw new Error('只有已提交或审核中状态的任务可以完成审阅');
-    }
-
-    task.status = TaskStatus.COMPLETED;
-    task.reviewedAt = new Date();
-    await task.save();
-
-    // 自动生成风险记录
-    const reviewedItems = await QuestionItem.findAll({
-      where: { taskId, riskIdentification: { [Op.ne]: null } },
-    });
-    for (const item of reviewedItems) {
-      if (item.riskIdentification && item.riskIdentification.trim()) {
-        await RiskRecord.create({
-          taskId,
-          questionItemId: item.id,
-          assessmentType: task.assessmentType,
-          assessmentTarget: task.assessmentTarget,
-          riskIdentification: item.riskIdentification,
-          riskLevel: item.riskLevel || 'low',
-          remediationMeasures: item.remediationMeasures || null,
-          remediationStatus: 'not_remediated',
-          riskStatus: 'risk_reduction',
-        } as any);
+    return sequelize.transaction(async (transaction) => {
+      const task = await AuditTask.findByPk(taskId, {
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (!task) throw new Error('任务不存在');
+      if (task.status !== TaskStatus.UNDER_REVIEW && task.status !== TaskStatus.SUBMITTED) {
+        throw new Error('只有已提交或审核中状态的任务可以完成审阅');
       }
-    }
 
-    await auditLogService.log({
-      userId: reviewerId,
-      operationType: OperationType.UPDATE,
-      resourceType: 'task',
-      resourceId: taskId,
-      operationDetails: '完成审核',
-      success: true,
+      const unreviewed = await QuestionItem.count({
+        where: { taskId, workflowStatus: { [Op.ne]: EvaluationWorkflowStatus.REVIEWED } },
+        transaction,
+      });
+      if (unreviewed > 0) throw new Error(`还有 ${unreviewed} 个评估单元尚未复核`);
+
+      // 部分合规和不合规评估必须先形成风险来源，避免任务完成后遗漏风险。
+      const [unmapped] = await sequelize.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+           FROM "question_items" qi
+          WHERE qi."taskId" = :taskId
+            AND qi."complianceStatus" IN (:statuses)
+            AND NOT EXISTS (
+              SELECT 1
+                FROM "risk_sources" rs
+               WHERE rs."controlEvaluationId" = qi.id
+            )`,
+        {
+          replacements: {
+            taskId,
+            statuses: [ComplianceStatus.PARTIAL, ComplianceStatus.NON_COMPLIANT],
+          },
+          type: QueryTypes.SELECT,
+          transaction,
+        },
+      );
+      const missingRiskSources = Number(unmapped?.count || 0);
+      if (missingRiskSources > 0) {
+        throw new Error(`还有 ${missingRiskSources} 个不合规评估单元尚未生成风险`);
+      }
+
+      task.status = TaskStatus.COMPLETED;
+      task.reviewedAt = new Date();
+      await task.save({ transaction });
+
+      await auditLogService.log({
+        userId: reviewerId,
+        operationType: OperationType.UPDATE,
+        resourceType: 'task',
+        resourceId: taskId,
+        operationDetails: '完成审核并确认风险已生成',
+        success: true,
+      }, transaction);
+
+      return task;
     });
-
-    return task;
   }
 }
 

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Table, Button, Input, Select, Space, Tag, message, Popconfirm, Tooltip, Switch } from 'antd';
+import { Table, Button, Input, Space, Tag, message, Popconfirm, Tooltip, Switch } from 'antd';
 import { PlusOutlined, SyncOutlined, DeleteOutlined, EyeOutlined, LinkOutlined, SearchOutlined, ExclamationCircleOutlined, EditOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { dataSourceApi, type DataSource } from '../../api/account';
@@ -16,7 +16,6 @@ export default function DataSourceList() {
   const [data, setData] = useState<DataSource[]>([]);
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState('');
-  const [typeFilter, setTypeFilter] = useState<string>('');
   const [syncing, setSyncing] = useState<string | null>(null);
   const [togglingDs, setTogglingDs] = useState<string | null>(null);
   const [editingDs, setEditingDs] = useState<DataSource | null>(null);
@@ -27,7 +26,6 @@ export default function DataSourceList() {
     setLoading(true);
     const params: any = {};
     if (keyword) params.keyword = keyword;
-    if (typeFilter) params.type = typeFilter;
     dataSourceApi.list(params)
       .then((res: any) => {
         const items = res.data?.items || [];
@@ -41,7 +39,7 @@ export default function DataSourceList() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { fetchData(); }, [typeFilter]);
+  useEffect(() => { fetchData(); }, []);
 
   const handleSearch = () => fetchData();
 
@@ -106,9 +104,7 @@ export default function DataSourceList() {
     {
       title: '类型', dataIndex: 'sourceType', width: 80,
       render: (v: string) => (
-        <Tag color={v === 'DATABASE' ? 'blue' : 'purple'} style={{ borderRadius: 6 }}>
-          {v === 'DATABASE' ? '数据库' : 'CSV'}
-        </Tag>
+        <Tag color="blue" style={{ borderRadius: 6 }}>PostgreSQL</Tag>
       ),
     },
     {
@@ -186,33 +182,22 @@ export default function DataSourceList() {
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <Input
-          placeholder="搜索名称"
-          prefix={<SearchOutlined style={{ color: '#AEAEB2' }} />}
-          value={keyword}
-          onChange={e => setKeyword(e.target.value)}
-          onPressEnter={handleSearch}
-          style={{ width: 240 }}
-          allowClear
-        />
-        <Select
-          placeholder="类型筛选"
-          value={typeFilter || undefined}
-          onChange={v => setTypeFilter(v || '')}
-          allowClear
-          style={{ width: 120 }}
-          options={[
-            { value: 'DATABASE', label: '数据库' },
-            { value: 'CSV', label: 'CSV' },
-          ]}
-        />
-        <Button onClick={handleSearch}>查询</Button>
+      <div className="filter-toolbar">
+        <div className="filter-toolbar-content">
+          <Input
+            placeholder="搜索名称"
+            prefix={<SearchOutlined style={{ color: '#AEAEB2' }} />}
+            value={keyword}
+            onChange={e => setKeyword(e.target.value)}
+            onPressEnter={handleSearch}
+            style={{ width: 240 }}
+            allowClear
+          />
+          <Button onClick={handleSearch}>查询</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/account-audit/data-sources/new')}>
+            添加数据源
+          </Button>
         </div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/account-audit/data-sources/new')}>
-          添加数据源
-        </Button>
       </div>
 
       <Table columns={columns} dataSource={data} rowKey="id" loading={loading} scroll={{ x: 1100 }} size="small" />

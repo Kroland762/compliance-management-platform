@@ -6,46 +6,89 @@ on:
     branches: [main, master]
 
 jobs:
-  backend:
-    name: Backend
+  verify:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: compliance_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d compliance_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      NODE_ENV: development
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: compliance_ci
+      JWT_SECRET: ci-only-secret-at-least-32-characters-long
+      ENCRYPTION_KEY: ci-only-encryption-secret-at-least-32-characters
+      SEED_ADMIN_USERNAME: admin
+      SEED_ADMIN_PASSWORD: Admin1234!
+      E2E_ADMIN_USERNAME: admin
+      E2E_ADMIN_PASSWORD: Admin1234!
+      RUN_PG_INTEGRATION: "true"
+      ALLOW_PRIVATE_DATASOURCE_HOSTS: "true"
+      BUSINESS_TIME_ZONE: Asia/Shanghai
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: backend/package-lock.json
-      - name: Install dependencies
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      - name: Install backend
+        working-directory: backend
         run: npm ci
-      - name: Run tests
-        run: npm test
-      - name: Build
+
+      - name: Install frontend
+        working-directory: frontend
+        run: npm ci
+
+      - name: Migrate and seed
+        working-directory: backend
+        run: |
+          npm run migrate:up
+          npm run seed
+          npx tsx -e "import {setupAssociations} from './src/models/associations'; import service from './src/services/tenant-provisioning.service'; import db from './src/config/database'; setupAssociations(); service.provision({name:'CI Tenant',slug:'ci',admin:{username:'ci_tenant_admin',displayName:'CI Tenant Admin',email:'ci-tenant-admin@example.com'}}).finally(()=>db.close())"
+          npm run migrate:up
+          npm run migrate:status
+
+      - name: Backend unit and PostgreSQL integration tests
+        working-directory: backend
+        run: npm run test:ci
+
+      - name: Frontend tests
+        working-directory: frontend
+        run: npm run test:ci
+
+      - name: Build backend
+        working-directory: backend
         run: npm run build
 
-  frontend:
-    name: Frontend
-    runs-on: ubuntu-latest
-    defaults:
-      run:
+      - name: Build frontend and enforce chunk budget
         working-directory: frontend
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - name: Install dependencies
-        run: npm ci
-      - name: Run tests
-        run: npm test
-      - name: Build
         run: npm run build
+
+      - name: Install Playwright Chromium
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Playwright end-to-end
+        working-directory: frontend
+        run: npm run test:e2e
+
+      - name: Diff hygiene
+        run: git diff --check

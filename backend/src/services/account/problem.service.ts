@@ -8,6 +8,7 @@ import {
 } from '../../models/account';
 import auditLogService from '../audit-log.service';
 import { OperationType } from '../../models';
+import { parsePagination, pagination } from '../../utils/pagination';
 
 interface ListQuery {
   page?: number;
@@ -32,7 +33,8 @@ class ProblemService {
    * 分页列出问题账户
    */
   async listProblems(query: ListQuery) {
-    const { page = 1, pageSize = 20, taskId, ruleId, status, severity, search, dateFrom, dateTo } = query;
+    const { page, pageSize } = parsePagination(query);
+    const { taskId, ruleId, status, severity, search, dateFrom, dateTo } = query;
     const where: any = {};
 
     if (taskId) where.taskId = taskId;
@@ -68,7 +70,7 @@ class ProblemService {
         delete (json as any).AuditRule;
         return json;
       }),
-      pagination: { page, pageSize, total: count, totalPages: Math.ceil(count / pageSize) },
+      pagination: pagination(page, pageSize, count),
     };
   }
 

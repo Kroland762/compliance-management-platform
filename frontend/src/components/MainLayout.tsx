@@ -1,10 +1,11 @@
-import { Button, Badge, Typography, Dropdown, Space, Avatar, Popover, List, Tag, Menu, Layout } from 'antd';
+import { Button, Badge, Typography, Dropdown, Space, Avatar, Popover, List, Tag, Menu, Layout, Select, message } from 'antd';
 import {
   DashboardOutlined, FileTextOutlined, UserOutlined,
   AuditOutlined, FormOutlined, WarningOutlined,
   BellOutlined, LogoutOutlined, FileSearchOutlined,
   MenuFoldOutlined, MenuUnfoldOutlined, DatabaseOutlined, ScheduleOutlined,
-  SecurityScanOutlined, SafetyCertificateOutlined, HomeOutlined,
+  SecurityScanOutlined, SafetyCertificateOutlined, HomeOutlined, ApartmentOutlined,
+  AppstoreOutlined, NodeIndexOutlined, ToolOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import { useAuthStore } from '../store/auth';
@@ -25,6 +26,10 @@ export default function MainLayout() {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const can = useAuthStore((s) => s.hasPermission);
+  const selectedTenant = useAuthStore((s) => s.selectedTenant);
+  const contexts = useAuthStore((s) => s.contexts);
+  const selectContext = useAuthStore((s) => s.selectContext);
+  const clearContext = useAuthStore((s) => s.clearContext);
   useIdleTimeout();
   const [collapsed, setCollapsed] = useState(false);
   const [activeNav, setActiveNav] = useState<'compliance' | 'account-audit' | 'system'>('compliance');
@@ -32,8 +37,41 @@ export default function MainLayout() {
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [isCompact, setIsCompact] = useState(false);
+  const tenantOptions = [
+    ...(user?.isGlobalAdmin ? [{ label: '控制面（不读取业务数据）', value: '__control__' }] : []),
+    ...contexts.map((tenant) => ({ label: tenant.name, value: tenant.id })),
+  ];
 
-  const sidebarWidth = collapsed ? SIDEBAR_NARROW : SIDEBAR_WIDE;
+  const handleTenantChange = async (tenantId: string) => {
+    if (tenantId === '__control__') {
+      try {
+        await clearContext();
+        navigate('/tenants');
+      } catch {
+        message.error('退出租户上下文失败');
+      }
+      return;
+    }
+    const option = tenantOptions.find((item) => item.value === tenantId);
+    if (!option) return;
+    try {
+      await selectContext(tenantId);
+      navigate('/dashboard');
+    } catch {
+      message.error('租户上下文切换失败');
+    }
+  };
+
+  useEffect(() => {
+    const updateCompact = () => setIsCompact(window.innerWidth <= 900);
+    updateCompact();
+    window.addEventListener('resize', updateCompact);
+    return () => window.removeEventListener('resize', updateCompact);
+  }, []);
+
+  const effectiveCollapsed = collapsed || isCompact;
+  const sidebarWidth = effectiveCollapsed ? SIDEBAR_NARROW : SIDEBAR_WIDE;
 
   const fetchUnread = async () => {
     try {
@@ -61,6 +99,7 @@ export default function MainLayout() {
     } else if (
       location.pathname.startsWith('/users') ||
       location.pathname.startsWith('/roles') ||
+      location.pathname.startsWith('/organization') ||
       location.pathname.startsWith('/audit-logs') ||
       location.pathname.startsWith('/tenants') ||
       location.pathname.startsWith('/settings')
@@ -78,21 +117,36 @@ export default function MainLayout() {
       { key: '/dashboard', icon: <DashboardOutlined />, label: '工作台' },
     ] : []),
     ...(can('templates', 'read') ? [
-      { key: '/templates', icon: <FileTextOutlined />, label: '模版' },
+      { key: '/templates', icon: <FileTextOutlined />, label: '合规模板' },
+    ] : []),
+    ...(can('assets', 'read') ? [
+      { key: '/assets', icon: <AppstoreOutlined />, label: '资产台账' },
+    ] : []),
+    ...(can('qualifications', 'read') ? [
+      { key: '/qualifications', icon: <SafetyCertificateOutlined />, label: '资质台账' },
     ] : []),
     ...(can('tasks', 'read') ? [
-      { key: '/tasks/review', icon: <AuditOutlined />, label: '任务列表' },
+      { key: '/tasks/review', icon: <AuditOutlined />, label: '合规检查' },
+    ] : []),
+    ...(can('tasks', 'create') ? [
+      { key: '/assessments/new', icon: <NodeIndexOutlined />, label: '创建评估' },
     ] : []),
     ...(can('tasks', 'read') ? [
       { key: '/my-tasks', icon: <FormOutlined />, label: '我的任务' },
     ] : []),
     ...(can('risks', 'read') ? [
-      { key: '/risks', icon: <WarningOutlined />, label: '风险' },
+      { key: '/risks', icon: <WarningOutlined />, label: '合规风险' },
+    ] : []),
+    ...(can('remediation_actions', 'read') ? [
+      { key: '/remediation-actions', icon: <ToolOutlined />, label: '我的整改' },
+    ] : []),
+    ...(can('assessment_plans', 'read') ? [
+      { key: '/assessment-plans', icon: <ScheduleOutlined />, label: '周期计划' },
     ] : []),
   ];
 
   const accountAuditMenuItems: any[] = [
-    ...(can('dashboard', 'read') ? [
+    ...(can('account_dashboard', 'read') ? [
       { key: '/account-audit', icon: <DashboardOutlined />, label: '概览' },
     ] : []),
     ...(can('data_sources', 'read') ? [
@@ -117,7 +171,10 @@ export default function MainLayout() {
       { key: '/roles', icon: <SafetyCertificateOutlined />, label: '角色管理' },
     ] : []),
     ...(can('users', 'read') ? [
-      { key: '/users', icon: <UserOutlined />, label: '用户管理' },
+      { key: '/users', icon: <UserOutlined />, label: '成员管理' },
+    ] : []),
+    ...(can('organization', 'read') ? [
+      { key: '/organization', icon: <ApartmentOutlined />, label: '组织管理' },
     ] : []),
     ...(can('users', 'read') ? [
       { key: '/audit-logs', icon: <FileSearchOutlined />, label: '操作日志' },
@@ -125,6 +182,8 @@ export default function MainLayout() {
     { type: 'divider' as any },
     { key: '/settings', icon: <SecurityScanOutlined />, label: '安全设置' },
   ];
+
+  const firstSystemPath = systemMenuItems.find((item) => item?.key)?.key || '/settings';
 
   const sideMenuItems = activeNav === 'compliance' ? complianceMenuItems
     : activeNav === 'account-audit' ? accountAuditMenuItems
@@ -154,7 +213,13 @@ export default function MainLayout() {
 
   const activeSideKey = (() => {
     if (location.pathname.startsWith('/tasks/review') || location.pathname.startsWith('/tasks/configure')) return '/tasks/review';
+    if (location.pathname.startsWith('/assessments/new')) return '/assessments/new';
+    if (location.pathname.startsWith('/assessments/')) return '/tasks/review';
+    if (location.pathname.startsWith('/assets')) return '/assets';
+    if (location.pathname.startsWith('/remediation-actions')) return '/remediation-actions';
+    if (location.pathname.startsWith('/assessment-plans')) return '/assessment-plans';
     if (location.pathname.startsWith('/my-tasks')) return '/my-tasks';
+    if (location.pathname.startsWith('/qualifications')) return '/qualifications';
     if (location.pathname.startsWith('/dashboard')) return '/dashboard';
     if (location.pathname.startsWith('/account-audit')) {
       if (location.pathname.startsWith('/account-audit/data-sources')) return '/account-audit/data-sources';
@@ -165,6 +230,7 @@ export default function MainLayout() {
     }
     if (location.pathname.startsWith('/users')) return '/users';
     if (location.pathname.startsWith('/roles')) return '/roles';
+    if (location.pathname.startsWith('/organization')) return '/organization';
     if (location.pathname.startsWith('/audit-logs')) return '/audit-logs';
     if (location.pathname.startsWith('/tenants')) return '/tenants';
     if (location.pathname.startsWith('/settings')) return '/settings';
@@ -185,30 +251,42 @@ export default function MainLayout() {
         <div style={{
           flex: `0 0 ${sidebarWidth}px`, height: 52,
           display: 'flex', alignItems: 'center',
-          justifyContent: collapsed ? 'center' : 'space-between',
-          paddingLeft: collapsed ? 0 : 20, paddingRight: collapsed ? 0 : 12,
+          justifyContent: effectiveCollapsed ? 'center' : 'space-between',
+          paddingLeft: effectiveCollapsed ? 0 : 20, paddingRight: effectiveCollapsed ? 0 : 12,
           borderRight: '0.5px solid rgba(0,0,0,0.06)', boxSizing: 'border-box',
-          cursor: collapsed ? 'pointer' : 'default', transition: 'all 0.2s', overflow: 'hidden',
-        }} onClick={collapsed ? () => setCollapsed(false) : undefined}>
+          cursor: effectiveCollapsed && !isCompact ? 'pointer' : 'default', transition: 'all 0.2s', overflow: 'hidden',
+        }} onClick={effectiveCollapsed && !isCompact ? () => setCollapsed(false) : undefined}>
           <Text strong style={{ fontSize: 15, letterSpacing: '-0.02em', whiteSpace: 'nowrap', color: '#1D1D1F' }}>
-            {collapsed ? '合规' : '合规管理平台'}
+            {effectiveCollapsed ? '合规' : '合规管理平台'}
           </Text>
-          {!collapsed && (
+          {!effectiveCollapsed && (
             <Button type="text" icon={<MenuFoldOutlined />}
               onClick={(e) => { e.stopPropagation(); setCollapsed(!collapsed); }}
               style={{ fontSize: 14, width: 28, height: 28, flexShrink: 0 }} />
           )}
         </div>
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', minWidth: 0 }}>
-          <nav style={{ display: 'flex', gap: 4 }}>
+        <div className="app-topbar-main" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', minWidth: 0 }}>
+          <nav className="app-topnav" style={{ display: 'flex', gap: 4 }}>
             <button style={navTabStyle(activeNav === 'compliance')}
               onClick={() => { setActiveNav('compliance'); navigate('/dashboard'); }}>资质合规</button>
             <button style={navTabStyle(activeNav === 'account-audit')}
               onClick={() => { setActiveNav('account-audit'); navigate('/account-audit'); }}>账户审计</button>
             <button style={navTabStyle(activeNav === 'system')}
-              onClick={() => { setActiveNav('system'); navigate('/settings'); }}>系统设置</button>
+              onClick={() => { setActiveNav('system'); navigate(firstSystemPath); }}>系统设置</button>
           </nav>
-          <Space size={16}>
+          <Space size={16} className="app-topbar-actions">
+            {tenantOptions.length > 1 && (
+              <Select
+                aria-label="选择租户"
+                placeholder="选择租户"
+                value={selectedTenant?.id || (user?.isGlobalAdmin ? '__control__' : undefined)}
+                options={tenantOptions}
+                onChange={handleTenantChange}
+                style={{ width: 160 }}
+                showSearch
+                optionFilterProp="label"
+              />
+            )}
             <Popover open={notifOpen} onOpenChange={(open) => { setNotifOpen(open); if (open) fetchNotifications(); }}
               trigger="click" placement="bottomRight"
               content={
@@ -275,7 +353,7 @@ export default function MainLayout() {
                 <Avatar size={28} style={{ backgroundColor: '#007AFF', fontSize: 13 }}>
                   {user?.username?.[0]?.toUpperCase()}
                 </Avatar>
-                <Text style={{ fontSize: 14, fontWeight: 500, color: '#1D1D1F' }}>{user?.username}</Text>
+                <Text className="app-username" style={{ fontSize: 14, fontWeight: 500, color: '#1D1D1F' }}>{user?.username}</Text>
               </div>
             </Dropdown>
           </Space>
@@ -283,8 +361,8 @@ export default function MainLayout() {
       </div>
 
       {/* Body */}
-      <div style={{ flex: 1, display: 'flex', alignItems: 'flex-start' }}>
-        <Sider collapsible collapsed={collapsed} onCollapse={setCollapsed} trigger={null}
+      <div className="app-body" style={{ flex: 1, display: 'flex', alignItems: 'flex-start', minWidth: 0 }}>
+        <Sider collapsible collapsed={effectiveCollapsed} onCollapse={setCollapsed} trigger={null}
           width={SIDEBAR_WIDE} collapsedWidth={SIDEBAR_NARROW}
           style={{
             position: 'sticky', top: 52, height: 'calc(100vh - 52px)', overflowY: 'auto',
@@ -297,7 +375,7 @@ export default function MainLayout() {
             onClick={({ key }) => navigate(key)}
             style={{ background: 'transparent', borderInlineEnd: 'none', marginTop: 8, fontSize: 14 }} />
         </Sider>
-        <Content style={{ padding: '28px 32px', maxWidth: 1280, margin: '0 auto', width: '100%', minHeight: 'calc(100vh - 52px)' }}>
+        <Content className="app-content" style={{ padding: '28px 32px', maxWidth: 1280, margin: '0 auto', width: '100%', minWidth: 0, minHeight: 'calc(100vh - 52px)' }}>
           <Outlet />
         </Content>
       </div>
