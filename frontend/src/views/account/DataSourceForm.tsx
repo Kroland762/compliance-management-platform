@@ -501,7 +501,7 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
         onCancel={onClose}
         footer={null}
         width={800}
-        destroyOnClose
+        destroyOnHidden
       >
         {formContent}
       </Modal>

@@ -23,10 +23,15 @@ interface PermDef {
 
 const RESOURCE_LABELS: Record<string, string> = {
   users: '用户管理',
-  templates: '合规模板',
+  templates: '合规标准',
+  assets: '资产台账',
   qualifications: '资质台账',
-  tasks: '合规任务',
+  tasks: '评估项目',
+  evaluations: '评估单元',
+  findings: '不符合项',
   risks: '风险管理',
+  remediation_actions: '整改行动',
+  assessment_plans: '周期评估',
   audit_logs: '操作日志',
   notifications: '通知管理',
   export: '数据导出',
@@ -38,12 +43,19 @@ const RESOURCE_LABELS: Record<string, string> = {
   problems: '问题管理',
   dashboard: '工作台',
   account_dashboard: '账户审计概览',
+  products: '产品台账',
+  product_dossiers: '产品合规档案',
+  product_compliance_config: '产品合规配置',
 };
 
 const ACTION_LABELS: Record<string, string> = {
   create: '创建', read: '查看', update: '更新', delete: '删除',
   submit: '提交', return: '退回', export: '导出', sync: '同步',
-  toggle: '启/停', execute: '执行',
+  toggle: '启/停', execute: '执行', publish: '发布', cancel: '取消',
+  answer: '填写', claim: '认领', review: '复核', triage: '分级',
+  remediate: '整改', escalate: '升级风险', verify: '验证', close: '关闭',
+  accept: '接受', confirm: '确认', assign: '分配', archive: '归档', link: '关联',
+  revise: '修订', retire: '停用',
 };
 
 const SCOPE_LABELS: Record<string, string> = {

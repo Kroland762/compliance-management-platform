@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Typography, Row, Col, Card } from 'antd';
+import { Typography, Row, Col, Card, message } from 'antd';
 import {
   AuditOutlined, FileTextOutlined, CheckCircleOutlined, WarningOutlined,
   SafetyCertificateOutlined, ClockCircleOutlined, FundOutlined,
@@ -8,6 +8,7 @@ import { useNavigate, Navigate } from 'react-router-dom';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend, LineChart, Line, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { useAuthStore } from '../store/auth';
 import apiClient from '../api/client';
+import { getApiErrorMessage } from '../utils/error';
 
 const { Text } = Typography;
 
@@ -69,6 +70,7 @@ export default function Dashboard() {
   const [stats, setStats] = useState({
     tasks: 0, templates: 0, qualifications: 0, completed: 0, risks: 0,
     highRisks: 0, unresolvedRisks: 0, overdueActions: 0, assessmentCompletionRate: 0,
+    openFindings: 0, workItems: { fill: 0, review: 0, remediate: 0, verify: 0 },
   });
   const [taskPie, setTaskPie] = useState<any[]>([]);
   const [riskPie, setRiskPie] = useState<any[]>([]);
@@ -94,11 +96,15 @@ export default function Dashboard() {
           unresolvedRisks: summary.unresolvedRisks || 0,
           overdueActions: summary.overdueActions || 0,
           assessmentCompletionRate: summary.assessmentCompletionRate || 0,
+          openFindings: summary.openFindings || 0,
+          workItems: summary.workItems || { fill: 0, review: 0, remediate: 0, verify: 0 },
         });
         setTaskPie(pieData.taskPie || []);
         setRiskPie(pieData.riskPie || []);
         setRiskTrend(pieData.riskTrend || []);
-      } catch {} finally {
+      } catch (error) {
+        message.error(getApiErrorMessage(error, '工作台统计加载失败，请稍后重试'));
+      } finally {
         if (!cancelled) setLoading(false);
       }
     };
@@ -108,7 +114,7 @@ export default function Dashboard() {
 
   const hasAnyPermission = can('tasks', 'read') || can('risks', 'read') || can('qualifications', 'read');
   if (!hasAnyPermission) {
-    return <Navigate to="/my-tasks" replace />;
+    return <Navigate to="/work-items" replace />;
   }
 
 
@@ -119,8 +125,8 @@ export default function Dashboard() {
         {can('tasks', 'read') && (
           <Col xs={24} sm={12} lg={6}>
             <StatCard
-              icon={<AuditOutlined />} label="审计任务" value={stats.tasks}
-              color="#007AFF" onClick={() => navigate('/tasks/review')}
+              icon={<AuditOutlined />} label="评估项目" value={stats.tasks}
+              color="#007AFF" onClick={() => navigate('/assessments')}
             />
           </Col>
         )}
@@ -128,14 +134,14 @@ export default function Dashboard() {
           <Col xs={24} sm={12} lg={6}>
             <StatCard
               icon={<CheckCircleOutlined />} label="已完成" value={stats.completed}
-              color="#34C759" onClick={() => navigate('/tasks/review')}
+              color="#34C759" onClick={() => navigate('/assessments')}
             />
           </Col>
         )}
         {can('templates', 'read') && (
           <Col xs={24} sm={12} lg={6}>
             <StatCard
-              icon={<FileTextOutlined />} label="合规模板" value={stats.templates}
+              icon={<FileTextOutlined />} label="合规标准" value={stats.templates}
               color="#5856D6" onClick={() => navigate('/templates')}
             />
           </Col>
@@ -152,32 +158,45 @@ export default function Dashboard() {
           <Col xs={24} sm={12} lg={6}>
             <StatCard
               icon={<WarningOutlined />} label="风险总数" value={stats.risks}
-              color="#FF9500" onClick={() => navigate('/risks')}
+              color="#FF9500" onClick={() => navigate('/governance')}
             />
           </Col>
         )}
         {can('risks', 'read') && (
           <Col xs={24} sm={12} lg={6}>
             <StatCard icon={<WarningOutlined />} label="高风险数量" value={stats.highRisks}
-              color="#FF3B30" onClick={() => navigate('/risks')} />
+              color="#FF3B30" onClick={() => navigate('/governance')} />
           </Col>
         )}
         {can('risks', 'read') && (
           <Col xs={24} sm={12} lg={6}>
             <StatCard icon={<FundOutlined />} label="未整改风险" value={stats.unresolvedRisks}
-              color="#AF52DE" onClick={() => navigate('/risks')} />
+              color="#AF52DE" onClick={() => navigate('/governance')} />
           </Col>
         )}
         {can('remediation_actions', 'read') && (
           <Col xs={24} sm={12} lg={6}>
             <StatCard icon={<ClockCircleOutlined />} label="逾期行动" value={stats.overdueActions}
-              color="#FF2D55" onClick={() => navigate('/remediation-actions')} />
+              color="#FF2D55" onClick={() => navigate('/governance?tab=remediation')} />
           </Col>
         )}
         {can('tasks', 'read') && (
           <Col xs={24} sm={12} lg={6}>
             <StatCard icon={<CheckCircleOutlined />} label="评估完成率" value={`${stats.assessmentCompletionRate}%`}
-              color="#34C759" onClick={() => navigate('/tasks/review')} />
+              color="#34C759" onClick={() => navigate('/assessments')} />
+          </Col>
+        )}
+        {can('findings', 'read') && (
+          <Col xs={24} sm={12} lg={6}>
+            <StatCard icon={<WarningOutlined />} label="未解决不符合项" value={stats.openFindings}
+              color="#FF9500" onClick={() => navigate('/findings')} />
+          </Col>
+        )}
+        {(can('evaluations', 'read') || can('remediation_actions', 'read')) && (
+          <Col xs={24} sm={12} lg={6}>
+            <StatCard icon={<ClockCircleOutlined />} label="我的待办"
+              value={Object.values(stats.workItems).reduce((sum, value) => sum + Number(value), 0)}
+              color="#007AFF" onClick={() => navigate('/work-items')} />
           </Col>
         )}
         {!can('tasks', 'read') && !can('templates', 'read') && !can('qualifications', 'read') && !can('risks', 'read') && (
@@ -201,7 +220,7 @@ export default function Dashboard() {
                   border: '0.5px solid rgba(0,0,0,0.04)',
                   boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
                 }}
-                title={<Text strong style={{ fontSize: 15 }}>审计任务分布</Text>}
+                title={<Text strong style={{ fontSize: 15 }}>评估项目分布</Text>}
               >
                 <ResponsiveContainer width="100%" height={260}>
                   <PieChart>

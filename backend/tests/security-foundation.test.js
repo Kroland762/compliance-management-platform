@@ -1,7 +1,17 @@
+jest.mock('svg-captcha', () => ({
+  create: jest.fn(() => ({ text: 'Abcd', data: '<svg>captcha</svg>' })),
+}));
+
 const { parsePagination } = require('../src/utils/pagination');
 const { validateEvidence } = require('../src/services/evidence-security.service');
 const dataSourceService = require('../src/services/account/dataSource.service').default;
 const { getQualificationStatus } = require('../src/services/qualification.service');
+const { CaptchaService } = require('../src/services/captcha.service');
+const { encodeCsv, encodeCsvCell } = require('../src/utils/csv');
+const problemService = require('../src/services/account/problem.service').default;
+const notificationService = require('../src/services/notification.service').default;
+const { Notification } = require('../src/models');
+const { ProblemAccount } = require('../src/models/account');
 
 describe('P0 security foundations', () => {
   test('pagination enforces page >= 1 and pageSize <= 100', () => {
@@ -81,5 +91,61 @@ describe('P0 security foundations', () => {
     expect(getQualificationStatus('2026-09-01')).toBe('valid');
     expect(getQualificationStatus(null)).toBe('missing');
     jest.useRealTimers();
+  });
+
+  test('captcha storage is bounded and successful verification remains single-use', () => {
+    const service = new CaptchaService(1, 60_000);
+    try {
+      const first = service.generate();
+      expect(() => service.generate()).toThrow('验证码服务繁忙');
+      expect(service.verify(first.captchaId, 'abcd')).toBe(true);
+      expect(service.verify(first.captchaId, 'abcd')).toBe(false);
+      expect(() => service.generate()).not.toThrow();
+    } finally {
+      service.destroy();
+    }
+  });
+
+  test('CSV encoding neutralizes spreadsheet formulas and preserves RFC 4180 content', async () => {
+    for (const input of ['=2+2', '+cmd', '-1+2', '@SUM(A1:A2)', '\t=1+1', '  =HYPERLINK("x")']) {
+      expect(encodeCsvCell(input)).toMatch(/^"'/);
+    }
+    expect(encodeCsv([['中文', 'a,b', 'a"b', 'line\nbreak']]))
+      .toBe('\uFEFF"中文","a,b","a""b","line\nbreak"');
+
+    const problem = {
+      id: 'problem-1',
+      taskId: 'task-1',
+      ruleId: 'rule-1',
+      accountId: '=HYPERLINK("https://attacker.invalid")',
+      problemDescription: '+cmd',
+      severity: 'high',
+      status: 'open',
+      firstDetectedAt: '2026-08-10',
+      resolvedAt: null,
+      resolutionNotes: '@SUM(A1:A2)',
+    };
+    jest.spyOn(ProblemAccount, 'findAll').mockResolvedValue([{ toJSON: () => problem }]);
+
+    const exported = await problemService.exportProblems({}, 'csv');
+    expect(exported.startsWith('\uFEFF')).toBe(true);
+    expect(exported).toContain('"\'=HYPERLINK(""https://attacker.invalid"")"');
+    expect(exported).toContain('"\'+cmd"');
+    expect(exported).toContain('"\'@SUM(A1:A2)"');
+    expect(exported).toContain('\r\n');
+  });
+
+  test('notification updates require ownership and preserve legitimate mark-as-read behavior', async () => {
+    const find = jest.spyOn(Notification, 'findOne').mockResolvedValueOnce(null);
+    await expect(notificationService.markAsRead('notification-1', 'user-1'))
+      .rejects.toMatchObject({ statusCode: 404, code: 'NOT_FOUND' });
+    expect(find).toHaveBeenCalledWith({ where: { id: 'notification-1', userId: 'user-1' } });
+
+    const owned = { isRead: false, readAt: null, save: jest.fn() };
+    find.mockResolvedValueOnce(owned);
+    await notificationService.markAsRead('notification-1', 'user-1');
+    expect(owned.isRead).toBe(true);
+    expect(owned.readAt).toBeInstanceOf(Date);
+    expect(owned.save).toHaveBeenCalled();
   });
 });

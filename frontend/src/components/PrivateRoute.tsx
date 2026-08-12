@@ -5,9 +5,11 @@ interface PrivateRouteProps {
   children: React.ReactNode;
   /** 权限检查: [resource, action]，满足任一即可 */
   permission?: [string, string];
+  /** 权限不足时返回当前业务模块，避免跳到无关工作台 */
+  fallbackPath?: string;
 }
 
-export default function PrivateRoute({ children, permission }: PrivateRouteProps) {
+export default function PrivateRoute({ children, permission, fallbackPath = '/dashboard' }: PrivateRouteProps) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const initialized = useAuthStore((s) => s.initialized);
   const hasPermission = useAuthStore((s) => s.hasPermission);
@@ -33,7 +35,7 @@ export default function PrivateRoute({ children, permission }: PrivateRouteProps
   if (permission) {
     const [resource, action] = permission;
     if (!hasPermission(resource, action)) {
-      return <Navigate to="/dashboard" replace />;
+      return <Navigate to={fallbackPath} replace />;
     }
   }
 

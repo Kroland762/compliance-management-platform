@@ -8,17 +8,18 @@ function CurrentPath() {
   return <span data-testid="path">{useLocation().pathname}</span>;
 }
 
-function renderRoute(permission?: [string, string]) {
+function renderRoute(permission?: [string, string], fallbackPath?: string) {
   return render(
     <MemoryRouter initialEntries={['/protected']}>
       <Routes>
         <Route path="/protected" element={(
-          <PrivateRoute permission={permission}>
+          <PrivateRoute permission={permission} fallbackPath={fallbackPath}>
             <div>受保护内容</div>
           </PrivateRoute>
         )} />
         <Route path="/login" element={<div>登录页</div>} />
         <Route path="/dashboard" element={<div>仪表盘</div>} />
+        <Route path="/account-audit/data-sources" element={<div>数据源列表</div>} />
       </Routes>
       <CurrentPath />
     </MemoryRouter>,
@@ -62,6 +63,22 @@ describe('PrivateRoute', () => {
     });
     renderRoute(['users', 'delete']);
     await waitFor(() => expect(screen.getByTestId('path')).toHaveTextContent('/dashboard'));
+  });
+
+  it('权限不足时可以返回指定业务模块', async () => {
+    useAuthStore.setState({
+      initialized: true,
+      isAuthenticated: true,
+      selectedTenant: { id: 'tenant-1', name: '测试租户', slug: 'test' },
+      user: {
+        id: 'user-1', username: 'auditor', role: '审计员', roleIds: ['role-1'],
+        permissions: { data_sources: ['read'] }, permissionScopes: {}, departmentIds: [],
+        email: null, mustChangePassword: false, isGlobalAdmin: false,
+      },
+    });
+    renderRoute(['data_sources', 'create'], '/account-audit/data-sources');
+    await waitFor(() => expect(screen.getByTestId('path')).toHaveTextContent('/account-audit/data-sources'));
+    expect(screen.getByText('数据源列表')).toBeInTheDocument();
   });
 
   it('已登录且具备权限时渲染内容', () => {

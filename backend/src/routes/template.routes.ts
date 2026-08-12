@@ -20,6 +20,18 @@ const upload = multer({
 
 router.use(authenticate);
 
+router.post('/import-preview', authorize('templates', 'create'), upload.single('file'), async (req: Request, res: Response) => {
+  try {
+    if (!req.file?.buffer.length || req.file.buffer.includes(0)) {
+      res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: '请上传有效的 CSV 文件' } });
+      return;
+    }
+    res.json({ success: true, data: templateService.previewImport(req.file.buffer) });
+  } catch (error: any) {
+    res.status(error.status || 400).json({ success: false, error: { code: error.code || 'IMPORT_FAILED', message: error.message } });
+  }
+});
+
 // 导入 CSV — admin only
 router.post('/import', authorize('templates', 'create'), upload.single('file'), async (req: Request, res: Response) => {
   try {
@@ -27,7 +39,7 @@ router.post('/import', authorize('templates', 'create'), upload.single('file'), 
       res.status(400).json({ success: false, error: { code: 'NO_FILE', message: '请上传 CSV 文件' } });
       return;
     }
-    const { name, description } = req.body;
+    const { name, description, standardSeriesKey, version, controlKeyField } = req.body;
     if (!name) {
       res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: '模板名称为必填项' } });
       return;
@@ -37,7 +49,16 @@ router.post('/import', authorize('templates', 'create'), upload.single('file'), 
       res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'CSV 文件签名或内容无效' } });
       return;
     }
-    const result = await templateService.importTemplate(name, description, buffer, req.user!.userId);
+    let columnSchema;
+    if (req.body.columnSchema) {
+      try { columnSchema = JSON.parse(req.body.columnSchema); } catch { throw new Error('列配置格式无效'); }
+    }
+    const result = await templateService.importTemplate(name, description, buffer, req.user!.userId, {
+      standardSeriesKey,
+      version,
+      controlKeyField,
+      columnSchema,
+    });
     res.status(201).json({
       success: true,
       data: { templateId: result.template.id, importedCount: result.template.questionCount },
@@ -45,6 +66,15 @@ router.post('/import', authorize('templates', 'create'), upload.single('file'), 
     });
   } catch (error: any) {
     res.status(400).json({ success: false, error: { code: 'IMPORT_FAILED', message: error.message } });
+  }
+});
+
+router.put('/:id/columns', authorize('templates', 'update'), async (req: Request, res: Response) => {
+  try {
+    const data = await templateService.updateColumns(req.params.id, req.body.columns, req.user!.userId);
+    res.json({ success: true, data, message: '评估表列配置已保存，后续发布的项目将使用新配置' });
+  } catch (error: any) {
+    res.status(error.status || 400).json({ success: false, error: { code: error.code || 'UPDATE_FAILED', message: error.message } });
   }
 });
 

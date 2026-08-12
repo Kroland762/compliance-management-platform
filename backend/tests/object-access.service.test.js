@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import objectAccessService from '../src/services/object-access.service';
-import { AuditTask, QuestionItem } from '../src/models';
+import { AssessmentAuditor, AuditTask, EvaluationHistoryLink, QuestionItem } from '../src/models';
 
 const actor = (overrides = {}) => ({
   userId: 'user-1',
@@ -19,6 +19,8 @@ const actor = (overrides = {}) => ({
 describe('object access service', () => {
   afterEach(() => vi.restoreAllMocks());
 
+  const mockNoAuditorAssignments = () => vi.spyOn(AssessmentAuditor, 'findAll').mockResolvedValue([]);
+
   test('global administrators can access every task object', async () => {
     vi.spyOn(AuditTask, 'findOne').mockResolvedValue({ id: 'task-1' });
     await expect(objectAccessService.taskOrNotFound(
@@ -30,6 +32,7 @@ describe('object access service', () => {
   });
 
   test('assigned respondents receive an object-scoped task query', async () => {
+    mockNoAuditorAssignments();
     vi.spyOn(QuestionItem, 'findAll').mockResolvedValue([{ taskId: 'task-1' }]);
     vi.spyOn(AuditTask, 'findOne').mockResolvedValue({ id: 'task-1' });
     await expect(objectAccessService.taskOrNotFound('task-1', actor(), 'read'))
@@ -40,6 +43,7 @@ describe('object access service', () => {
   });
 
   test('unrelated users receive not-found semantics without object disclosure', async () => {
+    mockNoAuditorAssignments();
     vi.spyOn(QuestionItem, 'findAll').mockResolvedValue([]);
     vi.spyOn(AuditTask, 'findOne').mockResolvedValue(null);
     await expect(objectAccessService.taskOrNotFound('task-1', actor(), 'read'))
@@ -50,5 +54,16 @@ describe('object access service', () => {
     vi.spyOn(QuestionItem, 'findOne').mockResolvedValue({ id: 'question-1' });
     await expect(objectAccessService.questionOrNotFound('question-1', actor(), true))
       .resolves.toMatchObject({ id: 'question-1' });
+  });
+
+  test('historical source evidence is readable only through an accessible explicit history link', async () => {
+    const access = vi.spyOn(objectAccessService, 'evaluationOrNotFound');
+    access.mockRejectedValueOnce(Object.assign(new Error('not found'), { code: 'NOT_FOUND' }));
+    access.mockResolvedValueOnce({ id: 'current-1' });
+    vi.spyOn(EvaluationHistoryLink, 'findAll').mockResolvedValue([{ currentEvaluationId: 'current-1' }]);
+    vi.spyOn(QuestionItem, 'findByPk').mockResolvedValue({ id: 'source-1' });
+    await expect(objectAccessService.questionOrHistorySourceNotFound('source-1', actor()))
+      .resolves.toMatchObject({ id: 'source-1' });
+    expect(access).toHaveBeenNthCalledWith(2, 'current-1', expect.any(Object), 'read');
   });
 });

@@ -88,7 +88,6 @@ export default function TaskConfigure() {
       await apiClient.put(`/tasks/${id}/configure`, {
         questionAssignments: questions.map(q => ({
           questionId: q.id,
-          referenceAnswer: q.referenceAnswer || null,
           responsibleDepartment: q.responsibleDepartment || null,
           responsiblePerson: q.responsiblePerson || null,
           assignedTo: q.assignedTo || null,
@@ -105,13 +104,6 @@ export default function TaskConfigure() {
     { title: '序号', dataIndex: 'sequenceNumber', width: 130 },
     { title: '控制域名', dataIndex: 'controlDomain', width: 160 },
     { title: '控制点', dataIndex: 'controlPoint', width: 200 },
-    {
-      title: '参考回答', dataIndex: 'referenceAnswer', width: 200,
-      render: (v: string, _: any, i: number) => (
-        <Input.TextArea size="small" rows={2} placeholder="参考回答" value={v || ''}
-          onChange={e => updateQuestion(i, 'referenceAnswer', e.target.value)} />
-      ),
-    },
     {
       title: '历史证据', dataIndex: 'historicalEvidence', width: 230,
       render: (_: any, record: any, i: number) => (
@@ -226,7 +218,7 @@ export default function TaskConfigure() {
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <Space>
-            <Text strong style={{ fontSize: 15 }}>填写参考回答、分配责任</Text>
+            <Text strong style={{ fontSize: 15 }}>上传历史证据、分配责任</Text>
             {selectedRowKeys.length > 0 && (
               <Tag>{selectedRowKeys.length} 项已选</Tag>
             )}

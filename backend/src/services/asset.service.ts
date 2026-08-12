@@ -55,7 +55,6 @@ class AssetService {
     if (!code || !/^[A-Z0-9][A-Z0-9_-]{1,63}$/.test(code)) {
       throw new AppError(400, 'VALIDATION_ERROR', '资产编码只能包含大写字母、数字、下划线和连字符');
     }
-    if (code === 'ORG-GOVERNANCE') throw new AppError(409, 'CONFLICT', '系统资产编码不可使用');
     if (!input.name?.trim() || !input.assetType?.trim()) {
       throw new AppError(400, 'VALIDATION_ERROR', '资产名称和类型必填');
     }
@@ -84,15 +83,25 @@ class AssetService {
 
   async update(id: string, input: Partial<Omit<AssetInput, 'code'>>, user: RequestUser): Promise<Asset> {
     const asset = await objectAccessService.assetOrNotFound(id, user, 'update');
+    if (asset.status !== 'active') {
+      throw new AppError(409, 'ASSET_ARCHIVED', '已归档资产不可编辑，请先恢复');
+    }
     await this.validateOwners(input);
     if (input.name !== undefined && !input.name.trim()) {
       throw new AppError(400, 'VALIDATION_ERROR', '资产名称不能为空');
     }
-    await asset.update({
-      ...input,
-      ...(input.name !== undefined ? { name: input.name.trim() } : {}),
-      ...(input.assetType !== undefined ? { assetType: input.assetType.trim() } : {}),
-    });
+    if (input.assetType !== undefined && !input.assetType.trim()) {
+      throw new AppError(400, 'VALIDATION_ERROR', '资产类型不能为空');
+    }
+    const updates: Partial<AssetInput> = {};
+    if (input.name !== undefined) updates.name = input.name.trim();
+    if (input.assetType !== undefined) updates.assetType = input.assetType.trim();
+    if (input.criticality !== undefined) updates.criticality = input.criticality;
+    if (input.ownerDepartmentId !== undefined) updates.ownerDepartmentId = input.ownerDepartmentId || null;
+    if (input.ownerUserId !== undefined) updates.ownerUserId = input.ownerUserId || null;
+    if (input.description !== undefined) updates.description = input.description || null;
+    if (input.metadata !== undefined) updates.metadata = input.metadata;
+    await asset.update(updates);
     await auditLogService.log({
       userId: user.userId,
       operationType: OperationType.UPDATE,
@@ -107,9 +116,6 @@ class AssetService {
 
   async archive(id: string, user: RequestUser): Promise<Asset> {
     const asset = await objectAccessService.assetOrNotFound(id, user, 'archive');
-    if (asset.code === 'ORG-GOVERNANCE') {
-      throw new AppError(409, 'CONFLICT', '组织级治理资产不可归档');
-    }
     if (asset.status === 'archived') return asset;
     await asset.update({ status: 'archived', archivedAt: new Date() });
     await auditLogService.log({
@@ -118,6 +124,22 @@ class AssetService {
       resourceType: 'asset',
       resourceId: asset.id,
       operationDetails: '归档资产',
+      success: true,
+      departmentId: asset.ownerDepartmentId || undefined,
+    });
+    return asset;
+  }
+
+  async restore(id: string, user: RequestUser): Promise<Asset> {
+    const asset = await objectAccessService.assetOrNotFound(id, user, 'archive');
+    if (asset.status === 'active') return asset;
+    await asset.update({ status: 'active', archivedAt: null });
+    await auditLogService.log({
+      userId: user.userId,
+      operationType: OperationType.UPDATE,
+      resourceType: 'asset',
+      resourceId: asset.id,
+      operationDetails: '恢复资产',
       success: true,
       departmentId: asset.ownerDepartmentId || undefined,
     });

@@ -44,14 +44,15 @@ class AuditLogService {
   async queryLogs(query: {
     page?: number; pageSize?: number; userId?: string;
     operationType?: OperationType; resourceType?: string;
-    startDate?: string; endDate?: string; userSearch?: string;
+    resourceId?: string; startDate?: string; endDate?: string; userSearch?: string;
   }, accessWhere: WhereOptions = {}) {
     const { page, pageSize } = parsePagination(query);
-    const { userId, operationType, resourceType, startDate, endDate, userSearch } = query;
+    const { userId, operationType, resourceType, resourceId, startDate, endDate, userSearch } = query;
     const where: any = { ...(accessWhere as object) };
     if (userId) where.userId = userId;
     if (operationType) where.operationType = operationType;
     if (resourceType) where.resourceType = resourceType;
+    if (resourceId) where.resourceId = resourceId;
     if (startDate || endDate) {
       where.createdAt = {};
       if (startDate) where.createdAt[Op.gte] = new Date(startDate);

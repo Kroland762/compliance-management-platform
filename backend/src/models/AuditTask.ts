@@ -25,12 +25,13 @@ interface AuditTaskAttributes {
   createdAt: Date;
   submittedAt: Date | null;
   reviewedAt: Date | null;
+  columnSchemaSnapshot: Array<Record<string, unknown>>;
 }
 
 type CreationAttributes = Optional<AuditTaskAttributes,
   'id' | 'name' | 'createdAt' | 'submittedAt' | 'reviewedAt' | 'returnReason' |
   'returnedAssignees' | 'assignedTo' | 'reviewerId' | 'periodStart' | 'periodEnd' |
-  'publishedAt' | 'cancelledAt' | 'lockVersion'>;
+  'publishedAt' | 'cancelledAt' | 'lockVersion' | 'columnSchemaSnapshot'>;
 
 class AuditTask extends Model<AuditTaskAttributes, CreationAttributes> implements AuditTaskAttributes {
   declare id: string;
@@ -53,6 +54,7 @@ class AuditTask extends Model<AuditTaskAttributes, CreationAttributes> implement
   declare createdAt: Date;
   declare submittedAt: Date | null;
   declare reviewedAt: Date | null;
+  declare columnSchemaSnapshot: Array<Record<string, unknown>>;
 }
 
 AuditTask.init(
@@ -66,7 +68,7 @@ AuditTask.init(
     assignedTo: { type: DataTypes.UUID, allowNull: true, references: { model: User, key: 'id' } },
     reviewerId: { type: DataTypes.UUID, allowNull: true, references: { model: User, key: 'id' } },
     departmentId: { type: DataTypes.UUID, allowNull: false },
-    status: { type: DataTypes.STRING(30), allowNull: false, defaultValue: TaskStatus.DRAFT, validate: { isIn: [Object.values(TaskStatus)] } },
+    status: { type: DataTypes.STRING(30), allowNull: false, defaultValue: TaskStatus.PREPARING, validate: { isIn: [Object.values(TaskStatus)] } },
     returnReason: { type: DataTypes.TEXT, allowNull: true },
     returnedAssignees: { type: DataTypes.JSONB, allowNull: true, defaultValue: null },
     periodStart: { type: DataTypes.DATEONLY, allowNull: true },
@@ -77,6 +79,7 @@ AuditTask.init(
     createdAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
     submittedAt: { type: DataTypes.DATE, allowNull: true },
     reviewedAt: { type: DataTypes.DATE, allowNull: true },
+    columnSchemaSnapshot: { type: DataTypes.JSONB, allowNull: false, defaultValue: [] },
   },
   { sequelize, tableName: 'audit_tasks', timestamps: false },
 );

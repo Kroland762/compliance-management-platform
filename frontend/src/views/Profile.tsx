@@ -68,7 +68,7 @@ export default function ProfileModal({ open, onClose }: ProfileProps) {
         <Descriptions column={1} size="small" labelStyle={{ color: '#8E8E93', fontSize: 12 }} contentStyle={{ fontSize: 14 }}>
           <Descriptions.Item label="用户名">{user?.username}</Descriptions.Item>
           <Descriptions.Item label="角色">{roleLabel}</Descriptions.Item>
-          <Descriptions.Item label="主部门">{user?.primaryDepartmentId || '未设置'}</Descriptions.Item>
+          <Descriptions.Item label="主部门">{user?.primaryDepartmentName || '未设置'}</Descriptions.Item>
           <Descriptions.Item label="邮箱">{user?.email || '未设置'}</Descriptions.Item>
         </Descriptions>
       </div>

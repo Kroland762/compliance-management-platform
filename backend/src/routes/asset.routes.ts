@@ -22,4 +22,8 @@ router.post('/:id/archive', authorize('assets', 'archive'), asyncHandler(async (
   res.json({ success: true, data: await assetService.archive(req.params.id, req.user!) });
 }));
 
+router.post('/:id/restore', authorize('assets', 'archive'), asyncHandler(async (req, res) => {
+  res.json({ success: true, data: await assetService.restore(req.params.id, req.user!) });
+}));
+
 export default router;

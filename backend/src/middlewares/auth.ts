@@ -27,6 +27,7 @@ declare global {
         mustChangePassword: boolean;
         isGlobalAdmin: boolean;
         tokenKind: 'identity' | 'control' | 'tenant';
+        sessionId: string;
       };
     }
   }

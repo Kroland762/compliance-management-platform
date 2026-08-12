@@ -8,6 +8,7 @@ module.exports = {
     '**/auth.service.test.js',
     '**/http.middleware.test.js',
     '**/security-foundation.test.js',
+    '**/security-routes.test.js',
     '**/tenant.integration.test.js',
     '**/vnext-relationship.integration.test.js',
   ],

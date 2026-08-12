@@ -11,10 +11,14 @@ import {
   TaskStatus,
   EvaluationWorkflowStatus,
   OperationType,
+  AssessmentAsset,
+  Finding,
 } from '../models';
 import auditLogService from './audit-log.service';
 import objectAccessService from './object-access.service';
 import { pagination, parsePagination } from '../utils/pagination';
+import { normalizeEvaluationColumnSchema } from '../utils/evaluation-columns';
+import { AppError } from '../utils/http';
 
 interface CreateTaskInput {
   templateId: string;
@@ -71,9 +75,9 @@ class TaskService {
       assessmentTarget: input.assessmentTarget,
       createdBy: input.createdBy,
       assignedTo: input.assignedTo || null,
-      reviewerId: input.reviewerId || input.createdBy,
+      reviewerId: input.reviewerId || null,
       departmentId: input.departmentId,
-      status: TaskStatus.DRAFT,
+      status: TaskStatus.PREPARING,
       periodStart: input.periodStart || null,
       periodEnd: input.periodEnd || null,
     } as any);
@@ -98,10 +102,47 @@ class TaskService {
         { association: 'creator', attributes: ['id', 'username'] },
         { association: 'assignee', attributes: ['id', 'username'] },
         { association: 'reviewer', attributes: ['id', 'username'] },
+        { association: 'auditors', include: [{ association: 'auditor', attributes: ['id', 'username', 'email'] }] },
+        {
+          association: 'assessmentAssets',
+          attributes: [
+            'id', 'assetId', 'scopeStatus', 'assetCodeSnapshot', 'assetNameSnapshot',
+            'assetTypeSnapshot', 'criticalitySnapshot', 'ownerDepartmentIdSnapshot',
+            'ownerDepartmentNameSnapshot',
+          ],
+        },
       ],
     });
     if (!task) throw new Error('任务不存在');
-    return task;
+    const [total, reviewed, findings] = await Promise.all([
+      QuestionItem.count({ where: { taskId: id } }),
+      QuestionItem.count({ where: { taskId: id, workflowStatus: EvaluationWorkflowStatus.REVIEWED } }),
+      Finding.count({ where: { taskId: id } }),
+    ]);
+    return { ...task.toJSON(), progress: { total, reviewed, findings } };
+  }
+
+  async syncColumnSchema(id: string, updatedBy: string) {
+    const task = await AuditTask.findByPk(id);
+    if (!task) throw new AppError(404, 'NOT_FOUND', '评估项目不存在');
+    const template = await QuestionnaireTemplate.findByPk(task.templateId, {
+      attributes: ['id', 'name', 'columnSchema'],
+    });
+    if (!template) throw new AppError(409, 'TEMPLATE_NOT_FOUND', '项目关联的模板不存在，无法同步列配置');
+
+    const columnSchemaSnapshot = normalizeEvaluationColumnSchema(template.columnSchema || []);
+    await task.update({ columnSchemaSnapshot });
+    await auditLogService.log({
+      userId: updatedBy,
+      operationType: OperationType.UPDATE,
+      resourceType: 'task',
+      resourceId: task.id,
+      operationDetails: `同步模板“${template.name}”的列配置，仅更新列顺序、名称和显示状态`,
+      success: true,
+      departmentId: task.departmentId,
+    });
+
+    return { columnSchemaSnapshot, templateId: template.id, templateName: template.name };
   }
 
   // ============ 查询（带过滤 + 统计）============
@@ -112,7 +153,7 @@ class TaskService {
     const where: any = query.user
       ? await objectAccessService.taskScope(query.user, 'read', query.my === 'true')
       : {};
-    if (query.my === 'true') where.status = { [Op.ne]: TaskStatus.DRAFT };
+    if (query.my === 'true') where.status = { [Op.ne]: TaskStatus.PREPARING };
 
     if (status) where.status = status;
     if (assessmentType) where.assessmentType = assessmentType;
@@ -124,6 +165,7 @@ class TaskService {
         { association: 'creator', attributes: ['id', 'username'] },
         { association: 'assignee', attributes: ['id', 'username'] },
         { association: 'reviewer', attributes: ['id', 'username'] },
+        { association: 'auditors', include: [{ association: 'auditor', attributes: ['id', 'username'] }] },
       ],
       order: [['createdAt', 'DESC']],
       limit: pageSize,

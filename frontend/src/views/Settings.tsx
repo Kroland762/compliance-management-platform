@@ -74,10 +74,11 @@ export default function Settings() {
   const { message } = App.useApp();
   const [form] = Form.useForm();
   const [pwdForm] = Form.useForm();
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [changingPwd, setChangingPwd] = useState(false);
   const can = useAuthStore((s) => s.hasPermission);
+  const canViewSecurityPolicies = can('settings', 'read');
   const isAdmin = can('settings', 'update');
 
   const fetchSettings = async () => {
@@ -90,7 +91,9 @@ export default function Settings() {
     } finally { setLoading(false); }
   };
 
-  useEffect(() => { fetchSettings(); }, []);
+  useEffect(() => {
+    if (canViewSecurityPolicies) fetchSettings();
+  }, [canViewSecurityPolicies]);
 
   const handleSave = async (values: SecuritySettings) => {
     if (!isAdmin) { message.error('仅管理员可修改设置'); return; }
@@ -120,9 +123,10 @@ export default function Settings() {
   return (
     <Spin spinning={loading}>
     <div>
-    <Form form={form} layout="vertical" onFinish={handleSave} disabled={!isAdmin}
-      initialValues={DEFAULT_SECURITY_SETTINGS}>
-      <Card style={cardStyle} styles={{ body: { padding: 0 } }}>
+    {canViewSecurityPolicies && (
+      <Form form={form} layout="vertical" onFinish={handleSave} disabled={!isAdmin}
+        initialValues={DEFAULT_SECURITY_SETTINGS}>
+        <Card style={cardStyle} styles={{ body: { padding: 0 } }}>
         {/* 登录锁定策略 */}
         <section style={{ ...policySectionStyle, borderTop: 0 }}>
           <div style={{ ...headingStyle, marginBottom: 20 }}>
@@ -191,11 +195,12 @@ export default function Settings() {
             <Button type="primary" htmlType="submit" loading={saving} style={btnStyle}>保存设置</Button>
           </div>
         )}
-      </Card>
-    </Form>
+        </Card>
+      </Form>
+    )}
 
     {/* 修改密码 + 密码复杂度 */}
-    <Card style={{ marginTop: 24, ...cardStyle }}>
+    <Card style={{ marginTop: canViewSecurityPolicies ? 24 : 0, ...cardStyle }}>
       <div style={{ ...headingStyle, marginBottom: 20 }}><KeyOutlined style={{ marginRight: 8, color: '#007AFF' }} />修改密码</div>
 
       <Form form={pwdForm} layout="vertical" onFinish={handleChangePassword}>

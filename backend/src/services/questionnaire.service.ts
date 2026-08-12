@@ -6,14 +6,12 @@ import {
   QuestionItem,
   EvidenceFile,
   AuditTask,
-  TaskStatus,
-  AnswerStatus,
   OperationType,
   EvidenceType,
   EvidenceStatus,
   EvidenceScanStatus,
 } from '../models';
-import { encrypt, decrypt } from '../utils/crypto';
+import { decrypt } from '../utils/crypto';
 import type { PermissionMatrix } from '../models/Role';
 import { inspectEvidenceFile, serializeEvidence, validateEvidence } from './evidence-security.service';
 import { fileStorage } from './file-storage.service';
@@ -53,56 +51,6 @@ class QuestionnaireService {
       }
       return json;
     }));
-  }
-
-  async saveAnswer(itemId: string, currentStatusDescription: string) {
-    const item = await QuestionItem.findByPk(itemId);
-    if (!item) throw new Error('问卷条目不存在');
-    item.currentStatusDescription = currentStatusDescription
-      ? encrypt(currentStatusDescription)
-      : '';
-    item.answerStatus = currentStatusDescription ? AnswerStatus.ANSWERED : AnswerStatus.PENDING;
-    item.answeredAt = new Date();
-    await item.save();
-
-    // 首次作答：任务从「已分配」→「进行中」
-    if (currentStatusDescription) {
-      const { AuditTask, TaskStatus } = await import('../models');
-      const task = await AuditTask.findByPk(item.taskId);
-      if (task && task.status === TaskStatus.ASSIGNED) {
-        task.status = TaskStatus.IN_PROGRESS;
-        await task.save();
-      }
-    }
-
-    return item;
-  }
-
-  async validateCompletion(taskId: string, userId?: string): Promise<{ valid: boolean; pendingCount: number }> {
-    const where: any = { taskId, answerStatus: AnswerStatus.PENDING };
-    if (userId) where.assignedTo = userId;
-    const pending = await QuestionItem.count({ where });
-    return { valid: pending === 0, pendingCount: pending };
-  }
-
-  async submitTask(taskId: string, userId: string) {
-    const validation = await this.validateCompletion(taskId, userId);
-    if (!validation.valid) {
-      throw new Error(`还有 ${validation.pendingCount} 个问题尚未填写`);
-    }
-    const task = await AuditTask.findByPk(taskId);
-    if (!task) throw new Error('任务不存在');
-    task.status = TaskStatus.SUBMITTED;
-    task.submittedAt = new Date();
-    await task.save();
-
-    await auditLogService.log({
-      userId, operationType: OperationType.UPDATE, resourceType: 'task',
-      resourceId: taskId, success: true,
-      operationDetails: '提交审计任务',
-    });
-
-    return task;
   }
 
   async uploadEvidence(

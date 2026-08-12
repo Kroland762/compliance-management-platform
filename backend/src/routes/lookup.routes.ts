@@ -4,6 +4,8 @@ import { authenticate, authorizeAny } from '../middlewares/auth';
 import {
   Department,
   DepartmentMember,
+  MemberRole,
+  Role,
   TenantMember,
   TenantMemberStatus,
   User,
@@ -22,8 +24,12 @@ router.get('/departments', authorizeAny(
   ['organization', 'read'],
   ['tasks', 'create'],
   ['tasks', 'update'],
+  ['findings', 'remediate'],
+  ['findings', 'escalate'],
   ['qualifications', 'create'],
   ['qualifications', 'update'],
+  ['products', 'create'],
+  ['products', 'update'],
 ), asyncHandler(async (req, res) => {
   const keyword = String(req.query.q || '').trim();
   const departments = await Department.findAll({
@@ -46,8 +52,12 @@ router.get('/departments', authorizeAny(
 router.get('/personnel', authorizeAny(
   ['users', 'read'],
   ['tasks', 'update'],
+  ['findings', 'remediate'],
+  ['findings', 'escalate'],
   ['qualifications', 'create'],
   ['qualifications', 'update'],
+  ['products', 'create'],
+  ['products', 'update'],
 ), asyncHandler(async (req, res) => {
   const keyword = String(req.query.q || '').trim();
   const departmentId = String(req.query.departmentId || '');
@@ -106,6 +116,37 @@ router.get('/personnel', authorizeAny(
         })),
       };
     }),
+  });
+}));
+
+router.get('/auditors', authorizeAny(['tasks', 'create'], ['tasks', 'update']), asyncHandler(async (_req, res) => {
+  const reviewRoles = await Role.findAll({ attributes: ['id', 'permissions'] });
+  const roleIds = reviewRoles
+    .filter((role) => role.permissions?.evaluations?.includes('review'))
+    .map((role) => role.id);
+  if (!roleIds.length) {
+    res.json({ success: true, data: [] });
+    return;
+  }
+  const memberRoles = await MemberRole.findAll({ where: { roleId: { [Op.in]: roleIds } }, attributes: ['memberId'] });
+  const memberIds = [...new Set(memberRoles.map((item) => item.memberId))];
+  const members = await TenantMember.findAll({
+    where: { id: { [Op.in]: memberIds }, status: TenantMemberStatus.ACTIVE },
+    order: [['displayName', 'ASC']],
+  });
+  const users = members.length
+    ? await User.findAll({ where: { id: { [Op.in]: members.map((member) => member.userId) } }, attributes: ['id', 'username', 'email'] })
+    : [];
+  const userMap = new Map(users.map((user) => [user.id, user]));
+  res.json({
+    success: true,
+    data: members.map((member) => ({
+      memberId: member.id,
+      userId: member.userId,
+      username: userMap.get(member.userId)?.username,
+      displayName: member.displayName,
+      email: member.email || userMap.get(member.userId)?.email || null,
+    })),
   });
 }));
 

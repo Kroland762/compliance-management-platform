@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { dataSourceApi, type DataSource } from '../../api/account';
 import { getApiErrorMessage } from '../../utils/error';
 import DataSourceForm from './DataSourceForm';
+import { useAuthStore } from '../../store/auth';
 
 const statusColors: Record<string, string> = { active: 'green', inactive: 'default', error: 'red' };
 const statusLabels: Record<string, string> = { active: '正常', inactive: '停用', error: '异常' };
@@ -13,6 +14,7 @@ const mappingLabels: Record<string, string> = { mapped: '已映射', partial: '�
 
 export default function DataSourceList() {
   const navigate = useNavigate();
+  const can = useAuthStore((state) => state.hasPermission);
   const [data, setData] = useState<DataSource[]>([]);
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState('');
@@ -194,20 +196,24 @@ export default function DataSourceList() {
             allowClear
           />
           <Button onClick={handleSearch}>查询</Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/account-audit/data-sources/new')}>
-            添加数据源
-          </Button>
+          {can('data_sources', 'create') && (
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/account-audit/data-sources/new')}>
+              添加数据源
+            </Button>
+          )}
         </div>
       </div>
 
       <Table columns={columns} dataSource={data} rowKey="id" loading={loading} scroll={{ x: 1100 }} size="small" />
 
-      <DataSourceForm
-        open={formOpen}
-        editingDataSource={editingDs}
-        onClose={() => { setFormOpen(false); setEditingDs(null); }}
-        onSuccess={() => { setFormOpen(false); setEditingDs(null); fetchData(); }}
-      />
+      {formOpen && (
+        <DataSourceForm
+          open
+          editingDataSource={editingDs}
+          onClose={() => { setFormOpen(false); setEditingDs(null); }}
+          onSuccess={() => { setFormOpen(false); setEditingDs(null); fetchData(); }}
+        />
+      )}
     </div>
   );
 }

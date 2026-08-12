@@ -22,6 +22,7 @@ import { Link, useParams } from 'react-router-dom';
 import apiClient from '../api/client';
 import { useAuthStore } from '../store/auth';
 import { getApiErrorMessage } from '../utils/error';
+import { REMEDIATION_STATUS, VERIFICATION_STATUS } from '../constants/status';
 
 export default function RemediationActionDetail() {
   const { id } = useParams();
@@ -55,7 +56,7 @@ export default function RemediationActionDetail() {
           'Idempotency-Key': crypto.randomUUID(),
         },
       });
-      message.success('已提交逐风险复核');
+      message.success('已提交整改验证');
       load();
     } catch (error) {
       message.error(getApiErrorMessage(error, '提交失败'));
@@ -68,7 +69,10 @@ export default function RemediationActionDetail() {
       return;
     }
     try {
-      await apiClient.post(`/risks/${verifying.riskId}/actions/${id}/verify`, { decision, comment }, {
+      const verifyPath = verifying.findingId
+        ? `/findings/${verifying.findingId}/actions/${id}/verify`
+        : `/risks/${verifying.riskId}/actions/${id}/verify`;
+      await apiClient.post(verifyPath, { decision, comment }, {
         headers: { 'If-Match': `"${action.lockVersion}"` },
       });
       message.success(decision === 'approved' ? '复核通过' : '已驳回');
@@ -155,10 +159,10 @@ export default function RemediationActionDetail() {
           )}
         </Space>
       </Space>
-      {action.status === 'pending_verification' && <Alert style={{ marginBottom: 18 }} type="info" message="行动已完成，等待每个关联风险分别复核" showIcon />}
+      {action.status === 'pending_verification' && <Alert style={{ marginBottom: 18 }} type="info" message="行动已提交，等待所有必要关联分别验证" showIcon />}
       <Card style={{ marginBottom: 18 }}>
         <Descriptions column={3}>
-          <Descriptions.Item label="状态"><Tag>{action.status}</Tag></Descriptions.Item>
+          <Descriptions.Item label="状态"><Tag color={REMEDIATION_STATUS[action.status]?.color}>{REMEDIATION_STATUS[action.status]?.text || action.status}</Tag></Descriptions.Item>
           <Descriptions.Item label="责任部门">{action.ownerDepartmentId}</Descriptions.Item>
           <Descriptions.Item label="负责人">{action.ownerUserId}</Descriptions.Item>
           <Descriptions.Item label="开始日期">{action.startDate || '—'}</Descriptions.Item>
@@ -199,23 +203,37 @@ export default function RemediationActionDetail() {
           )}
         />
       </Card>
-      <Card title="关联风险与独立复核">
+      <Card title="关联不符合项与独立验证" style={{ marginBottom: 18 }}>
+        <List locale={{ emptyText: '无直接关联的不符合项' }} dataSource={action.findingLinks || []} renderItem={(link: any) => (
+          <List.Item actions={[
+            can('findings', 'verify') && action.status === 'pending_verification'
+              ? <Button key="verify" type="link" onClick={() => setVerifying(link)}>验证</Button>
+              : null,
+          ]}>
+            <List.Item.Meta
+              title={`${link.finding?.code} · ${link.finding?.title}`}
+              description={`${link.contributionDescription} ｜ 结论：${VERIFICATION_STATUS[link.verificationStatus] || link.verificationStatus}`}
+            />
+          </List.Item>
+        )} />
+      </Card>
+      <Card title="关联风险与独立验证">
         <List dataSource={action.riskLinks || []} renderItem={(link: any) => (
           <List.Item actions={[
             <Link key="risk" to={`/risks/${link.riskId}`}>查看风险</Link>,
             can('remediation_actions', 'verify') && action.status === 'pending_verification'
-              ? <Button key="verify" type="link" onClick={() => setVerifying(link)}>复核</Button>
+              ? <Button key="verify" type="link" onClick={() => setVerifying(link)}>验证</Button>
               : null,
           ]}>
             <List.Item.Meta
               title={`${link.risk?.code} · ${link.risk?.title}`}
-              description={`${link.contributionDescription} ｜ 结论：${link.verificationStatus}${link.selfReview ? ' ｜ 单人自审' : ''}`}
+              description={`${link.contributionDescription} ｜ 结论：${VERIFICATION_STATUS[link.verificationStatus] || link.verificationStatus}`}
             />
           </List.Item>
         )} />
       </Card>
       <Modal
-        title="逐风险复核"
+        title="整改验证"
         open={Boolean(verifying)}
         onCancel={() => setVerifying(undefined)}
         footer={[
@@ -223,7 +241,7 @@ export default function RemediationActionDetail() {
           <Button key="approve" type="primary" onClick={() => verify('approved')}>通过</Button>,
         ]}
       >
-        <Typography.Paragraph>本次结论只作用于风险 {verifying?.risk?.code}，不会替代其他风险的复核。</Typography.Paragraph>
+        <Typography.Paragraph>本次结论只作用于 {verifying?.finding?.code || verifying?.risk?.code}，不会替代其他关联项的验证。</Typography.Paragraph>
         <Input.TextArea rows={4} value={comment} onChange={(event) => setComment(event.target.value)} placeholder="复核意见" />
       </Modal>
       <Modal

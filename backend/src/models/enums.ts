@@ -16,15 +16,27 @@ export enum AssessmentType {
 }
 
 export enum TaskStatus {
-  DRAFT = 'draft',
-  CONFIGURING = 'configuring',
-  ASSIGNED = 'assigned',
+  PREPARING = 'preparing',
+  READY = 'ready',
   IN_PROGRESS = 'in_progress',
-  SUBMITTED = 'submitted',
-  UNDER_REVIEW = 'under_review',
-  COMPLETED = 'completed',
-  RETURNED = 'returned',
+  PENDING_REVIEW = 'pending_review',
+  PENDING_CLOSURE = 'pending_closure',
+  CLOSED = 'closed',
   CANCELLED = 'cancelled',
+}
+
+export enum FindingStatus {
+  OPEN = 'open',
+  REMEDIATING = 'remediating',
+  ESCALATED = 'escalated',
+  RESOLVED = 'resolved',
+  CANCELLED = 'cancelled',
+}
+
+export enum FindingDisposition {
+  PENDING = 'pending',
+  DIRECT_REMEDIATION = 'direct_remediation',
+  RISK = 'risk',
 }
 
 /** @deprecated vNext uses EvaluationWorkflowStatus. */

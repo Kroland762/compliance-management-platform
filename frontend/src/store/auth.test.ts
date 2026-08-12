@@ -56,6 +56,7 @@ describe('tenant session state', () => {
           permissionScopes: {},
           departmentIds: ['dept-a'],
           primaryDepartmentId: 'dept-a',
+          primaryDepartmentName: '安全合规部',
           mustChangePassword: false,
           isGlobalAdmin: false,
         },
@@ -64,6 +65,7 @@ describe('tenant session state', () => {
     return useAuthStore.getState().selectContext('tenant-a').then(() => {
     expect(sessionStorage.getItem('selectedTenant')).toContain('tenant-a');
     expect(localStorage.getItem('selectedTenant')).toBeNull();
+    expect(useAuthStore.getState().user?.primaryDepartmentName).toBe('安全合规部');
     });
   });
 

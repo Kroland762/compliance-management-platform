@@ -4,14 +4,13 @@
 
 /** 审计员/管理员视角 — 任务列表 */
 export const TASK_STATUS: Record<string, { color: string; text: string }> = {
-  draft: { color: 'default', text: '草稿' },
-  configuring: { color: 'cyan', text: '配置中' },
-  assigned: { color: 'blue', text: '已分配' },
+  preparing: { color: 'default', text: '准备中' },
+  ready: { color: 'blue', text: '待开始' },
   in_progress: { color: 'processing', text: '进行中' },
-  submitted: { color: 'orange', text: '待审阅' },
-  under_review: { color: 'purple', text: '审阅中' },
-  completed: { color: 'green', text: '已完成' },
-  returned: { color: 'red', text: '已退回' },
+  pending_review: { color: 'purple', text: '待复核' },
+  pending_closure: { color: 'orange', text: '待闭环' },
+  closed: { color: 'success', text: '已关闭' },
+  cancelled: { color: 'default', text: '已取消' },
 };
 
 /** 普通用户视角 — 我的任务（按个人答题进度） */
@@ -27,10 +26,10 @@ export const MY_TASK_USER_STATUS = {
 };
 
 /** 调查问卷详情页 — canEdit 状态 */
-export const CAN_EDIT_TASK_STATUS = ['assigned', 'in_progress'] as const;
+export const CAN_EDIT_TASK_STATUS = ['ready', 'in_progress'] as const;
 
 /** 审阅页 — 可审阅状态 */
-export const CAN_REVIEW_STATUS = ['submitted', 'under_review'] as const;
+export const CAN_REVIEW_STATUS = ['pending_review'] as const;
 
 /** 风险级别 */
 export const RISK_LEVEL: Record<string, { color: string; text: string }> = {
@@ -50,3 +49,31 @@ export const COMPLIANCE_STATUS_OPTIONS = [
 
 export const COMPLIANCE_STATUS: Record<string, { color: string; text: string }> =
   Object.fromEntries(COMPLIANCE_STATUS_OPTIONS.map(o => [o.value, { color: o.color, text: o.label }]));
+
+export const RISK_STATUS: Record<string, { color: string; text: string }> = {
+  draft: { color: 'default', text: '草稿' },
+  pending_confirmation: { color: 'orange', text: '待确认' },
+  open: { color: 'blue', text: '已识别' },
+  remediating: { color: 'processing', text: '整改中' },
+  pending_verification: { color: 'purple', text: '待验证' },
+  closed: { color: 'green', text: '已关闭' },
+  accepted: { color: 'cyan', text: '已接受' },
+  cancelled: { color: 'default', text: '已取消' },
+};
+
+export const REMEDIATION_STATUS: Record<string, { color: string; text: string }> = {
+  draft: { color: 'default', text: '草稿' },
+  not_started: { color: 'orange', text: '待开始' },
+  in_progress: { color: 'processing', text: '整改中' },
+  pending_verification: { color: 'purple', text: '待验证' },
+  completed: { color: 'green', text: '已完成' },
+  cancelled: { color: 'default', text: '已取消' },
+};
+
+export const VERIFICATION_STATUS: Record<string, string> = {
+  pending: '待验证', approved: '已通过', rejected: '已驳回', not_required: '无需验证',
+};
+
+export const TREATMENT_STRATEGY: Record<string, string> = {
+  mitigate: '降低', accept: '接受', avoid: '规避', transfer: '转移',
+};

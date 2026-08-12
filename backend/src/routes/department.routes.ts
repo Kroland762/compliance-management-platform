@@ -3,9 +3,19 @@ import { Op } from 'sequelize';
 import sequelize from '../config/database';
 import { authenticate, authorize } from '../middlewares/auth';
 import {
+  AssessmentAsset,
+  AssessmentControlAsset,
+  AssessmentPlan,
+  Asset,
+  AuditLog,
+  AuditTask,
   Department,
   DepartmentMember,
   OperationType,
+  Qualification,
+  QuestionItem,
+  RemediationAction,
+  RiskRecord,
   TenantMember,
   TenantMemberStatus,
 } from '../models';
@@ -169,14 +179,79 @@ router.put('/:id', authorize('organization', 'update'), asyncHandler(async (req,
 }));
 
 router.delete('/:id', authorize('organization', 'delete'), asyncHandler(async (req, res) => {
-  const department = await departmentOrNotFound(req.params.id);
-  if (department.code === 'ROOT') throw new AppError(409, 'ROOT_DEPARTMENT_REQUIRED', '根部门不可归档');
-  const children = await Department.count({ where: { parentId: department.id, status: 'active' } });
-  if (children > 0) throw new AppError(409, 'HAS_CHILDREN', '请先移动或归档子部门');
-  const members = await DepartmentMember.count({ where: { departmentId: department.id } });
-  if (members > 0) throw new AppError(409, 'HAS_MEMBERS', '请先转移部门成员');
-  await department.update({ status: 'archived', archivedAt: new Date() });
-  res.json({ success: true, message: '部门已归档' });
+  await sequelize.transaction(async (transaction) => {
+    const department = await Department.findByPk(req.params.id, {
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (!department) throw new AppError(404, 'NOT_FOUND', '部门不存在');
+    if (department.parentId === null) {
+      throw new AppError(409, 'ROOT_DEPARTMENT_REQUIRED', '根部门不可删除');
+    }
+
+    const [children, members] = await Promise.all([
+      Department.count({ where: { parentId: department.id }, transaction }),
+      DepartmentMember.count({ where: { departmentId: department.id }, transaction }),
+    ]);
+    if (children > 0) throw new AppError(409, 'HAS_CHILDREN', '请先移动或删除子部门');
+    if (members > 0) throw new AppError(409, 'HAS_MEMBERS', '请先转移部门成员');
+
+    const references = await Promise.all([
+      Asset.count({ where: { ownerDepartmentId: department.id }, transaction }),
+      AuditTask.count({ where: { departmentId: department.id }, transaction }),
+      AssessmentAsset.count({ where: { ownerDepartmentIdSnapshot: department.id }, transaction }),
+      AssessmentControlAsset.count({ where: { responsibleDepartmentId: department.id }, transaction }),
+      AssessmentPlan.count({ where: { defaultDepartmentId: department.id }, transaction }),
+      Qualification.count({ where: { ownerDepartmentId: department.id }, transaction }),
+      QuestionItem.count({ where: { responsibleDepartmentId: department.id }, transaction }),
+      RiskRecord.count({ where: { ownerDepartmentId: department.id }, transaction }),
+      RemediationAction.count({ where: { ownerDepartmentId: department.id }, transaction }),
+      AuditLog.count({
+        where: {
+          [Op.or]: [
+            { departmentId: department.id },
+            { departmentIdSnapshot: department.id },
+          ],
+        },
+        transaction,
+      }),
+    ]);
+    const referenceNames = [
+      '资产',
+      '评估任务',
+      '评估资产快照',
+      '控制项资产映射',
+      '评估计划',
+      '资质',
+      '评估问题',
+      '风险',
+      '整改任务',
+      '操作日志',
+    ];
+    const usedBy = referenceNames.filter((_, index) => references[index] > 0);
+    if (usedBy.length > 0) {
+      throw new AppError(
+        409,
+        'DEPARTMENT_IN_USE',
+        `部门已被业务数据引用，不能删除（${usedBy.join('、')}）`,
+      );
+    }
+
+    const { id, name, code } = department;
+    await department.destroy({ transaction });
+    await auditLogService.log({
+      userId: req.user!.userId,
+      operationType: OperationType.DELETE,
+      resourceType: 'department',
+      resourceId: id,
+      operationDetails: `删除部门: ${name} (${code})`,
+      success: true,
+      tenantId: req.tenant!.id,
+      departmentId: req.user!.primaryDepartmentId,
+      ipAddress: req.ip,
+    }, transaction);
+  });
+  res.json({ success: true, message: '部门已删除' });
 }));
 
 router.get('/:id/members', authorize('organization', 'read'), asyncHandler(async (req, res) => {

@@ -3,6 +3,7 @@ import { App, Button, Card, Empty, Input, InputNumber, Popconfirm, Select, Space
 import { ApartmentOutlined, CloseOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import apiClient from '../api/client';
 import { useAuthStore } from '../store/auth';
+import { expandDepartment, reconcileExpandedDepartmentIds } from '../utils/organization';
 
 interface DepartmentNode {
   id: string;
@@ -58,6 +59,7 @@ export default function OrganizationManagement() {
   const canManage = can('organization', 'create') || can('organization', 'update') || can('organization', 'delete');
   const canReadOrganization = can('organization', 'read');
   const [departments, setDepartments] = useState<DepartmentNode[]>([]);
+  const [expandedDeptIds, setExpandedDeptIds] = useState<string[] | null>(null);
   const [users, setUsers] = useState<UserOption[]>([]);
   const [selectedDeptId, setSelectedDeptId] = useState<string | null>(null);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
@@ -77,6 +79,7 @@ export default function OrganizationManagement() {
       ]);
       const nextDepartments = deptRes.data || [];
       setDepartments(nextDepartments);
+      setExpandedDeptIds((current) => reconcileExpandedDepartmentIds(nextDepartments, current));
       setUsers(userRes.data?.items || userRes.data?.users || []);
       const flat = flattenDepartments(nextDepartments);
       const nextSelectedId = preferredDeptId && flat.some((item) => item.id === preferredDeptId)
@@ -144,6 +147,7 @@ export default function OrganizationManagement() {
         sortOrder: 0,
       });
       message.success(successText || (parentId ? '子部门已创建' : '部门已创建'));
+      setExpandedDeptIds((current) => expandDepartment(current, parentId));
       setSelectedDeptId(res.data.id);
       await fetchOrganization(res.data.id);
     } catch (err: any) {
@@ -170,6 +174,7 @@ export default function OrganizationManagement() {
         managerMemberId: deptDraft.managerMemberId || null,
       });
       message.success('部门信息已更新');
+      setExpandedDeptIds((current) => expandDepartment(current, deptDraft.parentId || null));
       await fetchOrganization(selectedDeptId);
     } catch (err: any) {
       if (err?.error?.message) message.error(err.error.message);
@@ -264,7 +269,8 @@ export default function OrganizationManagement() {
             ) : (
               <Tree
                 selectedKeys={selectedDeptId ? [selectedDeptId] : []}
-                defaultExpandAll
+                expandedKeys={expandedDeptIds || []}
+                onExpand={(keys) => setExpandedDeptIds(keys.map(String))}
                 treeData={toTreeData(departments)}
                 onSelect={handleSelectDepartment}
               />
@@ -356,12 +362,12 @@ export default function OrganizationManagement() {
                     {can('organization', 'delete') && (
                       <Popconfirm
                         title="删除该部门？"
-                        description="仅无子部门、无成员且无历史业务引用的部门可以归档。"
+                        description="删除后不可恢复。仅无子部门、无成员且未被业务数据引用的非根部门可以删除。"
                         okText="确认"
                         cancelText="取消"
                         onConfirm={handleDeleteDepartment}
                       >
-                        <Button danger icon={<DeleteOutlined />} loading={saving}>归档部门</Button>
+                        <Button danger icon={<DeleteOutlined />} loading={saving}>删除部门</Button>
                       </Popconfirm>
                     )}
                   </Space>

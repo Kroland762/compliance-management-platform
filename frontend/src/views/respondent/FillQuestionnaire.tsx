@@ -103,8 +103,6 @@ export default function FillQuestionnaire() {
     { title: '序号', dataIndex: 'sequenceNumber', width: 120, fixed: 'left' as const },
     { title: '控制域名', dataIndex: 'controlDomain', width: 140 },
     { title: '控制点', dataIndex: 'controlPoint', width: 180 },
-    { title: '参考回答', dataIndex: 'referenceAnswer', width: 180,
-      render: (v: string) => v ? <Text style={{ fontSize: 12, color: '#8E8E93' }}>{v}</Text> : <Text type="secondary">—</Text> },
     { title: '历史证据', dataIndex: 'historicalEvidence', width: 150,
       render: (evidence: PreviewableEvidenceFile | null) => evidence ? (
         <Button size="small" type="link" icon={<HistoryOutlined />} onClick={() => setPreviewFile(evidence)}>预览</Button>

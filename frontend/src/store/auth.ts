@@ -19,6 +19,7 @@ export interface AuthUser {
   permissions: Record<string, string[]>;
   permissionScopes: Record<string, Record<string, string>>;
   primaryDepartmentId?: string;
+  primaryDepartmentName?: string;
   departmentIds: string[];
   mustChangePassword: boolean;
   isGlobalAdmin: boolean;

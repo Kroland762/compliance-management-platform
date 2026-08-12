@@ -12,3 +12,7 @@ coverage/
 *.debug
 audit-api.js.bak
 *.tar.gz
+.codex-doc-work/
+*.dump
+*.backup
+backend/backups/

@@ -80,7 +80,7 @@ router.delete('/:id', authorize('account_tasks', 'delete'), async (req: Request,
  * POST /api/account/tasks/:id/execute
  * 执行任务 - ADMIN & AUDITOR
  */
-router.post('/:id/execute', async (req: Request, res: Response) => {
+router.post('/:id/execute', authorize('account_tasks', 'execute'), async (req: Request, res: Response) => {
   try {
     const result = await auditTaskService.executeTask(req.params.id, req.user!.userId);
     res.json({ success: true, data: result });

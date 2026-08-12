@@ -4,6 +4,8 @@ import taskService from '../services/task.service';
 import taskLifecycleService from '../services/task-lifecycle.service';
 import objectAccessService from '../services/object-access.service';
 import { AppError } from '../utils/http';
+import assessmentAuditorService from '../services/assessment-auditor.service';
+import evaluationService from '../services/evaluation.service';
 
 const router = Router();
 router.use(authenticate);
@@ -51,6 +53,15 @@ router.get('/:id/questions', authorize('tasks', 'read'), async (req: Request, re
   }
 });
 
+router.post('/:id/evaluations/bulk-submit', authorize('evaluations', 'submit'), async (req: Request, res: Response) => {
+  try {
+    const data = await evaluationService.bulkSubmit(req.params.id, req.body.items || [], req.user!);
+    res.json({ success: true, data });
+  } catch (error: any) {
+    sendError(res, error, 400, 'BULK_SUBMIT_FAILED');
+  }
+});
+
 router.get('/:id', authorize('tasks', 'read'), async (req: Request, res: Response) => {
   try {
     await objectAccessService.taskOrNotFound(req.params.id, req.user!);
@@ -58,6 +69,25 @@ router.get('/:id', authorize('tasks', 'read'), async (req: Request, res: Respons
     res.json({ success: true, data: task });
   } catch (error: any) {
     sendError(res, error, 404, 'NOT_FOUND');
+  }
+});
+
+router.put('/:id/column-schema/sync', authorize('tasks', 'update'), async (req: Request, res: Response) => {
+  try {
+    await objectAccessService.taskOrNotFound(req.params.id, req.user!, 'update');
+    const result = await taskService.syncColumnSchema(req.params.id, req.user!.userId);
+    res.json({ success: true, data: result });
+  } catch (error: any) {
+    sendError(res, error, 409, 'COLUMN_SCHEMA_SYNC_FAILED');
+  }
+});
+
+router.put('/:id/auditors', authorize('tasks', 'update'), async (req: Request, res: Response) => {
+  try {
+    const items = await assessmentAuditorService.replace(req.params.id, req.body.auditorUserIds || [], req.user!);
+    res.json({ success: true, data: { items } });
+  } catch (error: any) {
+    sendError(res, error, 400, 'AUDITOR_ASSIGNMENT_FAILED');
   }
 });
 
@@ -88,6 +118,16 @@ router.post('/:id/complete-review', authorize('tasks', 'update'), async (req: Re
     res.json({ success: true, data: task });
   } catch (error: any) {
     sendError(res, error, 400, 'COMPLETE_FAILED');
+  }
+});
+
+router.post('/:id/close', authorize('tasks', 'update'), async (req: Request, res: Response) => {
+  try {
+    await objectAccessService.taskOrNotFound(req.params.id, req.user!, 'update');
+    const task = await taskLifecycleService.closeAssessment(req.params.id, req.user!.userId);
+    res.json({ success: true, data: task });
+  } catch (error: any) {
+    sendError(res, error, 409, 'ASSESSMENT_CLOSE_BLOCKED');
   }
 });
 

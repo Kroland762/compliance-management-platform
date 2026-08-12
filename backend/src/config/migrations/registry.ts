@@ -30,6 +30,12 @@ import {
   Asset,
   AssessmentAsset,
   AssessmentControlAsset,
+  AssessmentAuditor,
+  EvaluationAsset,
+  EvaluationHistoryLink,
+  Finding,
+  FindingActionLink,
+  RiskFindingLink,
   RiskSource,
   RiskAffectedAsset,
   RemediationAction,
@@ -37,6 +43,20 @@ import {
   AssessmentPlan,
   AssessmentPlanExecution,
   IdempotencyRecord,
+  ProductType,
+  Product,
+  ProductVersion,
+  ProductComplianceDossier,
+  ProductQuestionnaireTemplate,
+  ProductQuestion,
+  ProductTypeQuestionnaireRule,
+  ProductDossierQuestionnaire,
+  ProductDossierAnswer,
+  ProductPlatformPermission,
+  ProductDataItem,
+  ProductProcessingActivity,
+  ProductPermissionDataItem,
+  ProductProcessingDataItem,
 } from '../../models';
 import {
   AccountAuditTask,
@@ -67,10 +87,16 @@ const tenantModels = [
   QuestionItem,
   AssessmentAsset,
   AssessmentControlAsset,
+  AssessmentAuditor,
+  EvaluationAsset,
+  EvaluationHistoryLink,
+  Finding,
   RiskRecord,
+  RemediationAction,
+  FindingActionLink,
+  RiskFindingLink,
   RiskSource,
   RiskAffectedAsset,
-  RemediationAction,
   RiskActionLink,
   EvidenceFile,
   AssessmentPlan,
@@ -90,6 +116,20 @@ const tenantModels = [
   AccountAuditTask,
   ProblemAccount,
   TaskExecution,
+  ProductType,
+  Product,
+  ProductVersion,
+  ProductComplianceDossier,
+  ProductQuestionnaireTemplate,
+  ProductQuestion,
+  ProductTypeQuestionnaireRule,
+  ProductDossierQuestionnaire,
+  ProductDossierAnswer,
+  ProductPlatformPermission,
+  ProductDataItem,
+  ProductProcessingActivity,
+  ProductPermissionDataItem,
+  ProductProcessingDataItem,
 ];
 
 const migrations: Migration[] = [
@@ -1021,6 +1061,683 @@ const migrations: Migration[] = [
         DROP COLUMN IF EXISTS "isLocked",
         DROP COLUMN IF EXISTS "scanStatus",
         DROP COLUMN IF EXISTS version`, { transaction });
+    },
+  },
+  {
+    id: '011_control_system_role_least_privilege',
+    scope: 'control',
+    description: 'Remove tenant governance policy access from non-admin system role templates',
+    checksumSource: 'control:v1:auditor-minus-organization-settings:member-minus-settings',
+    up: async (_schemaName, transaction) => {
+      await sequelize.query(`UPDATE public.role_templates
+        SET permissions = permissions - 'organization' - 'settings',
+            "permissionScopes" = "permissionScopes" - 'organization' - 'settings'
+        WHERE "systemKey" = 'auditor'`, { transaction });
+      await sequelize.query(`UPDATE public.role_templates
+        SET permissions = permissions - 'settings',
+            "permissionScopes" = "permissionScopes" - 'settings'
+        WHERE "systemKey" = 'member'`, { transaction });
+    },
+    down: async (_schemaName, transaction) => {
+      await sequelize.query(`UPDATE public.role_templates
+        SET permissions = permissions || '{"organization":["read"],"settings":["read"]}'::jsonb,
+            "permissionScopes" = "permissionScopes" || '{"organization":{"read":"assigned"},"settings":{"read":"assigned"}}'::jsonb
+        WHERE "systemKey" = 'auditor'`, { transaction });
+      await sequelize.query(`UPDATE public.role_templates
+        SET permissions = permissions || '{"settings":["read"]}'::jsonb,
+            "permissionScopes" = "permissionScopes" || '{"settings":{"read":"assigned"}}'::jsonb
+        WHERE "systemKey" = 'member'`, { transaction });
+    },
+  },
+  {
+    id: '011_tenant_system_role_least_privilege',
+    scope: 'tenant',
+    description: 'Remove tenant governance policy access from existing non-admin system roles',
+    checksumSource: 'tenant:v1:auditor-minus-organization-settings:member-minus-settings',
+    up: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      await sequelize.query(`UPDATE ${quoted}.roles
+        SET permissions = permissions - 'organization' - 'settings',
+            "permissionScopes" = "permissionScopes" - 'organization' - 'settings'
+        WHERE "systemKey" = 'auditor'`, { transaction });
+      await sequelize.query(`UPDATE ${quoted}.roles
+        SET permissions = permissions - 'settings',
+            "permissionScopes" = "permissionScopes" - 'settings'
+        WHERE "systemKey" = 'member'`, { transaction });
+    },
+    down: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      await sequelize.query(`UPDATE ${quoted}.roles
+        SET permissions = permissions || '{"organization":["read"],"settings":["read"]}'::jsonb,
+            "permissionScopes" = "permissionScopes" || '{"organization":{"read":"assigned"},"settings":{"read":"assigned"}}'::jsonb
+        WHERE "systemKey" = 'auditor'`, { transaction });
+      await sequelize.query(`UPDATE ${quoted}.roles
+        SET permissions = permissions || '{"settings":["read"]}'::jsonb,
+            "permissionScopes" = "permissionScopes" || '{"settings":{"read":"assigned"}}'::jsonb
+        WHERE "systemKey" = 'member'`, { transaction });
+    },
+  },
+  {
+    id: '012_control_compliance_assessment_workflow',
+    scope: 'control',
+    description: 'Align built-in role templates with the compliance assessment workflow',
+    checksumSource: 'control:v1:assessment-auditor-pool-findings-no-auditor-baseline-ledgers',
+    up: async (_schemaName, transaction) => {
+      await sequelize.query(`UPDATE public.role_templates
+        SET permissions = permissions || '{
+          "evaluations":["read","answer","submit","claim","review"],
+          "findings":["read","triage","remediate","escalate","verify","close"]
+        }'::jsonb,
+        "permissionScopes" = "permissionScopes" || '{
+          "evaluations":{"read":"all","answer":"all","submit":"all","claim":"all","review":"all"},
+          "findings":{"read":"all","triage":"all","remediate":"all","escalate":"all","verify":"all","close":"all"}
+        }'::jsonb
+        WHERE "systemKey" = 'tenant_admin'`, { transaction });
+      await sequelize.query(`UPDATE public.role_templates
+        SET permissions = (permissions - 'templates' - 'assets' - 'qualifications' - 'assessment_plans') || '{
+          "tasks":["read"],
+          "evaluations":["read","claim","review"],
+          "findings":["read","triage","remediate","escalate","verify","close"],
+          "remediation_actions":["read","verify"]
+        }'::jsonb,
+        "permissionScopes" = ("permissionScopes" - 'templates' - 'assets' - 'qualifications' - 'assessment_plans') || '{
+          "tasks":{"read":"assigned"},
+          "evaluations":{"read":"assigned","claim":"assigned","review":"assigned"},
+          "findings":{"read":"assigned","triage":"assigned","remediate":"assigned","escalate":"assigned","verify":"assigned","close":"assigned"},
+          "remediation_actions":{"read":"assigned","verify":"assigned"}
+        }'::jsonb
+        WHERE "systemKey" = 'auditor'`, { transaction });
+      await sequelize.query(`UPDATE public.role_templates
+        SET permissions = (permissions - 'assets') || '{"tasks":["read"],"findings":["read"]}'::jsonb,
+            "permissionScopes" = ("permissionScopes" - 'assets') || '{"tasks":{"read":"assigned"},"findings":{"read":"assigned"}}'::jsonb
+        WHERE "systemKey" = 'member'`, { transaction });
+    },
+    down: async (_schemaName, transaction) => {
+      await sequelize.query(`UPDATE public.role_templates
+        SET permissions = permissions - 'findings',
+            "permissionScopes" = "permissionScopes" - 'findings'
+        WHERE "systemKey" IN ('tenant_admin','auditor','member')`, { transaction });
+    },
+  },
+  {
+    id: '012_tenant_compliance_assessment_workflow',
+    scope: 'tenant',
+    description: 'Create assessment auditor pools, review claims and finding relationships',
+    checksumSource: 'tenant:v2:assessment-auditors-review-claims-findings-actions-risks-workflow-status-role-policy-department-snapshot',
+    up: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      await sequelize.query(`CREATE SEQUENCE IF NOT EXISTS ${quoted}.finding_code_seq`, { transaction });
+      await sequelize.query(`ALTER TABLE ${quoted}.assessment_assets
+        ADD COLUMN IF NOT EXISTS "ownerDepartmentNameSnapshot" varchar(100)`, { transaction });
+      await sequelize.query(`CREATE TABLE IF NOT EXISTS ${quoted}.assessment_auditors (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "taskId" uuid NOT NULL REFERENCES ${quoted}.audit_tasks(id) ON DELETE CASCADE,
+        "auditorUserId" uuid NOT NULL,
+        "assignedBy" uuid NOT NULL,
+        "assignedAt" timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT assessment_auditors_task_user_unique UNIQUE ("taskId", "auditorUserId")
+      )`, { transaction });
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS assessment_auditors_user_task_idx
+        ON ${quoted}.assessment_auditors ("auditorUserId", "taskId")`, { transaction });
+      await sequelize.query(`ALTER TABLE ${quoted}.question_items
+        ADD COLUMN IF NOT EXISTS "reviewClaimedBy" uuid,
+        ADD COLUMN IF NOT EXISTS "reviewClaimedAt" timestamptz`, { transaction });
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS question_items_review_claim_idx
+        ON ${quoted}.question_items ("reviewClaimedBy", "workflowStatus")`, { transaction });
+      await sequelize.query(`CREATE TABLE IF NOT EXISTS ${quoted}.findings (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        code varchar(32) NOT NULL UNIQUE,
+        "taskId" uuid NOT NULL REFERENCES ${quoted}.audit_tasks(id) ON DELETE RESTRICT,
+        "evaluationId" uuid NOT NULL UNIQUE REFERENCES ${quoted}.question_items(id) ON DELETE RESTRICT,
+        title varchar(200) NOT NULL,
+        description text NOT NULL,
+        severity varchar(20) NOT NULL,
+        status varchar(24) NOT NULL DEFAULT 'open',
+        disposition varchar(24) NOT NULL DEFAULT 'pending',
+        "ownerDepartmentId" uuid NOT NULL,
+        "ownerUserId" uuid NOT NULL,
+        "dueDate" date,
+        "createdBy" uuid NOT NULL,
+        "resolvedBy" uuid,
+        "resolvedAt" timestamptz,
+        "resolutionComment" text,
+        "lockVersion" integer NOT NULL DEFAULT 0,
+        "createdAt" timestamptz NOT NULL DEFAULT now(),
+        "updatedAt" timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT findings_severity_check CHECK (severity IN ('critical','high','medium','low')),
+        CONSTRAINT findings_status_check CHECK (status IN ('open','remediating','escalated','resolved','cancelled')),
+        CONSTRAINT findings_disposition_check CHECK (disposition IN ('pending','direct_remediation','risk'))
+      )`, { transaction });
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS findings_task_status_idx ON ${quoted}.findings ("taskId", status)`, { transaction });
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS findings_owner_status_idx ON ${quoted}.findings ("ownerUserId", status)`, { transaction });
+      await sequelize.query(`CREATE TABLE IF NOT EXISTS ${quoted}.finding_action_links (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "findingId" uuid NOT NULL REFERENCES ${quoted}.findings(id) ON DELETE RESTRICT,
+        "actionId" uuid NOT NULL REFERENCES ${quoted}.remediation_actions(id) ON DELETE RESTRICT,
+        "isRequired" boolean NOT NULL DEFAULT true,
+        "contributionDescription" text NOT NULL,
+        "verificationStatus" varchar(20) NOT NULL DEFAULT 'pending',
+        "verifiedBy" uuid,
+        "verifiedAt" timestamptz,
+        "reviewComment" text,
+        "createdAt" timestamptz NOT NULL DEFAULT now(),
+        "updatedAt" timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT finding_action_unique UNIQUE ("findingId", "actionId")
+      )`, { transaction });
+      await sequelize.query(`CREATE TABLE IF NOT EXISTS ${quoted}.risk_finding_links (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "riskId" uuid NOT NULL REFERENCES ${quoted}.risk_records(id) ON DELETE RESTRICT,
+        "findingId" uuid NOT NULL REFERENCES ${quoted}.findings(id) ON DELETE RESTRICT,
+        "relationType" varchar(16) NOT NULL DEFAULT 'primary',
+        rationale text,
+        "createdBy" uuid NOT NULL,
+        "createdAt" timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT risk_finding_unique UNIQUE ("riskId", "findingId")
+      )`, { transaction });
+      await sequelize.query(`INSERT INTO ${quoted}.assessment_auditors ("taskId", "auditorUserId", "assignedBy")
+        SELECT id, "reviewerId", "createdBy" FROM ${quoted}.audit_tasks
+        WHERE "reviewerId" IS NOT NULL
+        ON CONFLICT ("taskId", "auditorUserId") DO NOTHING`, { transaction });
+      await sequelize.query(`UPDATE ${quoted}.audit_tasks SET status = 'review_completed' WHERE status = 'completed'`, { transaction });
+      await sequelize.query(`INSERT INTO ${quoted}.findings
+          (code, "taskId", "evaluationId", title, description, severity, status, disposition,
+           "ownerDepartmentId", "ownerUserId", "createdBy")
+        SELECT 'FND-' || to_char(CURRENT_DATE, 'YYYYMM') || '-' || lpad(nextval('${schemaName.replace(/'/g, "''")}.finding_code_seq')::text, 6, '0'),
+               item."taskId", item.id, left(item."controlPoint", 200),
+               '由历史风险来源迁移生成', 'medium', 'escalated', 'risk',
+               item."responsibleDepartmentId", item."assignedTo", source."createdBy"
+        FROM ${quoted}.risk_sources source
+        JOIN ${quoted}.question_items item ON item.id = source."controlEvaluationId"
+        WHERE item."assignedTo" IS NOT NULL
+        ON CONFLICT ("evaluationId") DO NOTHING`, { transaction });
+      await sequelize.query(`INSERT INTO ${quoted}.risk_finding_links
+          ("riskId", "findingId", "relationType", rationale, "createdBy")
+        SELECT source."riskId", finding.id, source."relationType", source.rationale, source."createdBy"
+        FROM ${quoted}.risk_sources source
+        JOIN ${quoted}.findings finding ON finding."evaluationId" = source."controlEvaluationId"
+        ON CONFLICT ("riskId", "findingId") DO NOTHING`, { transaction });
+      await sequelize.query(`UPDATE ${quoted}.roles
+        SET permissions = permissions || '{
+          "evaluations":["read","answer","submit","claim","review"],
+          "findings":["read","triage","remediate","escalate","verify","close"]
+        }'::jsonb,
+        "permissionScopes" = "permissionScopes" || '{
+          "evaluations":{"read":"all","answer":"all","submit":"all","claim":"all","review":"all"},
+          "findings":{"read":"all","triage":"all","remediate":"all","escalate":"all","verify":"all","close":"all"}
+        }'::jsonb WHERE "systemKey" = 'tenant_admin'`, { transaction });
+      await sequelize.query(`UPDATE ${quoted}.roles
+        SET permissions = (permissions - 'templates' - 'assets' - 'qualifications' - 'assessment_plans') || '{
+          "tasks":["read"],"evaluations":["read","claim","review"],
+          "findings":["read","triage","remediate","escalate","verify","close"],
+          "remediation_actions":["read","verify"]
+        }'::jsonb,
+        "permissionScopes" = ("permissionScopes" - 'templates' - 'assets' - 'qualifications' - 'assessment_plans') || '{
+          "tasks":{"read":"assigned"},
+          "evaluations":{"read":"assigned","claim":"assigned","review":"assigned"},
+          "findings":{"read":"assigned","triage":"assigned","remediate":"assigned","escalate":"assigned","verify":"assigned","close":"assigned"},
+          "remediation_actions":{"read":"assigned","verify":"assigned"}
+        }'::jsonb WHERE "systemKey" = 'auditor'`, { transaction });
+      await sequelize.query(`UPDATE ${quoted}.roles
+        SET permissions = (permissions - 'assets') || '{"tasks":["read"],"findings":["read"]}'::jsonb,
+            "permissionScopes" = ("permissionScopes" - 'assets') || '{"tasks":{"read":"assigned"},"findings":{"read":"assigned"}}'::jsonb
+        WHERE "systemKey" = 'member'`, { transaction });
+    },
+    down: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      const protectedRows = await sequelize.query<{ count: number }>(`
+        SELECT (SELECT count(*) FROM ${quoted}.findings)
+             + (SELECT count(*) FROM ${quoted}.finding_action_links)
+             + (SELECT count(*) FROM ${quoted}.risk_finding_links) AS count
+      `, { type: QueryTypes.SELECT, transaction });
+      if (Number(protectedRows[0]?.count || 0) > 0) {
+        throw new Error('已产生不符合项或其处置关系，不能安全回滚合规评估迁移');
+      }
+      await sequelize.query(`DROP TABLE IF EXISTS ${quoted}.risk_finding_links`, { transaction });
+      await sequelize.query(`DROP TABLE IF EXISTS ${quoted}.finding_action_links`, { transaction });
+      await sequelize.query(`DROP TABLE IF EXISTS ${quoted}.findings`, { transaction });
+      await sequelize.query(`DROP TABLE IF EXISTS ${quoted}.assessment_auditors`, { transaction });
+      await sequelize.query(`ALTER TABLE ${quoted}.question_items
+        DROP COLUMN IF EXISTS "reviewClaimedAt", DROP COLUMN IF EXISTS "reviewClaimedBy"`, { transaction });
+      await sequelize.query(`ALTER TABLE ${quoted}.assessment_assets
+        DROP COLUMN IF EXISTS "ownerDepartmentNameSnapshot"`, { transaction });
+      await sequelize.query(`DROP SEQUENCE IF EXISTS ${quoted}.finding_code_seq`, { transaction });
+      await sequelize.query(`UPDATE ${quoted}.audit_tasks SET status = 'completed' WHERE status = 'review_completed'`, { transaction });
+    },
+  },
+  {
+    id: '013_control_system_settings',
+    scope: 'control',
+    description: 'Create the global security settings table used before tenant selection',
+    checksumSource: 'control:v1:public-system-settings-login-safe',
+    up: async (_schemaName, transaction) => {
+      await sequelize.query(`CREATE TABLE IF NOT EXISTS public.system_settings (
+        key varchar(100) PRIMARY KEY,
+        value text NOT NULL,
+        "updatedBy" uuid,
+        "updatedAt" timestamptz NOT NULL DEFAULT now()
+      )`, { transaction });
+    },
+    down: async (_schemaName, transaction) => {
+      const rows = await sequelize.query<{ count: number }>(
+        'SELECT count(*) AS count FROM public.system_settings',
+        { type: QueryTypes.SELECT, transaction },
+      );
+      if (Number(rows[0]?.count || 0) > 0) {
+        throw new Error('全局安全设置已产生数据，不能安全回滚');
+      }
+      await sequelize.query('DROP TABLE IF EXISTS public.system_settings', { transaction });
+    },
+  },
+  {
+    id: '014_tenant_remove_org_governance_asset',
+    scope: 'tenant',
+    description: 'Remove the legacy ORG-GOVERNANCE placeholder asset when it has no business references',
+    checksumSource: 'tenant:v1:remove-unreferenced-org-governance-placeholder',
+    up: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      const assets = await sequelize.query<{ id: string }>(`
+        SELECT id FROM ${quoted}.assets WHERE code = 'ORG-GOVERNANCE'
+      `, { type: QueryTypes.SELECT, transaction });
+      const assetId = assets[0]?.id;
+      if (!assetId) return;
+
+      const references = await sequelize.query<{ count: number }>(`
+        SELECT
+          (SELECT count(*) FROM ${quoted}.assessment_assets WHERE "assetId" = :assetId)
+          + (SELECT count(*) FROM ${quoted}.assessment_control_assets WHERE "assetId" = :assetId)
+          + (SELECT count(*) FROM ${quoted}.question_items WHERE "assetId" = :assetId)
+          + (SELECT count(*) FROM ${quoted}.risk_affected_assets WHERE "assetId" = :assetId)
+          + (SELECT count(*) FROM ${quoted}.assessment_plans
+             WHERE "scopeSnapshot"::text LIKE '%' || :assetId || '%'
+                OR "matrixSnapshot"::text LIKE '%' || :assetId || '%') AS count
+      `, { replacements: { assetId }, type: QueryTypes.SELECT, transaction });
+      if (Number(references[0]?.count || 0) > 0) {
+        throw new Error('ORG-GOVERNANCE 仍被历史评估、风险或周期计划引用，不能安全删除');
+      }
+      await sequelize.query(`DELETE FROM ${quoted}.assets WHERE id = :assetId`, {
+        replacements: { assetId },
+        transaction,
+      });
+    },
+    down: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      await sequelize.query(`INSERT INTO ${quoted}.assets
+        (id, code, name, "assetType", criticality, description, metadata, status, "createdAt", "updatedAt")
+        VALUES (gen_random_uuid(), 'ORG-GOVERNANCE', '组织级治理', 'organization', 'high',
+          '历史系统逻辑资产', '{}'::jsonb, 'active', now(), now())
+        ON CONFLICT (code) DO NOTHING`, { transaction });
+    },
+  },
+  {
+    id: '015_tenant_assessment_sheet',
+    scope: 'tenant',
+    description: 'Add configurable assessment columns, multi-asset evaluation rows and historical references',
+    checksumSource: 'tenant:v1:template-column-schema:stable-control-key:multi-asset-evaluation:history-links:legacy-backfill',
+    up: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      const q = (sql: string) => sequelize.query(sql, { transaction });
+      await q(`ALTER TABLE ${quoted}.questionnaire_templates
+        ADD COLUMN IF NOT EXISTS "standardSeriesKey" varchar(120),
+        ADD COLUMN IF NOT EXISTS version varchar(50) NOT NULL DEFAULT '1.0',
+        ADD COLUMN IF NOT EXISTS "columnSchema" jsonb NOT NULL DEFAULT '[]'::jsonb`);
+      await q(`UPDATE ${quoted}.questionnaire_templates SET "standardSeriesKey" = 'legacy-' || id::text
+        WHERE "standardSeriesKey" IS NULL OR btrim("standardSeriesKey") = ''`);
+      await q(`ALTER TABLE ${quoted}.questionnaire_templates ALTER COLUMN "standardSeriesKey" SET NOT NULL`);
+      await q(`ALTER TABLE ${quoted}.question_templates ADD COLUMN IF NOT EXISTS "controlKey" varchar(120)`);
+      await q(`UPDATE ${quoted}.question_templates SET "controlKey" = "sequenceNumber"
+        WHERE "controlKey" IS NULL OR btrim("controlKey") = ''`);
+      await q(`CREATE UNIQUE INDEX IF NOT EXISTS question_templates_template_control_key_unique
+        ON ${quoted}.question_templates ("templateId", "controlKey")`);
+      await q(`UPDATE ${quoted}.questionnaire_templates template SET "columnSchema" = (
+        SELECT jsonb_agg(definition ORDER BY position) FROM (
+          SELECT 0 AS position, jsonb_build_object('key','sequenceNumber','label','序号','source','core','visible',true,'width',100) AS definition
+          UNION ALL SELECT 1, jsonb_build_object('key','controlDomain','label','控制域名','source','core','visible',true,'width',160)
+          UNION ALL SELECT 2, jsonb_build_object('key','controlPoint','label','控制点','source','core','visible',true,'width',320)
+          UNION ALL SELECT 3, jsonb_build_object('key','referenceAnswer','label','参考回答','source','core','visible',true,'width',240)
+          UNION ALL SELECT 100 + row_number() OVER (ORDER BY extra_key),
+            jsonb_build_object('key','extraData.' || extra_key,'label',extra_key,'source','extra','visible',true,'width',180)
+          FROM (SELECT DISTINCT jsonb_object_keys(COALESCE(question."extraData", '{}'::jsonb)) AS extra_key
+            FROM ${quoted}.question_templates question WHERE question."templateId" = template.id) extras
+        ) columns
+      ) WHERE "columnSchema" = '[]'::jsonb`);
+      await q(`ALTER TABLE ${quoted}.audit_tasks
+        ADD COLUMN IF NOT EXISTS "columnSchemaSnapshot" jsonb NOT NULL DEFAULT '[]'::jsonb`);
+      await q(`UPDATE ${quoted}.audit_tasks task SET "columnSchemaSnapshot" = template."columnSchema"
+        FROM ${quoted}.questionnaire_templates template
+        WHERE task."templateId" = template.id AND task."columnSchemaSnapshot" = '[]'::jsonb`);
+      await q(`ALTER TABLE ${quoted}.question_items
+        ADD COLUMN IF NOT EXISTS "controlKey" varchar(120),
+        ADD COLUMN IF NOT EXISTS "templateDataSnapshot" jsonb NOT NULL DEFAULT '{}'::jsonb,
+        ALTER COLUMN "assetId" DROP NOT NULL`);
+      await q(`UPDATE ${quoted}.question_items item SET
+          "controlKey" = COALESCE(question."controlKey", question."sequenceNumber"),
+          "templateDataSnapshot" = jsonb_build_object(
+            'sequenceNumber', question."sequenceNumber", 'controlDomain', question."controlDomain",
+            'controlPoint', question."controlPoint", 'referenceAnswer', question."referenceAnswer",
+            'extraData', COALESCE(question."extraData", '{}'::jsonb))
+        FROM ${quoted}.question_templates question WHERE item."templateQuestionId" = question.id
+          AND (item."controlKey" IS NULL OR item."templateDataSnapshot" = '{}'::jsonb)`);
+      await q(`DROP INDEX IF EXISTS ${quoted}.question_items_task_id_template_question_id_asset_id`);
+      await q(`DROP INDEX IF EXISTS ${quoted}.control_evaluation_task_control_asset_unique`);
+      await q(`CREATE TABLE IF NOT EXISTS ${quoted}.evaluation_assets (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "questionItemId" uuid NOT NULL REFERENCES ${quoted}.question_items(id) ON DELETE CASCADE,
+        "taskId" uuid NOT NULL REFERENCES ${quoted}.audit_tasks(id) ON DELETE CASCADE,
+        "templateQuestionId" uuid NOT NULL REFERENCES ${quoted}.question_templates(id) ON DELETE RESTRICT,
+        "assetId" uuid NOT NULL REFERENCES ${quoted}.assets(id) ON DELETE RESTRICT,
+        "createdAt" timestamptz NOT NULL DEFAULT now())`);
+      await q(`CREATE UNIQUE INDEX IF NOT EXISTS evaluation_assets_question_asset_unique
+        ON ${quoted}.evaluation_assets ("questionItemId", "assetId")`);
+      await q(`CREATE UNIQUE INDEX IF NOT EXISTS evaluation_assets_task_control_asset_unique
+        ON ${quoted}.evaluation_assets ("taskId", "templateQuestionId", "assetId")`);
+      await q(`CREATE INDEX IF NOT EXISTS evaluation_assets_asset_idx ON ${quoted}.evaluation_assets ("assetId")`);
+      await q(`INSERT INTO ${quoted}.evaluation_assets ("questionItemId", "taskId", "templateQuestionId", "assetId")
+        SELECT id, "taskId", "templateQuestionId", "assetId" FROM ${quoted}.question_items WHERE "assetId" IS NOT NULL
+        ON CONFLICT ("questionItemId", "assetId") DO NOTHING`);
+      await q(`CREATE TABLE IF NOT EXISTS ${quoted}.evaluation_history_links (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "currentEvaluationId" uuid NOT NULL REFERENCES ${quoted}.question_items(id) ON DELETE CASCADE,
+        "sourceEvaluationId" uuid NOT NULL REFERENCES ${quoted}.question_items(id) ON DELETE RESTRICT,
+        "matchedAssetIds" jsonb NOT NULL DEFAULT '[]'::jsonb,
+        "createdAt" timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT evaluation_history_links_not_self CHECK ("currentEvaluationId" <> "sourceEvaluationId"))`);
+      await q(`CREATE UNIQUE INDEX IF NOT EXISTS evaluation_history_links_current_source_unique
+        ON ${quoted}.evaluation_history_links ("currentEvaluationId", "sourceEvaluationId")`);
+      await q(`CREATE INDEX IF NOT EXISTS evaluation_history_links_source_idx
+        ON ${quoted}.evaluation_history_links ("sourceEvaluationId")`);
+      await q(`INSERT INTO ${quoted}.evaluation_history_links ("currentEvaluationId", "sourceEvaluationId", "matchedAssetIds")
+        SELECT current_item.id, source_item.id, jsonb_agg(DISTINCT current_asset."assetId" ORDER BY current_asset."assetId")
+        FROM ${quoted}.question_items current_item
+        JOIN ${quoted}.audit_tasks current_task ON current_task.id = current_item."taskId"
+        JOIN ${quoted}.questionnaire_templates current_template ON current_template.id = current_task."templateId"
+        JOIN ${quoted}.evaluation_assets current_asset ON current_asset."questionItemId" = current_item.id
+        JOIN ${quoted}.question_items source_item ON source_item."controlKey" = current_item."controlKey"
+          AND source_item.id <> current_item.id AND source_item."workflowStatus" = 'reviewed'
+        JOIN ${quoted}.audit_tasks source_task ON source_task.id = source_item."taskId"
+        JOIN ${quoted}.questionnaire_templates source_template ON source_template.id = source_task."templateId"
+          AND source_template."standardSeriesKey" = current_template."standardSeriesKey"
+        JOIN ${quoted}.evaluation_assets source_asset ON source_asset."questionItemId" = source_item.id
+          AND source_asset."assetId" = current_asset."assetId"
+        WHERE source_task."createdAt" < current_task."createdAt"
+        GROUP BY current_item.id, source_item.id
+        ON CONFLICT ("currentEvaluationId", "sourceEvaluationId") DO NOTHING`);
+    },
+    down: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      const protectedRows = await sequelize.query<{ count: number }>(`
+        SELECT (SELECT count(*) FROM ${quoted}.evaluation_history_links)
+          + (SELECT count(*) FROM (SELECT "questionItemId" FROM ${quoted}.evaluation_assets
+              GROUP BY "questionItemId" HAVING count(*) <> 1) rows) AS count`,
+      { type: QueryTypes.SELECT, transaction });
+      if (Number(protectedRows[0]?.count || 0) > 0) {
+        throw new Error('已产生历史引用或多资产评估行，不能安全回滚表格式评估迁移');
+      }
+      await sequelize.query(`UPDATE ${quoted}.question_items item SET "assetId" = link."assetId"
+        FROM ${quoted}.evaluation_assets link WHERE link."questionItemId" = item.id`, { transaction });
+      await sequelize.query(`DROP TABLE IF EXISTS ${quoted}.evaluation_history_links`, { transaction });
+      await sequelize.query(`DROP TABLE IF EXISTS ${quoted}.evaluation_assets`, { transaction });
+      await sequelize.query(`ALTER TABLE ${quoted}.question_items ALTER COLUMN "assetId" SET NOT NULL,
+        DROP COLUMN IF EXISTS "controlKey", DROP COLUMN IF EXISTS "templateDataSnapshot"`, { transaction });
+      await sequelize.query(`ALTER TABLE ${quoted}.audit_tasks DROP COLUMN IF EXISTS "columnSchemaSnapshot"`, { transaction });
+      await sequelize.query(`DROP INDEX IF EXISTS ${quoted}.question_templates_template_control_key_unique`, { transaction });
+      await sequelize.query(`ALTER TABLE ${quoted}.question_templates DROP COLUMN IF EXISTS "controlKey"`, { transaction });
+      await sequelize.query(`ALTER TABLE ${quoted}.questionnaire_templates DROP COLUMN IF EXISTS "standardSeriesKey",
+        DROP COLUMN IF EXISTS version, DROP COLUMN IF EXISTS "columnSchema"`, { transaction });
+    },
+  },
+  {
+    id: '016_control_auth_sessions',
+    scope: 'control',
+    description: 'Create revocable rotating authentication sessions',
+    checksumSource: 'control:v1:auth-sessions-refresh-hash-expiry-revocation-indexes-guarded-rollback',
+    up: async (_schemaName, transaction) => {
+      await sequelize.query(`CREATE TABLE IF NOT EXISTS public.auth_sessions (
+        id uuid PRIMARY KEY,
+        "userId" uuid NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+        "refreshTokenHash" char(64) NOT NULL UNIQUE,
+        "expiresAt" timestamptz NOT NULL,
+        "revokedAt" timestamptz,
+        "createdAt" timestamptz NOT NULL DEFAULT now(),
+        "updatedAt" timestamptz NOT NULL DEFAULT now()
+      )`, { transaction });
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS auth_sessions_user_active_idx
+        ON public.auth_sessions ("userId", "expiresAt") WHERE "revokedAt" IS NULL`, { transaction });
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS auth_sessions_expiry_idx
+        ON public.auth_sessions ("expiresAt")`, { transaction });
+    },
+    down: async (_schemaName, transaction) => {
+      const active = await sequelize.query<{ count: number }>(`
+        SELECT count(*)::int AS count FROM public.auth_sessions
+        WHERE "revokedAt" IS NULL AND "expiresAt" > now()
+      `, { type: QueryTypes.SELECT, transaction });
+      if (Number(active[0]?.count || 0) > 0) {
+        throw new Error('存在未过期的登录会话，不能安全回滚认证会话迁移');
+      }
+      await sequelize.query('DROP TABLE IF EXISTS public.auth_sessions', { transaction });
+    },
+  },
+  {
+    id: '017_tenant_assessment_statuses',
+    scope: 'tenant',
+    description: 'Collapse legacy assessment project statuses into the canonical lifecycle',
+    checksumSource: 'tenant:v1:assessment-statuses:preparing-ready-in-progress-pending-review-pending-closure-closed-cancelled-check',
+    up: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      await sequelize.query(`ALTER TABLE ${quoted}.audit_tasks
+        DROP CONSTRAINT IF EXISTS audit_tasks_status_check`, { transaction });
+      await sequelize.query(`UPDATE ${quoted}.audit_tasks SET status = CASE
+        WHEN status IN ('draft', 'configuring') THEN 'preparing'
+        WHEN status IN ('published', 'assigned') THEN 'ready'
+        WHEN status IN ('in_progress', 'returned') THEN 'in_progress'
+        WHEN status IN ('submitted', 'under_review') THEN 'pending_review'
+        WHEN status IN ('completed', 'review_completed') THEN 'pending_closure'
+        WHEN status IN ('closed', 'cancelled') THEN status
+        ELSE status END`, { transaction });
+      const unsupported = await sequelize.query<{ status: string; count: number }>(`
+        SELECT status, count(*)::int AS count FROM ${quoted}.audit_tasks
+        WHERE status NOT IN ('preparing','ready','in_progress','pending_review','pending_closure','closed','cancelled')
+        GROUP BY status
+      `, { type: QueryTypes.SELECT, transaction });
+      if (unsupported.length > 0) {
+        throw new Error(`存在无法迁移的评估状态: ${unsupported.map((row) => `${row.status}(${row.count})`).join(', ')}`);
+      }
+      await sequelize.query(`ALTER TABLE ${quoted}.audit_tasks
+        ALTER COLUMN status SET DEFAULT 'preparing',
+        ADD CONSTRAINT audit_tasks_status_check CHECK
+          (status IN ('preparing','ready','in_progress','pending_review','pending_closure','closed','cancelled'))`,
+      { transaction });
+    },
+    down: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      await sequelize.query(`ALTER TABLE ${quoted}.audit_tasks
+        DROP CONSTRAINT IF EXISTS audit_tasks_status_check`, { transaction });
+      await sequelize.query(`UPDATE ${quoted}.audit_tasks SET status = CASE
+        WHEN status = 'preparing' THEN 'draft'
+        WHEN status = 'ready' THEN 'published'
+        WHEN status = 'in_progress' THEN 'in_progress'
+        WHEN status = 'pending_review' THEN 'under_review'
+        WHEN status = 'pending_closure' THEN 'review_completed'
+        WHEN status IN ('closed', 'cancelled') THEN status
+        ELSE status END`, { transaction });
+      await sequelize.query(`ALTER TABLE ${quoted}.audit_tasks
+        ALTER COLUMN status SET DEFAULT 'draft'`, { transaction });
+    },
+  },
+  {
+    id: '018_tenant_evaluation_filters',
+    scope: 'tenant',
+    description: 'Add assessment sheet filter indexes and rebuild historical references',
+    checksumSource: 'tenant:v1:evaluation-filters:task-sequence-status:task-asset:template-snapshot-gin:history-link-rebuild',
+    up: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      const q = (sql: string) => sequelize.query(sql, { transaction });
+      await q(`CREATE INDEX IF NOT EXISTS question_items_task_sequence_idx
+        ON ${quoted}.question_items ("taskId", "sequenceNumber", id)`);
+      await q(`CREATE INDEX IF NOT EXISTS question_items_task_status_idx
+        ON ${quoted}.question_items ("taskId", "workflowStatus", "complianceStatus")`);
+      await q(`CREATE INDEX IF NOT EXISTS evaluation_assets_task_asset_idx
+        ON ${quoted}.evaluation_assets ("taskId", "assetId", "questionItemId")`);
+      await q(`CREATE INDEX IF NOT EXISTS question_items_template_snapshot_gin
+        ON ${quoted}.question_items USING gin ("templateDataSnapshot" jsonb_path_ops)`);
+      await q(`DELETE FROM ${quoted}.evaluation_history_links`);
+      await q(`INSERT INTO ${quoted}.evaluation_history_links
+          ("currentEvaluationId", "sourceEvaluationId", "matchedAssetIds")
+        SELECT current_item.id, source_item.id,
+          jsonb_agg(DISTINCT current_asset."assetId" ORDER BY current_asset."assetId")
+        FROM ${quoted}.question_items current_item
+        JOIN ${quoted}.audit_tasks current_task ON current_task.id = current_item."taskId"
+        JOIN ${quoted}.questionnaire_templates current_template ON current_template.id = current_task."templateId"
+        JOIN ${quoted}.evaluation_assets current_asset ON current_asset."questionItemId" = current_item.id
+        JOIN ${quoted}.question_items source_item ON source_item."controlKey" = current_item."controlKey"
+          AND source_item.id <> current_item.id AND source_item."workflowStatus" = 'reviewed'
+        JOIN ${quoted}.audit_tasks source_task ON source_task.id = source_item."taskId"
+        JOIN ${quoted}.questionnaire_templates source_template ON source_template.id = source_task."templateId"
+          AND source_template."standardSeriesKey" = current_template."standardSeriesKey"
+        JOIN ${quoted}.evaluation_assets source_asset ON source_asset."questionItemId" = source_item.id
+          AND source_asset."assetId" = current_asset."assetId"
+        WHERE source_task."createdAt" < current_task."createdAt"
+        GROUP BY current_item.id, source_item.id`);
+    },
+    down: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      await sequelize.query(`DROP INDEX IF EXISTS ${quoted}.question_items_template_snapshot_gin`, { transaction });
+      await sequelize.query(`DROP INDEX IF EXISTS ${quoted}.evaluation_assets_task_asset_idx`, { transaction });
+      await sequelize.query(`DROP INDEX IF EXISTS ${quoted}.question_items_task_status_idx`, { transaction });
+      await sequelize.query(`DROP INDEX IF EXISTS ${quoted}.question_items_task_sequence_idx`, { transaction });
+    },
+  },
+  {
+    id: '019_control_product_compliance_permissions',
+    scope: 'control',
+    description: 'Add product compliance permissions to locked system role templates',
+    checksumSource: 'control:v1:product-compliance-role-template-permissions-scopes',
+    up: async (_schemaName, transaction) => {
+      const permissionPatch: Record<string, Record<string, string[]>> = {
+        tenant_admin: {
+          products: ['create', 'read', 'update', 'archive'],
+          product_dossiers: ['read', 'update', 'submit', 'review', 'confirm', 'revise'],
+          product_compliance_config: ['create', 'read', 'update', 'retire'],
+        },
+        auditor: {
+          products: ['read'],
+          product_dossiers: ['read', 'review', 'confirm'],
+          product_compliance_config: ['read'],
+        },
+        member: {
+          products: ['read'],
+          product_dossiers: ['read', 'update', 'submit'],
+        },
+      };
+      for (const [systemKey, resources] of Object.entries(permissionPatch)) {
+        const template = await RoleTemplate.findOne({ where: { systemKey }, transaction });
+        if (!template) continue;
+        const permissions = { ...(template.permissions as Record<string, string[]>) };
+        const permissionScopes = { ...(template.permissionScopes as Record<string, Record<string, string>>) };
+        for (const [resource, actions] of Object.entries(resources)) {
+          permissions[resource] = actions;
+          permissionScopes[resource] = Object.fromEntries(actions.map((action) => [
+            action,
+            systemKey === 'member' ? 'assigned' : 'all',
+          ]));
+        }
+        await template.update({ permissions, permissionScopes }, { transaction });
+      }
+    },
+    down: async (_schemaName, transaction) => {
+      for (const systemKey of ['tenant_admin', 'auditor', 'member']) {
+        const template = await RoleTemplate.findOne({ where: { systemKey }, transaction });
+        if (!template) continue;
+        const permissions = { ...(template.permissions as Record<string, string[]>) };
+        const permissionScopes = { ...(template.permissionScopes as Record<string, Record<string, string>>) };
+        for (const resource of ['products', 'product_dossiers', 'product_compliance_config']) {
+          delete permissions[resource];
+          delete permissionScopes[resource];
+        }
+        await template.update({ permissions, permissionScopes }, { transaction });
+      }
+    },
+  },
+  {
+    id: '019_tenant_product_compliance',
+    scope: 'tenant',
+    description: 'Create versioned product compliance dossiers, questionnaire snapshots and ROPA records',
+    checksumSource: 'tenant:v1:product-version-dossier-revision-questionnaire-data-permission-ropa-role-permissions',
+    up: async (schemaName, transaction) => {
+      await runWithTenantContext({ schema: schemaName, tenantId: null }, async () => {
+        for (const model of [
+          ProductType, Product, ProductVersion, ProductComplianceDossier,
+          ProductQuestionnaireTemplate, ProductQuestion, ProductTypeQuestionnaireRule,
+          ProductDossierQuestionnaire, ProductDossierAnswer, ProductPlatformPermission,
+          ProductDataItem, ProductProcessingActivity, ProductPermissionDataItem,
+          ProductProcessingDataItem,
+        ]) await (model as any).schema(schemaName).sync({ transaction } as any);
+      });
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      await sequelize.query(`CREATE UNIQUE INDEX IF NOT EXISTS product_dossiers_current_confirmed_unique
+        ON ${quoted}.product_compliance_dossiers ("productVersionId")
+        WHERE "isCurrentConfirmed" = true`, { transaction });
+      await sequelize.query(`UPDATE ${quoted}.roles SET permissions = permissions || CASE "systemKey"
+          WHEN 'tenant_admin' THEN '{"products":["create","read","update","archive"],"product_dossiers":["read","update","submit","review","confirm","revise"],"product_compliance_config":["create","read","update","retire"]}'::jsonb
+          WHEN 'auditor' THEN '{"products":["read"],"product_dossiers":["read","review","confirm"],"product_compliance_config":["read"]}'::jsonb
+          WHEN 'member' THEN '{"products":["read"],"product_dossiers":["read","update","submit"]}'::jsonb ELSE '{}'::jsonb END,
+        "permissionScopes" = "permissionScopes" || CASE "systemKey"
+          WHEN 'tenant_admin' THEN '{"products":{"create":"all","read":"all","update":"all","archive":"all"},"product_dossiers":{"read":"all","update":"all","submit":"all","review":"all","confirm":"all","revise":"all"},"product_compliance_config":{"create":"all","read":"all","update":"all","retire":"all"}}'::jsonb
+          WHEN 'auditor' THEN '{"products":{"read":"all"},"product_dossiers":{"read":"all","review":"all","confirm":"all"},"product_compliance_config":{"read":"all"}}'::jsonb
+          WHEN 'member' THEN '{"products":{"read":"assigned"},"product_dossiers":{"read":"assigned","update":"assigned","submit":"assigned"}}'::jsonb ELSE '{}'::jsonb END
+        WHERE "isSystem" = true AND "systemKey" IN ('tenant_admin','auditor','member')`, { transaction });
+    },
+    down: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      const [existing] = await sequelize.query<{ count: number }>(
+        `SELECT count(*)::int AS count FROM ${quoted}.products`,
+        { type: QueryTypes.SELECT, transaction },
+      );
+      if (Number(existing?.count || 0) > 0) throw new Error('已存在产品合规业务数据，不能安全回滚产品合规模块');
+      for (const table of [
+        'product_processing_data_items', 'product_permission_data_items', 'product_processing_activities',
+        'product_data_items', 'product_platform_permissions', 'product_dossier_answers',
+        'product_dossier_questionnaires', 'product_type_questionnaire_rules', 'product_questions',
+        'product_questionnaire_templates', 'product_compliance_dossiers', 'product_versions', 'products',
+        'product_types',
+      ]) await sequelize.query(`DROP TABLE IF EXISTS ${quoted}.${table}`, { transaction });
+      await sequelize.query(`UPDATE ${quoted}.roles SET
+        permissions = permissions - 'products' - 'product_dossiers' - 'product_compliance_config',
+        "permissionScopes" = "permissionScopes" - 'products' - 'product_dossiers' - 'product_compliance_config'
+        WHERE "isSystem" = true`, { transaction });
+    },
+  },
+  {
+    id: '020_tenant_product_compliance_constraints',
+    scope: 'tenant',
+    description: 'Enforce product compliance workflow and configuration status domains',
+    checksumSource: 'tenant:v1:product-compliance-status-question-type-source-checks',
+    up: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      const q = (sql: string) => sequelize.query(sql, { transaction });
+      await q(`ALTER TABLE ${quoted}.product_types ADD CONSTRAINT product_types_status_check CHECK (status IN ('active','retired'))`);
+      await q(`ALTER TABLE ${quoted}.products ADD CONSTRAINT products_status_check CHECK (status IN ('active','archived'))`);
+      await q(`ALTER TABLE ${quoted}.product_compliance_dossiers
+        ADD CONSTRAINT product_dossiers_lifecycle_check CHECK ("lifecycleStatus" IN ('draft','pending_review','changes_requested','confirmed','superseded')),
+        ADD CONSTRAINT product_dossiers_conclusion_check CHECK ("complianceConclusion" IN ('not_assessed','compliant','conditionally_compliant','non_compliant')),
+        ADD CONSTRAINT product_dossiers_proposed_conclusion_check CHECK ("proposedConclusion" IS NULL OR "proposedConclusion" IN ('not_assessed','compliant','conditionally_compliant','non_compliant'))`);
+      await q(`ALTER TABLE ${quoted}.product_questionnaire_templates ADD CONSTRAINT product_questionnaire_status_check CHECK (status IN ('draft','active','retired'))`);
+      await q(`ALTER TABLE ${quoted}.product_questions ADD CONSTRAINT product_question_type_check CHECK ("questionType" IN ('boolean','single_select','multi_select','short_text','long_text','number','date'))`);
+      await q(`ALTER TABLE ${quoted}.product_dossier_questionnaires ADD CONSTRAINT product_questionnaire_source_check CHECK ("assignmentSource" IN ('rule','manual'))`);
+      await q(`ALTER TABLE ${quoted}.product_dossier_answers ADD CONSTRAINT product_answer_inheritance_check CHECK ("inheritanceStatus" IN ('new','inherited','modified','unanswered'))`);
+    },
+    down: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      for (const [table, constraint] of [
+        ['product_dossier_answers', 'product_answer_inheritance_check'],
+        ['product_dossier_questionnaires', 'product_questionnaire_source_check'],
+        ['product_questions', 'product_question_type_check'],
+        ['product_questionnaire_templates', 'product_questionnaire_status_check'],
+        ['product_compliance_dossiers', 'product_dossiers_proposed_conclusion_check'],
+        ['product_compliance_dossiers', 'product_dossiers_conclusion_check'],
+        ['product_compliance_dossiers', 'product_dossiers_lifecycle_check'],
+        ['products', 'products_status_check'],
+        ['product_types', 'product_types_status_check'],
+      ]) await sequelize.query(`ALTER TABLE ${quoted}.${table} DROP CONSTRAINT IF EXISTS ${constraint}`, { transaction });
     },
   },
 ];

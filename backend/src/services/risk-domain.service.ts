@@ -3,6 +3,9 @@ import sequelize from '../config/database';
 import { getTenantStore } from '../middlewares/tenant';
 import {
   Asset,
+  Finding,
+  FindingDisposition,
+  FindingStatus,
   ComplianceStatus,
   Department,
   EvaluationWorkflowStatus,
@@ -15,6 +18,7 @@ import {
   RiskAffectedAsset,
   RiskLifecycleStatus,
   RiskLevel,
+  RiskFindingLink,
   RiskRecord,
   RiskSource,
   TenantMember,
@@ -56,6 +60,17 @@ interface CreateRiskInput {
   dueDate?: Date | null;
   sources: SourceInput[];
   assets: AffectedAssetInput[];
+}
+
+interface EscalateFindingsInput {
+  findingIds: string[];
+  title: string;
+  description: string;
+  riskLevel: RiskLevel;
+  treatmentStrategy?: TreatmentStrategy;
+  ownerDepartmentId: string;
+  ownerUserId: string;
+  dueDate?: Date | null;
 }
 
 class RiskDomainService {
@@ -144,11 +159,12 @@ class RiskDomainService {
       offset: (page - 1) * pageSize,
     });
     const ids = rows.map((row) => row.id);
-    const [sources, affectedAssets, actionLinks] = ids.length ? await Promise.all([
+    const [sources, affectedAssets, actionLinks, findingLinks] = ids.length ? await Promise.all([
       RiskSource.findAll({ where: { riskId: { [Op.in]: ids } }, include: [{ association: 'controlEvaluation' }] }),
       RiskAffectedAsset.findAll({ where: { riskId: { [Op.in]: ids } }, include: [{ association: 'asset' }] }),
       RiskActionLink.findAll({ where: { riskId: { [Op.in]: ids } }, include: [{ association: 'action' }] }),
-    ]) : [[], [], []];
+      RiskFindingLink.findAll({ where: { riskId: { [Op.in]: ids } }, include: [{ association: 'finding' }] }),
+    ]) : [[], [], [], []];
     const attach = <T extends { riskId: string }>(riskId: string, values: T[]) => values.filter((value) => value.riskId === riskId);
     return {
       items: rows.map((row) => ({
@@ -156,6 +172,7 @@ class RiskDomainService {
         sources: attach(row.id, sources as RiskSource[]),
         affectedAssets: attach(row.id, affectedAssets as RiskAffectedAsset[]),
         actionLinks: attach(row.id, actionLinks as RiskActionLink[]),
+        findingLinks: attach(row.id, findingLinks as RiskFindingLink[]),
       })),
       pagination: pagination(page, pageSize, count),
     };
@@ -163,15 +180,16 @@ class RiskDomainService {
 
   async detail(id: string, user: RequestUser) {
     const risk = await objectAccessService.riskOrNotFound(id, user);
-    const [sources, affectedAssets, actionLinks] = await Promise.all([
+    const [sources, affectedAssets, actionLinks, findingLinks] = await Promise.all([
       RiskSource.findAll({ where: { riskId: id }, include: [{ association: 'controlEvaluation' }] }),
       RiskAffectedAsset.findAll({ where: { riskId: id }, include: [{ association: 'asset' }] }),
       RiskActionLink.findAll({
         where: { riskId: id },
         include: [{ association: 'action', include: [{ association: 'evidenceFiles', where: { status: 'active' }, required: false }] }],
       }),
+      RiskFindingLink.findAll({ where: { riskId: id }, include: [{ association: 'finding', include: [{ association: 'evaluation' }] }] }),
     ]);
-    return { ...risk.toJSON(), sources, affectedAssets, actionLinks };
+    return { ...risk.toJSON(), sources, affectedAssets, actionLinks, findingLinks };
   }
 
   async create(input: CreateRiskInput, user: RequestUser, rawIdempotencyKey?: string) {
@@ -240,6 +258,101 @@ class RiskDomainService {
     return this.detail(risk.id, user);
   }
 
+  async createFromFindings(input: EscalateFindingsInput, user: RequestUser, rawIdempotencyKey?: string) {
+    if (!input.title?.trim() || !input.description?.trim() || !Array.isArray(input.findingIds) || !input.findingIds.length) {
+      throw new AppError(400, 'VALIDATION_ERROR', '风险标题、描述和不符合项必填');
+    }
+    if (!Object.values(RiskLevel).includes(input.riskLevel)) {
+      throw new AppError(400, 'VALIDATION_ERROR', '风险等级无效');
+    }
+    const findingIds = [...new Set(input.findingIds)];
+    if (findingIds.length !== input.findingIds.length) throw new AppError(409, 'CONFLICT', '不能重复选择不符合项');
+    for (const id of findingIds) await objectAccessService.findingOrNotFound(id, user);
+    const idempotencyKey = idempotencyService.requireKey(rawIdempotencyKey);
+    const result = await idempotencyService.execute(
+      'risk.create_from_findings',
+      idempotencyKey,
+      user.userId,
+      input,
+      async (transaction) => {
+        const findings = await Finding.findAll({
+          where: { id: { [Op.in]: findingIds } },
+          transaction,
+          lock: transaction.LOCK.UPDATE,
+        });
+        if (findings.length !== findingIds.length) throw new AppError(404, 'NOT_FOUND', '不符合项不存在');
+        if (findings.some((finding) => finding.disposition !== FindingDisposition.PENDING)) {
+          throw new AppError(409, 'CONFLICT', '只有待处置的不符合项可以升级为风险');
+        }
+        const taskIds = [...new Set(findings.map((finding) => finding.taskId))];
+        if (taskIds.length !== 1) throw new AppError(400, 'VALIDATION_ERROR', '一次只能升级同一评估项目的不符合项');
+        await objectAccessService.taskOrNotFound(taskIds[0], user, 'read');
+        await this.validateOwner(input.ownerDepartmentId, input.ownerUserId, transaction);
+        const created = await RiskRecord.create({
+          code: await this.nextCode(transaction),
+          taskId: taskIds[0],
+          title: input.title.trim(),
+          description: input.description.trim(),
+          riskLevel: input.riskLevel,
+          treatmentStrategy: input.treatmentStrategy || TreatmentStrategy.MITIGATE,
+          ownerDepartmentId: input.ownerDepartmentId,
+          ownerUserId: input.ownerUserId,
+          dueDate: input.dueDate || null,
+          status: RiskLifecycleStatus.PENDING_CONFIRMATION,
+        }, { transaction });
+        await RiskFindingLink.bulkCreate(findings.map((finding, index) => ({
+          riskId: created.id,
+          findingId: finding.id,
+          relationType: index === 0 ? 'primary' : 'supporting',
+          rationale: null,
+          createdBy: user.userId,
+        })), { transaction });
+        const evaluations = await QuestionItem.findAll({
+          where: { id: { [Op.in]: findings.map((finding) => finding.evaluationId) } },
+          attributes: ['id', 'assetId'],
+          transaction,
+        });
+        const assetIds = [...new Set(evaluations.map((evaluation) => evaluation.assetId).filter(Boolean))] as string[];
+        if (assetIds.length) {
+          await RiskAffectedAsset.bulkCreate(assetIds.map((assetId) => ({
+            riskId: created.id,
+            assetId,
+            impactLevel: null,
+            impactDescription: null,
+            createdBy: user.userId,
+          })), { transaction });
+        }
+        await Finding.update({
+          disposition: FindingDisposition.RISK,
+          status: FindingStatus.ESCALATED,
+        }, { where: { id: { [Op.in]: findingIds } }, transaction });
+        await auditLogService.log({
+          userId: user.userId,
+          operationType: OperationType.CREATE,
+          resourceType: 'risk',
+          resourceId: created.id,
+          operationDetails: `从 ${findingIds.length} 个不符合项升级风险 ${created.code}`,
+          relatedResourceIds: { findingIds },
+          success: true,
+          departmentId: created.ownerDepartmentId,
+        }, transaction);
+        return { resourceId: created.id };
+      },
+    );
+    const risk = await RiskRecord.findByPk(result.value.resourceId);
+    if (!risk) throw new AppError(500, 'INTERNAL_ERROR', '风险创建结果不存在');
+    if (!result.replayed) {
+      await notificationService.create({
+        userId: risk.ownerUserId,
+        taskId: risk.taskId,
+        type: NotificationType.RISK_ASSIGNED,
+        title: '新的风险已分配',
+        content: `${risk.code} ${risk.title}`,
+      });
+    }
+    return this.detail(risk.id, user);
+  }
+
   async replaceSources(
     id: string,
     sources: SourceInput[],
@@ -258,10 +371,8 @@ class RiskDomainService {
       if (![RiskLifecycleStatus.DRAFT, RiskLifecycleStatus.PENDING_CONFIRMATION].includes(locked.status)) {
         throw new AppError(409, 'CONFLICT', '风险确认后不能修改来源关系');
       }
-      const [affectedAssets, before] = await Promise.all([
-        RiskAffectedAsset.findAll({ where: { riskId: id }, transaction }),
-        RiskSource.findAll({ where: { riskId: id }, transaction, lock: transaction.LOCK.UPDATE }),
-      ]);
+      const affectedAssets = await RiskAffectedAsset.findAll({ where: { riskId: id }, transaction });
+      const before = await RiskSource.findAll({ where: { riskId: id }, transaction, lock: transaction.LOCK.UPDATE });
       await this.validateRelations(
         locked.taskId,
         sources,
@@ -309,10 +420,8 @@ class RiskDomainService {
       if (![RiskLifecycleStatus.DRAFT, RiskLifecycleStatus.PENDING_CONFIRMATION].includes(locked.status)) {
         throw new AppError(409, 'CONFLICT', '风险确认后不能修改受影响资产');
       }
-      const [sources, before] = await Promise.all([
-        RiskSource.findAll({ where: { riskId: id }, transaction }),
-        RiskAffectedAsset.findAll({ where: { riskId: id }, transaction, lock: transaction.LOCK.UPDATE }),
-      ]);
+      const sources = await RiskSource.findAll({ where: { riskId: id }, transaction });
+      const before = await RiskAffectedAsset.findAll({ where: { riskId: id }, transaction, lock: transaction.LOCK.UPDATE });
       await this.validateRelations(
         locked.taskId,
         sources.map((row) => ({ controlEvaluationId: row.controlEvaluationId })),
@@ -400,6 +509,8 @@ class RiskDomainService {
         reviewDueDate,
         lockVersion: risk.lockVersion + 1,
       }, { transaction });
+      const findingService = (await import('./finding.service')).default;
+      await findingService.reconcileRisk(risk.id, user.userId, transaction);
       await auditLogService.log({
         userId: user.userId,
         operationType: OperationType.UPDATE,
@@ -486,6 +597,8 @@ class RiskDomainService {
         closeComment: comment?.trim() || null,
         lockVersion: risk.lockVersion + 1,
       }, { transaction });
+      const findingService = (await import('./finding.service')).default;
+      await findingService.reconcileRisk(risk.id, user.userId, transaction);
       await auditLogService.log({
         userId: user.userId,
         operationType: OperationType.UPDATE,
@@ -505,8 +618,16 @@ class RiskDomainService {
       throw new AppError(409, 'CONFLICT', '已确认风险不能删除');
     }
     await sequelize.transaction(async (transaction) => {
+      const findingLinks = await RiskFindingLink.findAll({ where: { riskId: id }, transaction });
       await RiskSource.destroy({ where: { riskId: id }, transaction });
       await RiskAffectedAsset.destroy({ where: { riskId: id }, transaction });
+      await RiskFindingLink.destroy({ where: { riskId: id }, transaction });
+      if (findingLinks.length) {
+        await Finding.update({ disposition: FindingDisposition.PENDING, status: FindingStatus.OPEN }, {
+          where: { id: { [Op.in]: findingLinks.map((link) => link.findingId) }, status: FindingStatus.ESCALATED },
+          transaction,
+        });
+      }
       await risk.destroy({ transaction });
     });
   }

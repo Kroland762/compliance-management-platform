@@ -3,14 +3,17 @@ import sequelize from '../config/database';
 import {
   Asset,
   AssessmentAsset,
+  AssessmentAuditor,
   AssessmentControlAsset,
   AuditTask,
   Department,
+  EvaluationAsset,
   EvaluationWorkflowStatus,
   AnswerStatus,
   OperationType,
   QuestionItem,
   QuestionTemplate,
+  QuestionnaireTemplate,
   TaskStatus,
   TenantMember,
   TenantMemberStatus,
@@ -18,8 +21,10 @@ import {
 import { AppError } from '../utils/http';
 import auditLogService from './audit-log.service';
 import notificationService from './notification.service';
+import { normalizeEvaluationColumnSchema } from '../utils/evaluation-columns';
 import objectAccessService from './object-access.service';
 import { assessmentPublishDuration } from './metrics.service';
+import evaluationService from './evaluation.service';
 
 type RequestUser = NonNullable<Express.Request['user']>;
 
@@ -33,8 +38,8 @@ interface MatrixEntry {
 class AssessmentScopeService {
   private async editableTask(taskId: string, user: RequestUser): Promise<AuditTask> {
     const task = await objectAccessService.taskOrNotFound(taskId, user, 'update');
-    if (![TaskStatus.DRAFT, TaskStatus.CONFIGURING].includes(task.status)) {
-      throw new AppError(409, 'CONFLICT', '只有草稿或配置中的评估可以调整范围');
+    if (task.status !== TaskStatus.PREPARING) {
+      throw new AppError(409, 'CONFLICT', '只有准备中的评估可以调整范围');
     }
     return task;
   }
@@ -43,7 +48,11 @@ class AssessmentScopeService {
     await objectAccessService.taskOrNotFound(taskId, user);
     return AssessmentAsset.findAll({
       where: { taskId, scopeStatus: 'included' },
-      include: [{ association: 'asset' }],
+      attributes: [
+        'id', 'assetId', 'scopeStatus', 'assetCodeSnapshot', 'assetNameSnapshot',
+        'assetTypeSnapshot', 'criticalitySnapshot', 'ownerDepartmentIdSnapshot',
+        'ownerDepartmentNameSnapshot',
+      ],
       order: [['assetCodeSnapshot', 'ASC']],
     });
   }
@@ -54,6 +63,11 @@ class AssessmentScopeService {
     if (!uniqueIds.length) throw new AppError(400, 'VALIDATION_ERROR', '至少选择一个评估资产');
     const assets = await Asset.findAll({ where: { id: { [Op.in]: uniqueIds }, status: 'active' } });
     if (assets.length !== uniqueIds.length) throw new AppError(404, 'NOT_FOUND', '评估资产不存在或已归档');
+    const departmentIds = [...new Set(assets.map((asset) => asset.ownerDepartmentId).filter(Boolean))] as string[];
+    const departments = departmentIds.length
+      ? await Department.findAll({ where: { id: { [Op.in]: departmentIds } }, attributes: ['id', 'name'] })
+      : [];
+    const departmentNames = new Map(departments.map((department) => [department.id, department.name]));
 
     await sequelize.transaction(async (transaction) => {
       await AssessmentControlAsset.destroy({ where: { taskId }, transaction });
@@ -67,9 +81,9 @@ class AssessmentScopeService {
         assetTypeSnapshot: asset.assetType,
         criticalitySnapshot: asset.criticality,
         ownerDepartmentIdSnapshot: asset.ownerDepartmentId,
+        ownerDepartmentNameSnapshot: asset.ownerDepartmentId ? departmentNames.get(asset.ownerDepartmentId) || null : null,
         addedBy: user.userId,
       })), { transaction });
-      await task.update({ status: TaskStatus.CONFIGURING }, { transaction });
     });
     await auditLogService.log({
       userId: user.userId,
@@ -84,12 +98,23 @@ class AssessmentScopeService {
   }
 
   async getMatrix(taskId: string, user: RequestUser) {
-    await objectAccessService.taskOrNotFound(taskId, user);
+    const task = await objectAccessService.taskOrNotFound(taskId, user);
+    if (task.publishedAt) {
+      return QuestionItem.findAll({
+        where: { taskId },
+        attributes: [
+          'id', 'taskId', 'templateQuestionId', 'assetId', 'sequenceNumber', 'controlDomain',
+          'controlPoint', 'referenceAnswer', 'responsibleDepartmentId', 'assignedTo',
+          'workflowStatus', 'complianceStatus', 'reviewClaimedBy', 'reviewClaimedAt',
+        ],
+        order: [['sequenceNumber', 'ASC'], ['assetId', 'ASC']],
+      });
+    }
     return AssessmentControlAsset.findAll({
       where: { taskId },
       include: [
-        { association: 'controlPoint' },
-        { association: 'asset' },
+        { association: 'controlPoint', attributes: ['id', 'sequenceNumber', 'controlDomain', 'controlPoint', 'referenceAnswer'] },
+        { association: 'asset', attributes: ['id', 'code', 'name', 'assetType', 'ownerDepartmentId'] },
       ],
       order: [['controlPointId', 'ASC'], ['assetId', 'ASC']],
     });
@@ -172,7 +197,6 @@ class AssessmentScopeService {
         assignedTo: entry.assignedTo!,
         responsibleDepartmentId: entry.responsibleDepartmentId!,
       })), { transaction });
-      await task.update({ status: TaskStatus.CONFIGURING }, { transaction });
     });
     await auditLogService.log({
       userId: user.userId,
@@ -196,11 +220,27 @@ class AssessmentScopeService {
       if (task.publishedAt) {
         return { task, created: 0, total: await QuestionItem.count({ where: { taskId }, transaction }) };
       }
-      if (![TaskStatus.DRAFT, TaskStatus.CONFIGURING].includes(task.status)) {
+      if (task.status !== TaskStatus.PREPARING) {
         throw new AppError(409, 'CONFLICT', '当前评估状态不能发布');
       }
       const rows = await AssessmentControlAsset.findAll({ where: { taskId }, transaction });
-      const normalized = await this.validateMatrix(task, rows.map((row) => row.toJSON()), transaction);
+      const auditorCount = await AssessmentAuditor.count({ where: { taskId }, transaction });
+      if (auditorCount === 0) throw new AppError(400, 'AUDITORS_REQUIRED', '发布评估前至少分配一名审计员');
+      const scopeAssets = await AssessmentAsset.findAll({ where: { taskId, scopeStatus: 'included' }, transaction });
+      if (!scopeAssets.length) throw new AppError(400, 'VALIDATION_ERROR', '发布评估前至少选择一个资产');
+      let normalized: MatrixEntry[];
+      if (rows.length) {
+        normalized = await this.validateMatrix(task, rows.map((row) => row.toJSON()), transaction);
+      } else {
+        if (!task.assignedTo) throw new AppError(400, 'VALIDATION_ERROR', '发布评估前必须配置默认责任人');
+        const allControls = await QuestionTemplate.findAll({ where: { templateId: task.templateId }, transaction });
+        normalized = allControls.flatMap((control) => scopeAssets.map((asset) => ({
+          controlPointId: control.id,
+          assetId: asset.assetId,
+          assignedTo: task.assignedTo,
+          responsibleDepartmentId: task.departmentId,
+        })));
+      }
       const controlIds = [...new Set(normalized.map((row) => row.controlPointId))];
       const controls = await QuestionTemplate.findAll({
         where: { id: { [Op.in]: controlIds }, templateId: task.templateId },
@@ -209,13 +249,26 @@ class AssessmentScopeService {
       const controlMap = new Map(controls.map((control) => [control.id, control]));
       const existing = await QuestionItem.count({ where: { taskId }, transaction });
       if (existing) throw new AppError(409, 'CONFLICT', '评估已存在单元，请勿重复发布');
-
-      await QuestionItem.bulkCreate(normalized.map((row) => {
-        const control = controlMap.get(row.controlPointId)!;
-        return {
+      const groups = new Map<string, { control: QuestionTemplate; assetIds: string[]; assignedTo: string; responsibleDepartmentId: string }>();
+      normalized.forEach((row) => {
+        // Explicit legacy matrices retain their original row granularity. New
+        // projects omit the matrix and therefore group all scoped assets into
+        // one spreadsheet row per control.
+        const key = `${row.controlPointId}:${row.assignedTo}:${row.responsibleDepartmentId}:${rows.length ? row.assetId : ''}`;
+        const group = groups.get(key) || {
+          control: controlMap.get(row.controlPointId)!,
+          assetIds: [],
+          assignedTo: row.assignedTo!,
+          responsibleDepartmentId: row.responsibleDepartmentId!,
+        };
+        group.assetIds.push(row.assetId);
+        groups.set(key, group);
+      });
+      const groupedRows = [...groups.values()];
+      const createdItems = await QuestionItem.bulkCreate(groupedRows.map(({ control, assetIds, assignedTo, responsibleDepartmentId }) => ({
           taskId,
           templateQuestionId: control.id,
-          assetId: row.assetId,
+          assetId: assetIds[0] || null,
           sequenceNumber: control.sequenceNumber,
           controlDomain: control.controlDomain,
           controlPoint: control.controlPoint,
@@ -223,26 +276,42 @@ class AssessmentScopeService {
           historicalEvidencePath: control.historicalEvidencePath,
           responsibleDepartment: null,
           responsiblePerson: null,
-          responsibleDepartmentId: row.responsibleDepartmentId!,
+          responsibleDepartmentId,
           currentStatusDescription: null,
-          assignedTo: row.assignedTo!,
+          assignedTo,
           answerStatus: AnswerStatus.PENDING,
           workflowStatus: EvaluationWorkflowStatus.PENDING,
-        };
-      }), { transaction });
+          controlKey: control.controlKey || control.sequenceNumber,
+          templateDataSnapshot: {
+            sequenceNumber: control.sequenceNumber,
+            controlDomain: control.controlDomain,
+            controlPoint: control.controlPoint,
+            referenceAnswer: control.referenceAnswer,
+            extraData: control.extraData || {},
+          },
+      })), { transaction, returning: true });
+      await EvaluationAsset.bulkCreate(createdItems.flatMap((item, index) => groupedRows[index].assetIds.map((assetId) => ({
+        questionItemId: item.id,
+        taskId,
+        templateQuestionId: item.templateQuestionId,
+        assetId,
+      }))), { transaction });
+      const template = await QuestionnaireTemplate.findByPk(task.templateId, { transaction });
       const assignees = [...new Set(normalized.map((row) => row.assignedTo!))];
       await task.update({
-        status: TaskStatus.ASSIGNED,
+        status: TaskStatus.READY,
         publishedAt: new Date(),
         assignedTo: assignees[0] || task.assignedTo,
+        columnSchemaSnapshot: normalizeEvaluationColumnSchema(template?.columnSchema || []),
         lockVersion: task.lockVersion + 1,
       }, { transaction });
-      return { task, created: normalized.length, total: normalized.length, assignees };
+      return { task, created: createdItems.length, total: createdItems.length, assignees };
       });
 
       for (const assignee of result.assignees || []) {
         await notificationService.notifyTaskAssigned(assignee, taskId, result.task.name || result.task.assessmentTarget);
       }
+      await evaluationService.refreshTaskHistoryLinks(taskId);
       await auditLogService.log({
         userId: user.userId,
         operationType: OperationType.UPDATE,

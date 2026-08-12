@@ -54,7 +54,9 @@ async function assertCanAccessEvidence(req: Request, evidenceId: string, write =
   if (!evidence) throw new AppError(404, 'NOT_FOUND', '文件不存在');
   if (!evidence.questionItemId) throw new AppError(404, 'NOT_FOUND', '文件不存在');
 
-  const item = await assertCanAccessQuestion(req, evidence.questionItemId, write);
+  const item = write
+    ? await assertCanAccessQuestion(req, evidence.questionItemId, true)
+    : await objectAccessService.questionOrHistorySourceNotFound(evidence.questionItemId, req.user!);
   if (write && evidence.uploadedBy !== req.user!.userId && !objectAccessService.canReadAllTasks(req.user!)) {
     throw new AppError(404, 'NOT_FOUND', '文件不存在');
   }

@@ -112,8 +112,8 @@ export default function ReviewTask() {
 
   const canEdit = task && (CAN_REVIEW_STATUS as readonly string[]).includes(task.status);
   const canManageWorkflow = task && (CAN_REVIEW_STATUS as readonly string[]).includes(task.status);
-  const isAdminEditing = isAdmin && task?.status === 'completed' && isEditing;
-  const canEnterEdit = isAdmin && task?.status === 'completed' && !isEditing;
+  const isAdminEditing = isAdmin && task?.status === 'pending_closure' && isEditing;
+  const canEnterEdit = isAdmin && task?.status === 'pending_closure' && !isEditing;
 
   // 退回目标责任人列表（从题目中提取去重）
   const assigneeOptions = useMemo(() => {
@@ -162,9 +162,6 @@ export default function ReviewTask() {
       onFilter: (value: any, record: any) => record.controlDomain === value,
     },
     { title: '控制点', dataIndex: 'controlPoint', width: 160 },
-    { title: '参考回答', dataIndex: 'referenceAnswer', width: 150,
-      render: (v: string) => v ? <Text style={{ fontSize: 12, color: '#8E8E93' }}>{v}</Text> : '—'
-    },
     { title: '历史证据', dataIndex: 'historicalEvidence', width: 120,
       render: (evidence: PreviewableEvidenceFile | null) => evidence ? (
         <Button size="small" type="link" icon={<HistoryOutlined />} onClick={() => setPreviewFile(evidence)}>预览</Button>
@@ -250,7 +247,7 @@ export default function ReviewTask() {
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
           审阅: {task.assessmentTarget} ({task.assessmentType})
-          {task.status === 'completed' && <Tag color="green">已完成</Tag>}
+          {task.status === 'pending_closure' && <Tag color="orange">待闭环</Tag>}
         </Title>
         <Space>
           {canEnterEdit && (

@@ -16,7 +16,8 @@ export default function ReviewTaskList() {
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
-  const isAdmin = Boolean(user?.permissions?.tasks?.includes('delete'));
+  const isAdmin = Boolean(user?.permissions?.tasks?.includes('create'));
+  const canDelete = Boolean(user?.permissions?.tasks?.includes('delete'));
 
   const fetchTasks = () => {
     setLoading(true);
@@ -50,11 +51,8 @@ export default function ReviewTaskList() {
     {
       title: '审计员', width: 100,
       render: (_: any, record: any) => {
-        const rid = record.reviewerId;
-        // Show username from reviewer if available, otherwise creator
-        if (record.reviewer?.username) return record.reviewer.username;
-        if (rid === record.createdBy) return record.creator?.username || '-';
-        return rid ? rid.substring(0,8) : '-';
+        const names = (record.auditors || []).map((item: any) => item.auditor?.username).filter(Boolean);
+        return names.length ? names.join('、') : '-';
       },
     },
     {
@@ -101,10 +99,10 @@ export default function ReviewTaskList() {
           <Space size={4}>
             <Button size="small" type="primary" icon={<EyeOutlined />}
               disabled={!record.publishedAt}
-              onClick={() => navigate(`/assessments/${record.id}/workbench`)}>
-              {record.publishedAt ? '评估工作台' : '未发布'}
+              onClick={() => navigate(`/assessments/${record.id}`)}>
+              {record.publishedAt ? '查看项目' : '查看配置'}
             </Button>
-            {isAdmin && (
+            {canDelete && (
               <>
                 {confirmingDelete === record.id ? (
                   <Space size={4}>
@@ -125,10 +123,14 @@ export default function ReviewTaskList() {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+        <div>
+          <h2 style={{ margin: 0 }}>评估项目</h2>
+          <span style={{ color: '#8E8E93' }}>按项目跟踪范围、执行、复核和处置闭环</span>
+        </div>
         {isAdmin && (
           <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/assessments/new')}
             style={{ borderRadius: 10, fontWeight: 500 }}>
-            创建评估
+            新建评估项目
           </Button>
         )}
       </div>

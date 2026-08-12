@@ -1,4 +1,5 @@
 import { Op, fn, col } from 'sequelize';
+import { encodeCsv } from '../../utils/csv';
 import {
   ProblemAccount,
   ProblemStatus,
@@ -201,24 +202,22 @@ class ProblemService {
 
     // CSV 格式
     const headers = ['ID', 'TaskID', 'RuleID', 'AccountID', 'Description', 'Severity', 'Status', 'FirstDetected', 'ResolvedAt', 'Notes'];
-    const csvRows = [headers.join(',')];
-
+    const csvRows: unknown[][] = [headers];
     for (const p of items) {
       csvRows.push([
         p.id,
         p.taskId,
         p.ruleId,
         p.accountId,
-        `"${(p.problemDescription || '').replace(/"/g, '""')}"`,
+        p.problemDescription || '',
         p.severity,
         p.status,
         p.firstDetectedAt,
         p.resolvedAt || '',
-        `"${(p.resolutionNotes || '').replace(/"/g, '""')}"`,
-      ].join(','));
+        p.resolutionNotes || '',
+      ]);
     }
-
-    return csvRows.join('\n');
+    return encodeCsv(csvRows);
   }
 
   /**

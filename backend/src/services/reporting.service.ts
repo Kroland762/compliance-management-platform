@@ -1,6 +1,8 @@
 import { Op } from 'sequelize';
 import {
   AuditTask,
+  Finding,
+  FindingStatus,
   Qualification,
   QuestionItem,
   QuestionnaireTemplate,
@@ -11,6 +13,7 @@ import {
   TaskStatus,
 } from '../models';
 import objectAccessService from './object-access.service';
+import workItemService from './work-item.service';
 
 type RequestUser = NonNullable<Express.Request['user']>;
 
@@ -71,6 +74,8 @@ class ReportingService {
       qualificationRows,
       createdTrendRows,
       closedTrendRows,
+      openFindings,
+      workItems,
     ] = await Promise.all([
       can('risks', 'read') ? RiskRecord.findAll({
         where: activeRiskWhere,
@@ -137,6 +142,15 @@ class ReportingService {
         group: [RiskRecord.sequelize!.fn('date_trunc', 'month', RiskRecord.sequelize!.col('closedAt'))],
         raw: true,
       }) : [],
+      can('findings', 'read') ? Finding.count({
+        where: {
+          ...(await objectAccessService.findingScope(user) as object),
+          status: { [Op.notIn]: [FindingStatus.RESOLVED, FindingStatus.CANCELLED] },
+        },
+      }) : 0,
+      (can('evaluations', 'read') || can('remediation_actions', 'read'))
+        ? workItemService.list(user)
+        : { counts: { fill: 0, review: 0, remediate: 0, verify: 0 } },
     ]);
 
     const riskLevelMap: Record<string, number> = {};
@@ -167,9 +181,9 @@ class ReportingService {
       summary: {
         tasks: taskTotal,
         templates,
-        completed: taskStatusMap[TaskStatus.COMPLETED] || 0,
+        completed: (taskStatusMap[TaskStatus.PENDING_CLOSURE] || 0) + (taskStatusMap[TaskStatus.CLOSED] || 0),
         activeTasks: Object.entries(taskStatusMap)
-          .filter(([status]) => ![TaskStatus.DRAFT, TaskStatus.COMPLETED, TaskStatus.CANCELLED].includes(status as TaskStatus))
+          .filter(([status]) => ![TaskStatus.PREPARING, TaskStatus.PENDING_CLOSURE, TaskStatus.CLOSED, TaskStatus.CANCELLED].includes(status as TaskStatus))
           .reduce((sum, [, value]) => sum + value, 0),
         risks: riskTotal,
         highRisks,
@@ -177,16 +191,16 @@ class ReportingService {
         overdueActions,
         assessmentCompletionRate: evaluationTotal ? Math.round(evaluationReviewed / evaluationTotal * 10000) / 100 : 0,
         qualifications: qualificationStatus.total,
+        openFindings,
+        workItems: workItems.counts,
       },
       taskPie: [
-        ['草稿', TaskStatus.DRAFT, '#AEAEB2'],
-        ['配置中', TaskStatus.CONFIGURING, '#8E8E93'],
-        ['已分配', TaskStatus.ASSIGNED, '#007AFF'],
+        ['准备中', TaskStatus.PREPARING, '#8E8E93'],
+        ['待开始', TaskStatus.READY, '#007AFF'],
         ['进行中', TaskStatus.IN_PROGRESS, '#5856D6'],
-        ['已提交', TaskStatus.SUBMITTED, '#FF9500'],
-        ['审阅中', TaskStatus.UNDER_REVIEW, '#AF52DE'],
-        ['已完成', TaskStatus.COMPLETED, '#34C759'],
-        ['已退回', TaskStatus.RETURNED, '#FF3B30'],
+        ['待复核', TaskStatus.PENDING_REVIEW, '#AF52DE'],
+        ['待闭环', TaskStatus.PENDING_CLOSURE, '#FF9500'],
+        ['已关闭', TaskStatus.CLOSED, '#248A3D'],
       ].map(([name, status, color]) => ({ name, value: taskStatusMap[status] || 0, color })),
       riskPie: [
         { name: '严重风险', value: riskLevelMap.critical || 0, color: '#8B0000' },
