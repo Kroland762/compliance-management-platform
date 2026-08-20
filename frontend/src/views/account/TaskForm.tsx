@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Modal, Steps, Button, Form, Select, Checkbox, Radio, Input, Typography, message, Space, List, Tag } from 'antd';
+import { Modal, Steps, Button, Form, Select, Radio, Input, InputNumber, Typography, message, Space, TimePicker } from 'antd';
 import { DatabaseOutlined, AuditOutlined, ScheduleOutlined } from '@ant-design/icons';
-import { taskApi, dataSourceApi, ruleApi } from '../../api/account';
+import { taskApi, type Task } from '../../api/account';
 import { getApiErrorMessage } from '../../utils/error';
+import dayjs from 'dayjs';
+import { LookupSelect } from '../../components/lookups';
 
-const { Text, Title } = Typography;
+const { Text } = Typography;
 
 interface Props {
   open: boolean;
@@ -13,23 +15,30 @@ interface Props {
   onSuccess: () => void;
 }
 
+export function buildScheduleConfig(scheduleType: Task['scheduleType'], values: Record<string, any>) {
+  if (scheduleType === 'MANUAL') return null;
+  if (scheduleType === 'CRON') return { expression: values.cronExpression.trim() };
+  return {
+    hour: values.scheduleTime?.hour() ?? 0,
+    minute: values.scheduleTime?.minute() ?? 0,
+    ...(scheduleType === 'WEEKLY' ? { dayOfWeek: values.dayOfWeek } : {}),
+    ...(scheduleType === 'MONTHLY' ? { dayOfMonth: values.dayOfMonth } : {}),
+  };
+}
+
 export default function TaskForm({ open, editingTask, onClose, onSuccess }: Props) {
   const [currentStep, setCurrentStep] = useState(0);
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
 
   // Step 1: Data Sources
-  const [dataSources, setDataSources] = useState<any[]>([]);
-  const [sourcesLoading, setSourcesLoading] = useState(false);
   const [selectedSource, setSelectedSource] = useState<string>('');
 
   // Step 2: Rules
-  const [rules, setRules] = useState<any[]>([]);
-  const [rulesLoading, setRulesLoading] = useState(false);
   const [selectedRules, setSelectedRules] = useState<string[]>([]);
 
   // Step 3: Schedule
-  const [scheduleType, setScheduleType] = useState<string>('MANUAL');
+  const [scheduleType, setScheduleType] = useState<Task['scheduleType']>('MANUAL');
 
   useEffect(() => {
     if (open) {
@@ -43,7 +52,12 @@ export default function TaskForm({ open, editingTask, onClose, onSuccess }: Prop
         form.setFieldsValue({
           name: editingTask.name,
           scheduleType: editingTask.scheduleType,
-          cronExpression: editingTask.cronExpression,
+          cronExpression: editingTask.scheduleConfig?.expression,
+          scheduleTime: editingTask.scheduleConfig?.hour !== undefined
+            ? dayjs().hour(editingTask.scheduleConfig.hour).minute(editingTask.scheduleConfig.minute || 0)
+            : dayjs().startOf('day'),
+          dayOfWeek: editingTask.scheduleConfig?.dayOfWeek ?? 1,
+          dayOfMonth: editingTask.scheduleConfig?.dayOfMonth ?? 1,
         });
         setSelectedSource(editingTask.sourceId || '');
         setSelectedRules(editingTask.selectedRules || []);
@@ -51,22 +65,6 @@ export default function TaskForm({ open, editingTask, onClose, onSuccess }: Prop
       }
     }
   }, [open, editingTask]);
-
-  const loadDataSources = () => {
-    setSourcesLoading(true);
-    dataSourceApi.list()
-      .then((res: any) => setDataSources(res.data?.items || []))
-      .catch(() => message.error('获取数据源失败'))
-      .finally(() => setSourcesLoading(false));
-  };
-
-  const loadRules = () => {
-    setRulesLoading(true);
-    ruleApi.list({ isActive: true })
-      .then((res: any) => setRules(res.data?.items || []))
-      .catch(() => message.error('获取规则失败'))
-      .finally(() => setRulesLoading(false));
-  };
 
   const handleNext = () => {
     if (currentStep === 0 && !selectedSource) {
@@ -77,7 +75,6 @@ export default function TaskForm({ open, editingTask, onClose, onSuccess }: Prop
       message.warning('请至少选择一条规则');
       return;
     }
-    if (currentStep === 0) loadRules();
     setCurrentStep(prev => prev + 1);
   };
 
@@ -85,11 +82,13 @@ export default function TaskForm({ open, editingTask, onClose, onSuccess }: Prop
     try {
       const values = await form.validateFields();
       setLoading(true);
+      const scheduleConfig = buildScheduleConfig(scheduleType, values);
       const payload = {
-        ...values,
+        name: values.name,
         sourceId: selectedSource,
         selectedRules,
         scheduleType,
+        scheduleConfig,
       };
       if (editingTask) {
         await taskApi.update(editingTask.id, payload);
@@ -121,37 +120,14 @@ export default function TaskForm({ open, editingTask, onClose, onSuccess }: Prop
             <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
               选择该任务需要审计的数据源
             </Text>
-            {dataSources.length === 0 && !sourcesLoading && (
-              <Button onClick={loadDataSources} loading={sourcesLoading}>加载数据源</Button>
-            )}
-            <List
-              loading={sourcesLoading}
-              dataSource={dataSources}
-              renderItem={(ds: any) => (
-                <List.Item
-                  onClick={() => setSelectedSource(ds.id)}
-                  style={{
-                    cursor: 'pointer',
-                    padding: '10px 12px',
-                    borderRadius: 10,
-                    marginBottom: 4,
-                    background: selectedSource === ds.id ? 'rgba(0,122,255,0.06)' : 'transparent',
-                    border: selectedSource === ds.id ? '0.5px solid rgba(0,122,255,0.2)' : '0.5px solid transparent',
-                    transition: 'all 0.15s',
-                  }}
-                >
-                  <List.Item.Meta
-                    avatar={<DatabaseOutlined style={{ fontSize: 18, color: '#007AFF' }} />}
-                    title={<Text strong>{ds.name}</Text>}
-                    description={
-                      <Space size={8}>
-                        <Tag color="blue" style={{ borderRadius: 4 }}>PostgreSQL</Tag>
-                        <Text type="secondary">{ds.totalAccounts?.toLocaleString() || 0} 个账户</Text>
-                      </Space>
-                    }
-                  />
-                </List.Item>
-              )}
+            <LookupSelect
+              kind="account-data-sources"
+              purpose="account-task-source"
+              contextId={editingTask?.id}
+              value={selectedSource || undefined}
+              onChange={(value) => setSelectedSource(String(value))}
+              placeholder="输入数据源名称检索"
+              style={{ width: '100%' }}
             />
           </div>
         );
@@ -162,35 +138,16 @@ export default function TaskForm({ open, editingTask, onClose, onSuccess }: Prop
             <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
               选择要应用的审计规则（可多选）
             </Text>
-            <Checkbox.Group
+            <LookupSelect
+              kind="account-rules"
+              purpose="account-task-rules"
+              contextId={editingTask?.id}
+              mode="multiple"
               value={selectedRules}
-              onChange={vals => setSelectedRules(vals as string[])}
+              onChange={(values) => setSelectedRules(values as string[])}
+              placeholder="输入规则名称检索"
               style={{ width: '100%' }}
-            >
-              <List
-                loading={rulesLoading}
-                dataSource={rules}
-                renderItem={(rule: any) => (
-                  <List.Item
-                    style={{ padding: '8px 12px' }}
-                  >
-                    <Checkbox value={rule.id} style={{ width: '100%' }}>
-                      <Space>
-                        <Text strong>{rule.name}</Text>
-                        <Tag color={rule.severity === 'CRITICAL' ? '#8B0000' : rule.severity === 'HIGH' ? 'red' : rule.severity === 'MEDIUM' ? 'orange' : 'green'}
-                          style={{ borderRadius: 4 }}>
-                          {rule.severity === 'HIGH' ? '高' : rule.severity === 'MEDIUM' ? '中' : '低'}
-                        </Tag>
-                        <Tag color={rule.ruleType === 'BUILTIN' ? 'blue' : 'purple'} style={{ borderRadius: 4 }}>
-                          {rule.ruleType === 'BUILTIN' ? '内置' : '自定义'}
-                        </Tag>
-                        <Text type="secondary" style={{ fontSize: 12 }}>{rule.description}</Text>
-                      </Space>
-                    </Checkbox>
-                  </List.Item>
-                )}
-              />
-            </Checkbox.Group>
+            />
           </div>
         );
 
@@ -207,7 +164,7 @@ export default function TaskForm({ open, editingTask, onClose, onSuccess }: Prop
               </Form.Item>
 
               <Form.Item name="scheduleType" label="执行计划">
-                <Radio.Group value={scheduleType} onChange={e => setScheduleType(e.target.value)}>
+                <Radio.Group value={scheduleType} onChange={e => setScheduleType(e.target.value as Task['scheduleType'])}>
                   <Space direction="vertical">
                     <Radio value="MANUAL">手动执行</Radio>
                     <Radio value="DAILY">每日</Radio>
@@ -221,6 +178,24 @@ export default function TaskForm({ open, editingTask, onClose, onSuccess }: Prop
               {scheduleType === 'CRON' && (
                 <Form.Item name="cronExpression" label="Cron 表达式" rules={[{ required: true, message: '请输入 Cron 表达式' }]}>
                   <Input placeholder="0 2 * * * (每天凌晨2点)" />
+                </Form.Item>
+              )}
+              {['DAILY', 'WEEKLY', 'MONTHLY'].includes(scheduleType) && (
+                <Form.Item name="scheduleTime" label="执行时间" initialValue={dayjs().startOf('day')} rules={[{ required: true }]}>
+                  <TimePicker format="HH:mm" />
+                </Form.Item>
+              )}
+              {scheduleType === 'WEEKLY' && (
+                <Form.Item name="dayOfWeek" label="执行星期" initialValue={1} rules={[{ required: true }]}>
+                  <Select options={[
+                    { value: 1, label: '星期一' }, { value: 2, label: '星期二' }, { value: 3, label: '星期三' },
+                    { value: 4, label: '星期四' }, { value: 5, label: '星期五' }, { value: 6, label: '星期六' }, { value: 0, label: '星期日' },
+                  ]} />
+                </Form.Item>
+              )}
+              {scheduleType === 'MONTHLY' && (
+                <Form.Item name="dayOfMonth" label="执行日期" initialValue={1} rules={[{ required: true }]}>
+                  <InputNumber min={1} max={28} addonAfter="日" />
                 </Form.Item>
               )}
             </Form>

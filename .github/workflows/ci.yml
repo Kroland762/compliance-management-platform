@@ -8,6 +8,7 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     services:
       postgres:
         image: postgres:16
@@ -35,6 +36,9 @@ jobs:
       SEED_ADMIN_PASSWORD: Admin1234!
       E2E_ADMIN_USERNAME: admin
       E2E_ADMIN_PASSWORD: Admin1234!
+      E2E_MUTATION_TENANT_SLUG: ci
+      E2E_AUDITOR_USERNAME: auditor
+      E2E_AUDITOR_PASSWORD: Auditor1234!
       RUN_PG_INTEGRATION: "true"
       ALLOW_PRIVATE_DATASOURCE_HOSTS: "true"
       BUSINESS_TIME_ZONE: Asia/Shanghai
@@ -62,9 +66,20 @@ jobs:
         run: |
           npm run migrate:up
           npm run seed
-          npx tsx -e "import {setupAssociations} from './src/models/associations'; import service from './src/services/tenant-provisioning.service'; import db from './src/config/database'; setupAssociations(); service.provision({name:'CI Tenant',slug:'ci',admin:{username:'ci_tenant_admin',displayName:'CI Tenant Admin',email:'ci-tenant-admin@example.com'}}).finally(()=>db.close())"
+          npm run seed:e2e
           npm run migrate:up
           npm run migrate:status
+
+      - name: Production dependency audit
+        run: |
+          npm --prefix backend audit --omit=dev
+          npm --prefix frontend audit --omit=dev
+
+      - name: Compose and deployment script validation
+        run: |
+          docker compose --env-file .env.docker.example config --quiet
+          bash -n deploy/cloud-preflight.sh deploy/render-nginx.sh backend/scripts/backup.sh backend/scripts/restore.sh
+          ./deploy/render-nginx.sh .env.docker.example /tmp/compliance-nginx.conf
 
       - name: Backend unit and PostgreSQL integration tests
         working-directory: backend
@@ -82,6 +97,22 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      - name: Build production images and validate Nginx
+        run: |
+          docker compose --env-file .env.docker.example --profile ops build
+          tls_dir="$(mktemp -d)"
+          trap 'rm -rf "$tls_dir"' EXIT
+          ./deploy/render-nginx.sh .env.docker.example "$tls_dir/default.conf"
+          mkdir -p "$tls_dir/certs"
+          openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
+            -subj '/CN=compliance.example.com' \
+            -keyout "$tls_dir/certs/privkey.pem" \
+            -out "$tls_dir/certs/fullchain.pem" >/dev/null 2>&1
+          docker run --rm \
+            -v "$tls_dir/default.conf:/etc/nginx/conf.d/default.conf:ro" \
+            -v "$tls_dir/certs:/etc/letsencrypt/live/compliance.example.com:ro" \
+            nginx:alpine nginx -t
+
       - name: Install Playwright Chromium
         working-directory: frontend
         run: npx playwright install --with-deps chromium
@@ -89,6 +120,17 @@ jobs:
       - name: Playwright end-to-end
         working-directory: frontend
         run: npm run test:e2e
+
+      - name: Upload Playwright diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-diagnostics
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Diff hygiene
         run: git diff --check

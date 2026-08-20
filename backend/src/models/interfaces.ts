@@ -4,7 +4,7 @@
 
 import {
   AssessmentType, TaskStatus, AnswerStatus,
-  ComplianceStatus, RiskLevel, RemediationStatus, RiskStatus,
+  ComplianceStatus, RiskLevel,
   NotificationType, OperationType,
   EvidenceType,
   EvidenceStatus, EvidenceScanStatus,

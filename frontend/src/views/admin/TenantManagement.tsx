@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Table, Button, Modal, Form, Input, Select, Space, Tag, Popconfirm, App, Typography } from 'antd';
-import { PlusOutlined, ReloadOutlined, TeamOutlined, DeleteOutlined, StopOutlined, CheckCircleOutlined, UserOutlined } from '@ant-design/icons';
+import { PlusOutlined, ReloadOutlined, DeleteOutlined, StopOutlined, CheckCircleOutlined, UserOutlined } from '@ant-design/icons';
 import apiClient from '../../api/client';
 import { useAuthStore } from '../../store/auth';
 import { getApiErrorMessage } from '../../utils/error';

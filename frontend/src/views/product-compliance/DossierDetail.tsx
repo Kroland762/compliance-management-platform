@@ -10,14 +10,19 @@ import apiClient from '../../api/client';
 import { useAuthStore } from '../../store/auth';
 import { getApiErrorMessage } from '../../utils/error';
 import { conclusionLabels, platformOptions, StatusTag } from './labels';
+import { LookupSelect, SearchableSelect } from '../../components/lookups';
 
 type EditorKind = 'permission' | 'dataItem' | 'activity';
 
 function questionControl(question: any, value: any, onChange: (value: any) => void, disabled: boolean) {
   const options = (question.options || []).map((option: any) => typeof option === 'object' ? option : ({ label: String(option), value: option }));
   if (question.questionType === 'boolean') return <Radio.Group disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)} options={[{ value: true, label: '是' }, { value: false, label: '否' }]} />;
-  if (question.questionType === 'single_select') return <Select disabled={disabled} value={value} onChange={onChange} options={options} style={{ width: '100%' }} />;
-  if (question.questionType === 'multi_select') return <Select mode="multiple" disabled={disabled} value={value || []} onChange={onChange} options={options} style={{ width: '100%' }} />;
+  if (question.questionType === 'single_select') return options.length > 8
+    ? <SearchableSelect disabled={disabled} value={value} onChange={onChange} options={options} style={{ width: '100%' }} />
+    : <Select disabled={disabled} value={value} onChange={onChange} options={options} style={{ width: '100%' }} />;
+  if (question.questionType === 'multi_select') return options.length > 8
+    ? <SearchableSelect mode="multiple" disabled={disabled} value={value || []} onChange={onChange} options={options} style={{ width: '100%' }} />
+    : <Select mode="multiple" disabled={disabled} value={value || []} onChange={onChange} options={options} style={{ width: '100%' }} />;
   if (question.questionType === 'number') return <InputNumber disabled={disabled} value={value} onChange={onChange} style={{ width: '100%' }} />;
   if (question.questionType === 'date') return <DatePicker disabled={disabled} value={value ? dayjs(value) : null} onChange={(date) => onChange(date?.format('YYYY-MM-DD') || null)} />;
   return <Input.TextArea disabled={disabled} rows={question.questionType === 'long_text' ? 4 : 2} value={value || ''} onChange={(event) => onChange(event.target.value)} />;
@@ -37,7 +42,6 @@ export default function DossierDetail() {
   const [returnOpen, setReturnOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [questionnaireOpen, setQuestionnaireOpen] = useState(false);
-  const [availableTemplates, setAvailableTemplates] = useState<any[]>([]);
   const [entityForm] = Form.useForm();
   const [overviewForm] = Form.useForm();
   const [reviewForm] = Form.useForm();
@@ -130,13 +134,9 @@ export default function DossierDetail() {
     try { const response: any = await apiClient.post(`/product-compliance/dossiers/${id}/revisions`); message.success('修订草稿已创建'); navigate(`/product-compliance/dossiers/${response.data.id}`); }
     catch (error) { message.error(getApiErrorMessage(error, '创建修订失败')); }
   };
-  const openQuestionnaires = async () => {
-    try {
-      const response: any = await apiClient.get('/product-compliance/config/questionnaires');
-      setAvailableTemplates((response.data || []).filter((item: any) => item.status === 'active'));
-      questionnaireForm.setFieldsValue({ templateIds: (dossier.questionnaires || []).map((item: any) => item.templateId), reason: undefined });
-      setQuestionnaireOpen(true);
-    } catch (error) { message.error(getApiErrorMessage(error, '加载问卷模板失败')); }
+  const openQuestionnaires = () => {
+    questionnaireForm.setFieldsValue({ templateIds: (dossier.questionnaires || []).map((item: any) => item.templateId), reason: undefined });
+    setQuestionnaireOpen(true);
   };
   const saveQuestionnaires = async () => {
     try {
@@ -200,13 +200,13 @@ export default function DossierDetail() {
 
     <Modal title={editor?.kind === 'permission' ? '平台权限' : editor?.kind === 'dataItem' ? '信息类型' : 'ROPA处理活动'} open={Boolean(editor)} onCancel={() => setEditor(null)} onOk={saveEntity} width={680} destroyOnHidden>
       <Form form={entityForm} layout="vertical" preserve={false}>
-        {editor?.kind === 'permission' ? <><Form.Item name="platform" label="平台" rules={[{ required: true }]}><Select options={platformOptions} /></Form.Item><Form.Item name="permissionName" label="权限名称" rules={[{ required: true }]}><Input placeholder="例如 android.permission.CAMERA" /></Form.Item><Form.Item name="purpose" label="用途" rules={[{ required: true }]}><Input.TextArea rows={3} /></Form.Item><Form.Item name="required" valuePropName="checked"><Checkbox>属于产品必要权限</Checkbox></Form.Item><Form.Item name="dataItemIds" label="关联信息类型"><Select mode="multiple" options={dataItems.map((item) => ({ value: item.clientId, label: item.name }))} /></Form.Item></> : null}
+        {editor?.kind === 'permission' ? <><Form.Item name="platform" label="平台" rules={[{ required: true }]}><Select options={platformOptions} /></Form.Item><Form.Item name="permissionName" label="权限名称" rules={[{ required: true }]}><Input placeholder="例如 android.permission.CAMERA" /></Form.Item><Form.Item name="purpose" label="用途" rules={[{ required: true }]}><Input.TextArea rows={3} /></Form.Item><Form.Item name="required" valuePropName="checked"><Checkbox>属于产品必要权限</Checkbox></Form.Item><Form.Item name="dataItemIds" label="关联信息类型"><SearchableSelect mode="multiple" options={dataItems.map((item) => ({ value: item.clientId, label: item.name }))} /></Form.Item></> : null}
         {editor?.kind === 'dataItem' ? <><Form.Item name="clientId" hidden><Input /></Form.Item><Form.Item name="name" label="信息名称" rules={[{ required: true }]}><Input placeholder="例如 手机号" /></Form.Item><Form.Item name="category" label="数据类别" rules={[{ required: true }]}><Input placeholder="例如 联系信息" /></Form.Item><Form.Item name="dataSubjectCategories" label="数据主体类别"><Select mode="tags" /></Form.Item><Form.Item name="source" label="信息来源"><Input /></Form.Item><Space><Form.Item name="sensitive" valuePropName="checked"><Checkbox>敏感信息</Checkbox></Form.Item><Form.Item name="required" valuePropName="checked"><Checkbox>产品必要信息</Checkbox></Form.Item></Space><Form.Item name="notes" label="备注"><Input.TextArea /></Form.Item></> : null}
-        {editor?.kind === 'activity' ? <><Form.Item name="name" label="活动名称" rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="purpose" label="处理目的" rules={[{ required: true }]}><Input.TextArea /></Form.Item><Form.Item name="legalBasis" label="法律依据" rules={[{ required: true }]}><Select options={['同意', '合同必要', '法律义务', '重大利益', '公共任务', '合法利益'].map((value) => ({ value, label: value }))} /></Form.Item><Form.Item name="controllerRole" label="责任角色" rules={[{ required: true }]}><Select options={[{ value: 'controller', label: '控制者' }, { value: 'processor', label: '处理者' }, { value: 'joint_controller', label: '共同控制者' }]} /></Form.Item><Form.Item name="dataItemIds" label="关联信息类型" rules={[{ required: true }]}><Select mode="multiple" options={dataItems.map((item) => ({ value: item.clientId, label: item.name }))} /></Form.Item><Form.Item name="dataSubjectCategories" label="数据主体类别"><Select mode="tags" /></Form.Item><Form.Item name="recipientCategories" label="接收方类别"><Select mode="tags" /></Form.Item><Form.Item name="internationalTransfer" valuePropName="checked"><Checkbox>涉及跨境传输</Checkbox></Form.Item><Form.Item name="transferCountries" label="传输国家/地区"><Select mode="tags" /></Form.Item><Form.Item name="transferSafeguards" label="跨境保障措施"><Input.TextArea /></Form.Item><Form.Item name="retentionPeriod" label="删除或保存期限" rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="securityMeasures" label="技术与组织安全措施" rules={[{ required: true }]}><Input.TextArea rows={3} /></Form.Item><Form.Item name="responsibleParty" label="责任主体" rules={[{ required: true }]}><Input /></Form.Item></> : null}
+        {editor?.kind === 'activity' ? <><Form.Item name="name" label="活动名称" rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="purpose" label="处理目的" rules={[{ required: true }]}><Input.TextArea /></Form.Item><Form.Item name="legalBasis" label="法律依据" rules={[{ required: true }]}><Select options={['同意', '合同必要', '法律义务', '重大利益', '公共任务', '合法利益'].map((value) => ({ value, label: value }))} /></Form.Item><Form.Item name="controllerRole" label="责任角色" rules={[{ required: true }]}><Select options={[{ value: 'controller', label: '控制者' }, { value: 'processor', label: '处理者' }, { value: 'joint_controller', label: '共同控制者' }]} /></Form.Item><Form.Item name="dataItemIds" label="关联信息类型" rules={[{ required: true }]}><SearchableSelect mode="multiple" options={dataItems.map((item) => ({ value: item.clientId, label: item.name }))} /></Form.Item><Form.Item name="dataSubjectCategories" label="数据主体类别"><Select mode="tags" /></Form.Item><Form.Item name="recipientCategories" label="接收方类别"><Select mode="tags" /></Form.Item><Form.Item name="internationalTransfer" valuePropName="checked"><Checkbox>涉及跨境传输</Checkbox></Form.Item><Form.Item name="transferCountries" label="传输国家/地区"><Select mode="tags" /></Form.Item><Form.Item name="transferSafeguards" label="跨境保障措施"><Input.TextArea /></Form.Item><Form.Item name="retentionPeriod" label="删除或保存期限" rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="securityMeasures" label="技术与组织安全措施" rules={[{ required: true }]}><Input.TextArea rows={3} /></Form.Item><Form.Item name="responsibleParty" label="责任主体" rules={[{ required: true }]}><Input /></Form.Item></> : null}
       </Form>
     </Modal>
     <Modal title="退回档案" open={returnOpen} onCancel={() => setReturnOpen(false)} onOk={returnForChanges}><Form form={reviewForm} layout="vertical"><Form.Item name="reason" label="退回原因" rules={[{ required: true }]}><Input.TextArea rows={4} /></Form.Item></Form></Modal>
     <Modal title="确认合规档案" open={confirmOpen} onCancel={() => setConfirmOpen(false)} onOk={confirm}><Alert type="warning" showIcon message="确认后档案将锁定，后续纠错必须创建新修订。" style={{ marginBottom: 16 }} /><Form form={reviewForm} layout="vertical"><Form.Item name="conclusion" label="最终合规结论" rules={[{ required: true }]}><Select options={Object.entries(conclusionLabels).filter(([value]) => value !== 'not_assessed').map(([value, option]) => ({ value, label: option.label }))} /></Form.Item></Form></Modal>
-    <Modal title="调整适用问卷" open={questionnaireOpen} onCancel={() => setQuestionnaireOpen(false)} onOk={saveQuestionnaires}><Alert type="warning" showIcon message="新增问卷将生成待填写问题；移除问卷不会改变已确认的历史档案。" style={{ marginBottom: 16 }} /><Form form={questionnaireForm} layout="vertical"><Form.Item name="templateIds" label="适用问卷"><Select mode="multiple" options={availableTemplates.map((item) => ({ value: item.id, label: `${item.name} ${item.version}` }))} /></Form.Item><Form.Item name="reason" label="调整原因" rules={[{ required: true }]}><Input.TextArea rows={3} /></Form.Item></Form></Modal>
+    <Modal title="调整适用问卷" open={questionnaireOpen} onCancel={() => setQuestionnaireOpen(false)} onOk={saveQuestionnaires}><Alert type="warning" showIcon message="新增问卷将生成待填写问题；移除问卷不会改变已确认的历史档案。" style={{ marginBottom: 16 }} /><Form form={questionnaireForm} layout="vertical"><Form.Item name="templateIds" label="适用问卷"><LookupSelect kind="product-questionnaires" purpose="product-questionnaire" contextId={id} mode="multiple" /></Form.Item><Form.Item name="reason" label="调整原因" rules={[{ required: true }]}><Input.TextArea rows={3} /></Form.Item></Form></Modal>
   </div>;
 }

@@ -28,6 +28,7 @@ import auditLogService from './audit-log.service';
 import notificationService from './notification.service';
 import objectAccessService from './object-access.service';
 import idempotencyService from './idempotency.service';
+import lookupService from './lookup.service';
 
 type RequestUser = NonNullable<Express.Request['user']>;
 
@@ -194,6 +195,15 @@ class FindingService {
     }
     if (![FindingDisposition.PENDING, FindingDisposition.DIRECT_REMEDIATION].includes(visible.disposition)) {
       throw new AppError(409, 'CONFLICT', '已升级为风险的不符合项不能改为直接整改');
+    }
+    if (!input.actionId) {
+      await lookupService.assertOwners(
+        'finding-remediation-owner',
+        input.ownerDepartmentId || visible.ownerDepartmentId,
+        input.ownerUserId || visible.ownerUserId,
+        user,
+        id,
+      );
     }
     const idempotencyKey = idempotencyService.requireKey(rawIdempotencyKey);
     const result = await idempotencyService.execute(

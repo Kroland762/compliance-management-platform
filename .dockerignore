@@ -1,0 +1,8 @@
+*
+!deploy/
+!deploy/backup/
+!deploy/backup/Dockerfile
+!backend/
+!backend/scripts/
+!backend/scripts/backup.sh
+!backend/scripts/restore.sh

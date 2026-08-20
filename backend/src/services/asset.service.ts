@@ -1,9 +1,10 @@
 import { Op } from 'sequelize';
-import { Asset, Department, OperationType, TenantMember, TenantMemberStatus } from '../models';
+import { Asset, OperationType } from '../models';
 import { AppError } from '../utils/http';
 import { pagination, parsePagination } from '../utils/pagination';
 import auditLogService from './audit-log.service';
 import objectAccessService from './object-access.service';
+import lookupService from './lookup.service';
 
 type RequestUser = NonNullable<Express.Request['user']>;
 
@@ -19,13 +20,8 @@ interface AssetInput {
 }
 
 class AssetService {
-  private async validateOwners(input: Pick<AssetInput, 'ownerDepartmentId' | 'ownerUserId'>): Promise<void> {
-    if (input.ownerDepartmentId && !await Department.findOne({
-      where: { id: input.ownerDepartmentId, status: 'active' },
-    })) throw new AppError(404, 'NOT_FOUND', '资产责任部门不存在');
-    if (input.ownerUserId && !await TenantMember.findOne({
-      where: { userId: input.ownerUserId, status: TenantMemberStatus.ACTIVE },
-    })) throw new AppError(404, 'NOT_FOUND', '资产负责人不存在');
+  private async validateOwners(input: Pick<AssetInput, 'ownerDepartmentId' | 'ownerUserId'>, user: RequestUser, contextId = ''): Promise<void> {
+    await lookupService.assertOwners('asset-owner', input.ownerDepartmentId, input.ownerUserId, user, contextId);
   }
 
   async list(query: Record<string, unknown>, user: RequestUser) {
@@ -58,7 +54,7 @@ class AssetService {
     if (!input.name?.trim() || !input.assetType?.trim()) {
       throw new AppError(400, 'VALIDATION_ERROR', '资产名称和类型必填');
     }
-    await this.validateOwners(input);
+    await this.validateOwners(input, user);
     if (await Asset.findOne({ where: { code } })) throw new AppError(409, 'CONFLICT', '资产编码已存在');
     const asset = await Asset.create({
       ...input,
@@ -86,7 +82,7 @@ class AssetService {
     if (asset.status !== 'active') {
       throw new AppError(409, 'ASSET_ARCHIVED', '已归档资产不可编辑，请先恢复');
     }
-    await this.validateOwners(input);
+    await this.validateOwners(input, user, id);
     if (input.name !== undefined && !input.name.trim()) {
       throw new AppError(400, 'VALIDATION_ERROR', '资产名称不能为空');
     }

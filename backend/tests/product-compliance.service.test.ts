@@ -10,6 +10,7 @@ import {
 } from '../src/models';
 import { PERMISSION_DEFINITIONS } from '../src/models/Role';
 import auditLogService from '../src/services/audit-log.service';
+import lookupService from '../src/services/lookup.service';
 import objectAccessService from '../src/services/object-access.service';
 import service from '../src/services/product-compliance.service';
 
@@ -34,6 +35,7 @@ describe('product compliance service', () => {
     vi.spyOn(ProductType, 'findOne').mockResolvedValue({ id: 'type-1' } as any);
     vi.spyOn(Department, 'findOne').mockResolvedValue({ id: 'department-1' } as any);
     vi.spyOn(TenantMember, 'findOne').mockResolvedValue({ id: 'member-1' } as any);
+    vi.spyOn(lookupService, 'assertOwners').mockResolvedValue();
     vi.spyOn(Product, 'findOne').mockResolvedValue(null);
     vi.spyOn(Product, 'create').mockImplementation(async (input: any) => ({ id: 'product-1', ...input }) as any);
     vi.spyOn(auditLogService, 'log').mockResolvedValue({} as any);

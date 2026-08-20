@@ -7,13 +7,13 @@ import apiClient from '../../api/client';
 import { useAuthStore } from '../../store/auth';
 import { getApiErrorMessage } from '../../utils/error';
 import { platformOptions, StatusTag } from './labels';
+import { LookupSelect } from '../../components/lookups';
 
 export default function ProductDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const can = useAuthStore((state) => state.hasPermission);
   const [product, setProduct] = useState<any>();
-  const [types, setTypes] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState(0);
   const [form] = Form.useForm();
@@ -21,7 +21,7 @@ export default function ProductDetail() {
     try { const response: any = await apiClient.get(`/product-compliance/products/${id}`); setProduct(response.data); }
     catch (error) { message.error(getApiErrorMessage(error, '加载产品详情失败')); }
   };
-  useEffect(() => { load(); apiClient.get('/product-compliance/config/product-types').then((response: any) => setTypes(response.data || [])); }, [id]);
+  useEffect(() => { load(); }, [id]);
 
   const createVersion = async () => {
     try {
@@ -61,7 +61,7 @@ export default function ProductDetail() {
       <Form form={form} layout="vertical" preserve>
         <div style={{ display: step === 0 ? 'block' : 'none' }}>
           <Form.Item name="version" label="版本号" rules={[{ required: true }]}><Input placeholder="例如 2.3.0" /></Form.Item>
-          <Form.Item name="productTypeId" label="本版本产品类型" rules={[{ required: true }]}><Select options={types.map((item) => ({ value: item.id, label: item.name }))} /></Form.Item>
+          <Form.Item name="productTypeId" label="本版本产品类型" rules={[{ required: true }]}><LookupSelect kind="product-types" purpose="product-owner" /></Form.Item>
           <Form.Item name="platforms" label="适用平台" rules={[{ required: true }]}><Select mode="tags" options={platformOptions} placeholder="选择或输入平台" /></Form.Item>
           <Form.Item name="usageScope" label="使用范围" rules={[{ required: true }]}><Input.TextArea rows={3} /></Form.Item>
           <Space style={{ width: '100%' }} align="start"><Form.Item name="plannedReleaseDate" label="计划上线日期"><DatePicker /></Form.Item><Form.Item name="actualReleaseDate" label="实际上线日期"><DatePicker disabledDate={(date) => date && date.isAfter(dayjs())} /></Form.Item></Space>

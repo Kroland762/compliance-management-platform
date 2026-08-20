@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { App, Button, Card, Empty, Input, InputNumber, Popconfirm, Select, Space, Spin, Table, Tag, Tooltip, Tree } from 'antd';
+import { App, Button, Card, Empty, Input, InputNumber, Popconfirm, Space, Spin, Table, Tag, Tooltip, Tree } from 'antd';
 import { ApartmentOutlined, CloseOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import apiClient from '../api/client';
 import { useAuthStore } from '../store/auth';
 import { expandDepartment, reconcileExpandedDepartmentIds } from '../utils/organization';
+import { DepartmentSelect, PersonnelSelect } from '../components/lookups';
 
 interface DepartmentNode {
   id: string;
@@ -39,6 +40,15 @@ function toTreeData(items: DepartmentNode[]): any[] {
   }));
 }
 
+function filterDepartmentTree(items: DepartmentNode[], keyword: string): DepartmentNode[] {
+  if (!keyword.trim()) return items;
+  const normalized = keyword.trim().toLocaleLowerCase();
+  return items.flatMap((item) => {
+    const children = filterDepartmentTree(item.children || [], keyword);
+    return item.name.toLocaleLowerCase().includes(normalized) || children.length ? [{ ...item, children }] : [];
+  });
+}
+
 function getSiblingDepartments(items: DepartmentNode[], parentId: string | null) {
   return flattenDepartments(items).filter((item) => item.parentId === parentId);
 }
@@ -66,6 +76,7 @@ export default function OrganizationManagement() {
   const [deptDraft, setDeptDraft] = useState({ name: '', code: '', parentId: '', description: '', sortOrder: 0, managerMemberId: '' });
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [treeKeyword, setTreeKeyword] = useState('');
 
   const selectedDept = selectedDeptId ? flattenDepartments(departments).find((item) => item.id === selectedDeptId) || null : null;
 
@@ -248,6 +259,7 @@ export default function OrganizationManagement() {
                 )}
               </Space>
             </div>
+            <Input.Search allowClear value={treeKeyword} onChange={(event) => setTreeKeyword(event.target.value)} placeholder="按部门名称检索" style={{ marginBottom: 12 }} />
             {departments.length === 0 ? (
               <Empty
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
@@ -271,7 +283,7 @@ export default function OrganizationManagement() {
                 selectedKeys={selectedDeptId ? [selectedDeptId] : []}
                 expandedKeys={expandedDeptIds || []}
                 onExpand={(keys) => setExpandedDeptIds(keys.map(String))}
-                treeData={toTreeData(departments)}
+                treeData={toTreeData(filterDepartmentTree(departments, treeKeyword))}
                 onSelect={handleSelectDepartment}
               />
             )}
@@ -302,14 +314,15 @@ export default function OrganizationManagement() {
                   </div>
                   <div>
                     <div style={{ fontSize: 14, marginBottom: 8 }}>上级部门</div>
-                    <Select
+                    <DepartmentSelect
+                      purpose="organization-parent"
+                      contextId={selectedDeptId || undefined}
                       allowClear
                       disabled={!canManage}
                       value={deptDraft.parentId || undefined}
                       onChange={(value) => setDeptDraft((draft) => ({ ...draft, parentId: value || '' }))}
                       placeholder="无上级部门"
                       style={{ width: '100%' }}
-                      options={flattenDepartments(departments).filter((item) => item.id !== selectedDeptId).map((item) => ({ value: item.id, label: item.name }))}
                     />
                   </div>
                 </div>
@@ -320,13 +333,15 @@ export default function OrganizationManagement() {
                   </div>
                   <div>
                     <div style={{ fontSize: 14, marginBottom: 8 }}>部门负责人</div>
-                    <Select
+                    <PersonnelSelect
+                      purpose="organization-manager"
+                      valueType="memberId"
+                      contextId={selectedDeptId || undefined}
                       allowClear
                       disabled={!canManage}
                       value={deptDraft.managerMemberId || undefined}
                       onChange={(value) => setDeptDraft((draft) => ({ ...draft, managerMemberId: value || '' }))}
                       style={{ width: '100%' }}
-                      options={users.map((member) => ({ value: member.id, label: `${member.displayName} (${member.username})` }))}
                     />
                   </div>
                 </div>

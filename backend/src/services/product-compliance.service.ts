@@ -1,7 +1,6 @@
-import { Op, type Transaction, type WhereOptions } from 'sequelize';
+import { Op, type Transaction } from 'sequelize';
 import sequelize from '../config/database';
 import {
-  Department,
   OperationType,
   Product,
   ProductComplianceDossier,
@@ -17,8 +16,6 @@ import {
   ProductType,
   ProductTypeQuestionnaireRule,
   ProductVersion,
-  TenantMember,
-  TenantMemberStatus,
   type DossierComplianceConclusion,
   type ProductQuestionType,
 } from '../models';
@@ -27,6 +24,7 @@ import { assertLockVersion } from '../utils/optimistic-lock';
 import { pagination, parsePagination } from '../utils/pagination';
 import auditLogService from './audit-log.service';
 import objectAccessService from './object-access.service';
+import lookupService from './lookup.service';
 
 type RequestUser = NonNullable<Express.Request['user']>;
 const QUESTION_TYPES: ProductQuestionType[] = ['boolean', 'single_select', 'multi_select', 'short_text', 'long_text', 'number', 'date'];
@@ -81,13 +79,8 @@ class ProductComplianceService {
     });
   }
 
-  private async validateOwners(ownerDepartmentId: string, ownerUserId: string) {
-    if (!await Department.findOne({ where: { id: ownerDepartmentId, status: 'active' } })) {
-      throw new AppError(404, 'NOT_FOUND', '产品归属部门不存在');
-    }
-    if (!await TenantMember.findOne({ where: { userId: ownerUserId, status: TenantMemberStatus.ACTIVE } })) {
-      throw new AppError(404, 'NOT_FOUND', '产品负责人不是当前租户的有效成员');
-    }
+  private async validateOwners(ownerDepartmentId: string, ownerUserId: string, user: RequestUser, contextId = '') {
+    await lookupService.assertOwners('product-owner', ownerDepartmentId, ownerUserId, user, contextId);
   }
 
   private async activeType(id: string, transaction?: Transaction) {
@@ -148,7 +141,7 @@ class ProductComplianceService {
     const code = requiredText(input.code, '产品编码', 64).toUpperCase();
     if (!/^[A-Z0-9][A-Z0-9_-]*$/.test(code)) throw new AppError(400, 'VALIDATION_ERROR', '产品编码只能包含大写字母、数字、下划线和连字符');
     await this.activeType(input.defaultProductTypeId);
-    await this.validateOwners(input.ownerDepartmentId, input.ownerUserId);
+    await this.validateOwners(input.ownerDepartmentId, input.ownerUserId, user);
     if (await Product.findOne({ where: { code } })) throw new AppError(409, 'CONFLICT', '产品编码已存在');
     const product = await Product.create({
       code,
@@ -168,7 +161,7 @@ class ProductComplianceService {
     if (product.status === 'archived') throw new AppError(409, 'PRODUCT_ARCHIVED', '已归档产品不可编辑');
     const ownerDepartmentId = input.ownerDepartmentId ?? product.ownerDepartmentId;
     const ownerUserId = input.ownerUserId ?? product.ownerUserId;
-    await this.validateOwners(ownerDepartmentId, ownerUserId);
+    await this.validateOwners(ownerDepartmentId, ownerUserId, user, id);
     if (input.defaultProductTypeId) await this.activeType(input.defaultProductTypeId);
     await product.update({
       ...(input.name !== undefined ? { name: requiredText(input.name, '产品名称', 200) } : {}),

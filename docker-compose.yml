@@ -1,8 +1,9 @@
-version: '3.8'
+name: compliance-platform
 
 services:
   db:
     image: postgres:15
+    restart: unless-stopped
     environment:
       POSTGRES_DB: compliance_management_platform
       POSTGRES_USER: admin
@@ -16,13 +17,14 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+      start_period: 10s
+    stop_grace_period: 30s
 
-  backend:
+  migrate:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    ports:
-      - '3001:3001'
+    command: ['npm', 'run', 'migrate:prod']
     environment:
       NODE_ENV: production
       DB_HOST: db
@@ -36,22 +38,97 @@ services:
       JWT_REFRESH_EXPIRES_IN: '86400'
       BUSINESS_TIME_ZONE: ${BUSINESS_TIME_ZONE:-Asia/Shanghai}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY to a random value}
-      FRONTEND_URL: http://localhost
-      UPLOAD_DIR: /app/uploads
+      METRICS_TOKEN: ${METRICS_TOKEN:?Set METRICS_TOKEN to a random value of at least 32 characters}
     depends_on:
       db:
         condition: service_healthy
+    restart: 'no'
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - '127.0.0.1:${BACKEND_HOST_PORT:-3001}:3001'
+    environment:
+      NODE_ENV: production
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: compliance_management_platform
+      DB_USER: admin
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD to a strong random value}
+      DB_SSL: 'false'
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET to a random value of at least 32 characters}
+      JWT_EXPIRES_IN: '900'
+      JWT_REFRESH_EXPIRES_IN: '86400'
+      BUSINESS_TIME_ZONE: ${BUSINESS_TIME_ZONE:-Asia/Shanghai}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY to a random value}
+      METRICS_TOKEN: ${METRICS_TOKEN:?Set METRICS_TOKEN to a random value of at least 32 characters}
+      FRONTEND_URL: https://${DOMAIN:?Set DOMAIN to the public hostname without scheme}
+      TRUST_PROXY_HOPS: '1'
+      UPLOAD_DIR: /app/uploads
+      MAX_FILE_SIZE: ${MAX_FILE_SIZE:-52428800}
+      FILE_STORAGE_DRIVER: local
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      SCHEDULE_TASK_TIMEOUT_MS: ${SCHEDULE_TASK_TIMEOUT_MS:-600000}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - uploads:/app/uploads
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3001/api/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    stop_grace_period: 30s
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
-      - '80:80'
+      - '127.0.0.1:${FRONTEND_HOST_PORT:-8080}:80'
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O /dev/null http://127.0.0.1/ || exit 1']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  backup-tools:
+    profiles: ['ops']
+    build:
+      context: .
+      dockerfile: deploy/backup/Dockerfile
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: compliance_management_platform
+      DB_USER: admin
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD to a strong random value}
+      UPLOAD_DIR: /data/uploads
+      BACKUP_DIR: /data/backups
+      BACKUP_ENCRYPTION_KEY_FILE: /run/secrets/backup_encryption_key
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - uploads:/data/uploads:ro
+      - ${BACKUP_HOST_DIR:-./backups}:/data/backups
+      - ${RESTORE_HOST_DIR:-./restore-uploads}:/data/restore-uploads
+      - ${BACKUP_KEY_FILE:?Set BACKUP_KEY_FILE to a protected file outside the repository}:/run/secrets/backup_encryption_key:ro
+    restart: 'no'
 
 volumes:
   pgdata:

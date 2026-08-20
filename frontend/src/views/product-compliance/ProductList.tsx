@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button, Form, Input, message, Modal, Popconfirm, Select, Space, Table, Tag, Typography } from 'antd';
 import { EyeOutlined, PlusOutlined, StopOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
@@ -6,14 +6,12 @@ import apiClient from '../../api/client';
 import { useAuthStore } from '../../store/auth';
 import { getApiErrorMessage } from '../../utils/error';
 import { StatusTag } from './labels';
+import { DepartmentSelect, LookupSelect, PersonnelSelect } from '../../components/lookups';
 
 export default function ProductList() {
   const navigate = useNavigate();
   const can = useAuthStore((state) => state.hasPermission);
   const [items, setItems] = useState<any[]>([]);
-  const [types, setTypes] = useState<any[]>([]);
-  const [departments, setDepartments] = useState<any[]>([]);
-  const [people, setPeople] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [filters, setFilters] = useState<any>({ status: 'active' });
@@ -32,16 +30,7 @@ export default function ProductList() {
 
   useEffect(() => {
     load();
-    Promise.all([
-      apiClient.get('/product-compliance/config/product-types'),
-      apiClient.get('/lookup/departments'),
-      apiClient.get('/lookup/personnel'),
-    ]).then(([typeRes, departmentRes, peopleRes]: any[]) => {
-      setTypes(typeRes.data || []); setDepartments(departmentRes.data || []); setPeople(peopleRes.data || []);
-    }).catch(() => message.warning('部分产品基础数据加载失败'));
   }, []);
-
-  const peopleOptions = useMemo(() => people.map((item) => ({ value: item.userId, label: item.displayName || item.username })), [people]);
   const submit = async (values: any) => {
     try {
       await apiClient.post('/product-compliance/products', values);
@@ -61,7 +50,7 @@ export default function ProductList() {
     </Space>
     <Space wrap style={{ marginBottom: 16 }}>
       <Input.Search allowClear placeholder="产品名称或编码" style={{ width: 240 }} onSearch={(keyword) => applyFilters({ keyword: keyword || undefined })} />
-      <Select allowClear placeholder="产品类型" style={{ width: 180 }} options={types.map((item) => ({ value: item.id, label: item.name }))} onChange={(productTypeId) => applyFilters({ productTypeId })} />
+      <LookupSelect kind="product-types" purpose="product-filter" allowClear placeholder="输入产品类型名称" style={{ width: 180 }} onChange={(productTypeId) => applyFilters({ productTypeId })} />
       <Select value={filters.status} style={{ width: 130 }} options={[{ value: 'active', label: '使用中' }, { value: 'archived', label: '已归档' }]} onChange={(status) => applyFilters({ status })} />
       <Select allowClear placeholder="档案状态" style={{ width: 140 }} options={Object.entries({ draft: '草稿', pending_review: '待复核', changes_requested: '已退回', confirmed: '已确认' }).map(([value, label]) => ({ value, label }))} onChange={(dossierStatus) => applyFilters({ dossierStatus })} />
       <Select allowClear placeholder="合规结论" style={{ width: 150 }} options={Object.entries({ not_assessed: '未评估', compliant: '符合', conditionally_compliant: '有条件符合', non_compliant: '不符合' }).map(([value, label]) => ({ value, label }))} onChange={(complianceConclusion) => applyFilters({ complianceConclusion })} />
@@ -80,9 +69,9 @@ export default function ProductList() {
       <Form form={form} layout="vertical" onFinish={submit} preserve={false}>
         <Form.Item name="code" label="产品编码" rules={[{ required: true }, { pattern: /^[A-Z0-9][A-Z0-9_-]*$/, message: '仅支持大写字母、数字、下划线和连字符' }]}><Input placeholder="例如 MOBILE_APP" /></Form.Item>
         <Form.Item name="name" label="产品名称" rules={[{ required: true }]}><Input /></Form.Item>
-        <Form.Item name="defaultProductTypeId" label="默认产品类型" rules={[{ required: true }]}><Select options={types.map((item) => ({ value: item.id, label: item.name }))} /></Form.Item>
-        <Form.Item name="ownerDepartmentId" label="归属部门" rules={[{ required: true }]}><Select showSearch optionFilterProp="label" options={departments.map((item) => ({ value: item.id, label: `${item.name} (${item.code})` }))} /></Form.Item>
-        <Form.Item name="ownerUserId" label="产品负责人" rules={[{ required: true }]}><Select showSearch optionFilterProp="label" options={peopleOptions} /></Form.Item>
+        <Form.Item name="defaultProductTypeId" label="默认产品类型" rules={[{ required: true }]}><LookupSelect kind="product-types" purpose="product-owner" /></Form.Item>
+        <Form.Item name="ownerDepartmentId" label="归属部门" rules={[{ required: true }]}><DepartmentSelect purpose="product-owner" /></Form.Item>
+        <Form.Item name="ownerUserId" label="产品负责人" rules={[{ required: true }]}><PersonnelSelect purpose="product-owner" /></Form.Item>
         <Form.Item name="description" label="产品说明"><Input.TextArea rows={3} /></Form.Item>
       </Form>
     </Modal>

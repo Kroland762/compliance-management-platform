@@ -1,7 +1,7 @@
 import { Op } from 'sequelize';
 import dns from 'dns/promises';
 import net from 'net';
-import { DataSource, DataSourceType, DataSourceStatus, MappingStatus, DataTier, AccountData } from '../../models/account';
+import { DataSource, DataSourceType, DataSourceStatus, MappingStatus, DataTier, AccountData, AccountAuditTask } from '../../models/account';
 import { encrypt, decrypt } from '../../utils/crypto';
 import auditLogService from '../audit-log.service';
 import { OperationType } from '../../models';
@@ -157,14 +157,12 @@ class DataSourceService {
   async listDataSources(query: ListQuery) {
     const { page, pageSize } = parsePagination(query);
     const { search, sourceType, status } = query;
-    if (sourceType && sourceType !== DataSourceType.DATABASE) {
-      throw new Error('仅支持 PostgreSQL 数据源');
-    }
-    const where: any = { sourceType: DataSourceType.DATABASE };
+    const where: any = {};
 
     if (search) {
       where.name = { [Op.iLike]: `%${search}%` };
     }
+    if (sourceType) where.sourceType = sourceType;
     if (status) {
       where.status = status;
     }
@@ -176,8 +174,9 @@ class DataSourceService {
       offset: (page - 1) * pageSize,
     });
 
+    const taskCounts = await this.taskCounts(rows.map((row) => row.id));
     return {
-      items: rows.map(r => this.sanitizeDataSource(r.toJSON())),
+      items: rows.map((row) => ({ ...this.sanitizeDataSource(row.toJSON()), taskCount: taskCounts.get(row.id) || 0 })),
       pagination: pagination(page, pageSize, count),
     };
   }
@@ -186,9 +185,9 @@ class DataSourceService {
    * 获取单个数据源
    */
   async getDataSource(id: string) {
-    const ds = await DataSource.findOne({ where: { id, sourceType: DataSourceType.DATABASE } });
+    const ds = await DataSource.findByPk(id);
     if (!ds) throw new Error('数据源不存在');
-    return this.sanitizeDataSource(ds.toJSON());
+    return { ...this.sanitizeDataSource(ds.toJSON()), taskCount: await AccountAuditTask.count({ where: { sourceId: id } }) };
   }
 
   /**
@@ -287,7 +286,7 @@ class DataSourceService {
    * 更新数据源
    */
   async updateDataSource(id: string, data: UpdateDataSourceInput, userId?: string) {
-    const ds = await DataSource.findOne({ where: { id, sourceType: DataSourceType.DATABASE } });
+    const ds = await DataSource.findByPk(id);
     if (!ds) throw new Error('数据源不存在');
 
     const updates: any = {};
@@ -305,6 +304,7 @@ class DataSourceService {
     if (data.status !== undefined) updates.status = data.status;
 
     if (data.connectionConfig !== undefined) {
+      if (ds.sourceType !== DataSourceType.DATABASE) throw new Error('CSV 数据源不支持数据库连接配置');
       const previous = (ds.connectionConfig || {}) as any;
       const incoming = data.connectionConfig as any;
       const cfg = { ...previous, ...incoming };
@@ -343,7 +343,7 @@ class DataSourceService {
    * 启用/停用数据源
    */
   async toggleDataSource(id: string, userId?: string) {
-    const ds = await DataSource.findOne({ where: { id, sourceType: DataSourceType.DATABASE } });
+    const ds = await DataSource.findByPk(id);
     if (!ds) throw new Error('数据源不存在');
 
     const newStatus = ds.status === DataSourceStatus.ACTIVE
@@ -370,7 +370,7 @@ class DataSourceService {
    * 删除数据源（同时清理关联的账户数据）
    */
   async deleteDataSource(id: string, userId?: string) {
-    const ds = await DataSource.findOne({ where: { id, sourceType: DataSourceType.DATABASE } });
+    const ds = await DataSource.findByPk(id);
     if (!ds) throw new Error('数据源不存在');
 
     // 删除关联的账户数据
@@ -441,7 +441,7 @@ class DataSourceService {
    * 预览数据源中的前10条数据
    */
   async previewData(id: string) {
-    const ds = await DataSource.findOne({ where: { id, sourceType: DataSourceType.DATABASE } });
+    const ds = await DataSource.findByPk(id);
     if (!ds) throw new Error('数据源不存在');
 
     const data = await AccountData.findAll({
@@ -450,10 +450,12 @@ class DataSourceService {
       limit: 10,
     });
 
+    const items = data.map(d => d.toJSON());
     return {
       sourceId: id,
       sourceName: ds.name,
-      preview: data.map(d => d.toJSON()),
+      items,
+      preview: items,
     };
   }
 
@@ -462,8 +464,9 @@ class DataSourceService {
    * COLD → 删除, WARM → COLD, HOT → WARM, 新数据 → HOT
    */
   async syncData(id: string, userId?: string, force = false) {
-    const ds = await DataSource.findOne({ where: { id, sourceType: DataSourceType.DATABASE } });
+    const ds = await DataSource.findByPk(id);
     if (!ds) throw new Error('数据源不存在');
+    if (ds.sourceType === DataSourceType.CSV) throw new Error('CSV 数据源请使用“重新上传”更新数据');
 
     // 检查数据源是否有变化，无变化则跳过同步
     if (!force && ds.lastSyncTime) {
@@ -542,9 +545,7 @@ class DataSourceService {
     }
 
     // 5. 更新统计
-    const totalAccounts = await AccountData.count({
-      where: { sourceId: id },
-    });
+    const totalAccounts = await AccountData.count({ where: { sourceId: id, dataTier: DataTier.HOT } });
 
     await ds.update({
       totalAccounts,
@@ -601,7 +602,22 @@ class DataSourceService {
     try {
       await conn.authenticate();
       await conn.query('SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY');
-      const allowedColumns = (connCfg.allowedColumns as string[]).map((column) => this.identifier(column, '字段'));
+      const configuredColumns = connCfg.allowedColumns as string[];
+      const [columnRows] = await conn.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = :schemaName AND table_name = :tableName`,
+        { replacements: { schemaName: connCfg.schema || 'public', tableName: connCfg.table } },
+      );
+      const availableColumns = new Set((columnRows as any[]).map(row => String(row.column_name)));
+      const mappedColumns = Object.values(mappingConfig)
+        .map((mapping: any) => typeof mapping === 'string' ? mapping : mapping?.sourceField)
+        .filter(Boolean);
+      const missingColumns = [...new Set([...configuredColumns, ...mappedColumns])]
+        .filter(column => !availableColumns.has(column));
+      if (missingColumns.length) {
+        throw new Error(`数据库字段映射已失效，缺少字段: ${missingColumns.join(', ')}`);
+      }
+      const allowedColumns = configuredColumns.map((column) => this.identifier(column, '字段'));
       const schema = this.identifier(connCfg.schema || 'public', 'schema');
       const table = this.identifier(connCfg.table, 'table');
       const sql = `SELECT ${allowedColumns.join(', ')} FROM ${schema}.${table} LIMIT 10000`;
@@ -673,7 +689,7 @@ class DataSourceService {
    * 存量 = HOT 和 WARM 中都有的
    */
   async getAccountChangeStats(sourceId: string) {
-    const ds = await DataSource.findOne({ where: { id: sourceId, sourceType: DataSourceType.DATABASE } });
+    const ds = await DataSource.findByPk(sourceId);
     if (!ds) throw new Error('数据源不存在');
 
     const hotAccounts = await AccountData.findAll({
@@ -712,7 +728,25 @@ class DataSourceService {
       }
       ds.connectionConfig = cfg;
     }
+    if (ds.csvConfig) {
+      const { filePath: _legacyFilePath, ...csvConfig } = ds.csvConfig;
+      ds.csvConfig = {
+        ...csvConfig,
+        needsReupload: !csvConfig.sha256,
+      };
+    }
     return ds;
+  }
+
+  private async taskCounts(sourceIds: string[]): Promise<Map<string, number>> {
+    if (!sourceIds.length) return new Map();
+    const rows = await AccountAuditTask.findAll({
+      where: { sourceId: { [Op.in]: sourceIds } },
+      attributes: ['sourceId'],
+    });
+    const counts = new Map<string, number>();
+    rows.forEach((row) => counts.set(row.sourceId, (counts.get(row.sourceId) || 0) + 1));
+    return counts;
   }
 }
 

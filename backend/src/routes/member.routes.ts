@@ -6,6 +6,7 @@ import memberService from '../services/member.service';
 import auditLogService from '../services/audit-log.service';
 import { OperationType, TenantMember, TenantMemberStatus } from '../models';
 import { AppError, asyncHandler } from '../utils/http';
+import lookupService from '../services/lookup.service';
 
 const router = Router();
 router.use(authenticate);
@@ -36,6 +37,8 @@ router.post(
   authorize('users', 'create'),
   validate({ body: createMemberSchema }),
   asyncHandler(async (req, res) => {
+    await lookupService.assertSelectable('roles', 'user-membership', req.body.roleIds, req.user!);
+    await lookupService.assertSelectable('departments', 'user-membership', req.body.departments.map((item: any) => item.departmentId), req.user!);
     const result = await memberService.createLocal(req.body);
     await auditLogService.log({
       userId: req.user!.userId,
@@ -79,6 +82,7 @@ router.put('/:id', authorize('users', 'update'), asyncHandler(async (req, res) =
 
 router.put('/:id/roles', authorize('users', 'update'), asyncHandler(async (req, res) => {
   const roleIds = Array.isArray(req.body.roleIds) ? req.body.roleIds : [];
+  await lookupService.assertSelectable('roles', 'user-membership', roleIds, req.user!, req.params.id);
   await memberService.setRoles(req.params.id, req.user!.memberId || '', roleIds);
   await auditLogService.log({
     userId: req.user!.userId,
@@ -96,6 +100,7 @@ router.put('/:id/roles', authorize('users', 'update'), asyncHandler(async (req, 
 
 router.put('/:id/departments', authorize('organization', 'update'), asyncHandler(async (req, res) => {
   const departments = Array.isArray(req.body.departments) ? req.body.departments : [];
+  await lookupService.assertSelectable('departments', 'user-membership', departments.map((item: any) => item.departmentId), req.user!, req.params.id);
   await memberService.setDepartments(req.params.id, departments);
   await auditLogService.log({
     userId: req.user!.userId,
@@ -112,11 +117,15 @@ router.put('/:id/departments', authorize('organization', 'update'), asyncHandler
 }));
 
 router.post('/invitations', authorize('users', 'create'), asyncHandler(async (req, res) => {
+  const roleIds = Array.isArray(req.body.roleIds) ? req.body.roleIds : [];
+  const departments = Array.isArray(req.body.departments) ? req.body.departments : [];
+  await lookupService.assertSelectable('roles', 'user-membership', roleIds, req.user!);
+  await lookupService.assertSelectable('departments', 'user-membership', departments.map((item: any) => item.departmentId), req.user!);
   const result = await memberService.createInvitation({
     targetUserId: req.body.targetUserId,
     targetUsername: req.body.targetUsername,
-    roleIds: req.body.roleIds || [],
-    departments: req.body.departments || [],
+    roleIds,
+    departments,
     createdBy: req.user!.userId,
   });
   await auditLogService.log({

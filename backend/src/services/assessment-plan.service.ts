@@ -106,7 +106,7 @@ class AssessmentPlanService {
     return plan;
   }
 
-  async update(id: string, input: Partial<PlanInput>, user: RequestUser) {
+  async update(id: string, input: Partial<PlanInput>, _user: RequestUser) {
     const plan = await AssessmentPlan.findByPk(id);
     if (!plan) throw new AppError(404, 'NOT_FOUND', '周期评估计划不存在');
     const merged = { ...plan.toJSON(), ...input } as PlanInput;

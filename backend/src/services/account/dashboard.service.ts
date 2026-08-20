@@ -1,4 +1,4 @@
-import { Op, fn, col, literal } from 'sequelize';
+import { Op, fn, col } from 'sequelize';
 import { DataSource, AccountData, ProblemAccount, ProblemStatus, DataSourceStatus, Severity } from '../../models/account';
 
 class DashboardService {

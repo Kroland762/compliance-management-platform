@@ -2,16 +2,13 @@ import { Op } from 'sequelize';
 import {
   AuditTask,
   QuestionnaireTemplate,
-  QuestionTemplate,
   QuestionItem,
-  User,
   TenantMember,
   TenantMemberStatus,
   Department,
   TaskStatus,
   EvaluationWorkflowStatus,
   OperationType,
-  AssessmentAsset,
   Finding,
 } from '../models';
 import auditLogService from './audit-log.service';
@@ -19,6 +16,9 @@ import objectAccessService from './object-access.service';
 import { pagination, parsePagination } from '../utils/pagination';
 import { normalizeEvaluationColumnSchema } from '../utils/evaluation-columns';
 import { AppError } from '../utils/http';
+import lookupService from './lookup.service';
+
+type RequestUser = NonNullable<Express.Request['user']>;
 
 interface CreateTaskInput {
   templateId: string;
@@ -47,11 +47,16 @@ class TaskService {
 
   // ============ CRUD ============
 
-  async createTask(input: CreateTaskInput): Promise<AuditTask> {
+  async createTask(input: CreateTaskInput, user?: RequestUser): Promise<AuditTask> {
     const template = await QuestionnaireTemplate.findByPk(input.templateId, {
       include: [{ association: 'templateQuestions' }],
     });
     if (!template) throw new Error('模板不存在');
+
+    if (user) {
+      await lookupService.assertSelectable('assessment-templates', 'assessment-owner', [input.templateId], user);
+      await lookupService.assertOwners('assessment-owner', input.departmentId, input.assignedTo, user);
+    }
 
     if (input.assignedTo) {
       const assignee = await TenantMember.findOne({
@@ -149,7 +154,7 @@ class TaskService {
 
   private async getTasks(query: TaskQuery) {
     const { page, pageSize } = parsePagination(query);
-    const { status, assessmentType, userId } = query;
+    const { status, assessmentType } = query;
     const where: any = query.user
       ? await objectAccessService.taskScope(query.user, 'read', query.my === 'true')
       : {};

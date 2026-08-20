@@ -35,6 +35,7 @@ import taskLifecycleService from './task-lifecycle.service';
 import { normalizeEvaluationColumnSchema } from '../utils/evaluation-columns';
 import { parseEvaluationQuery, type EvaluationFilters } from '../utils/evaluation-filters';
 import memberContextService from './member-context.service';
+import lookupService from './lookup.service';
 
 type RequestUser = NonNullable<Express.Request['user']>;
 
@@ -410,6 +411,7 @@ class EvaluationService {
         throw new AppError(409, 'CONFLICT', '已提交或已复核的评估单元不能改派责任人');
       }
       assertLockVersion(item.lockVersion, expectedLockVersion);
+      await lookupService.assertSelectable('personnel', 'evaluation-assignment', [assigneeUserId], user);
       const task = await AuditTask.findByPk(item.taskId, { transaction });
       taskName = task?.name || task?.assessmentTarget || taskName;
       if (item.assignedTo === assigneeUserId) return;
@@ -883,6 +885,7 @@ class EvaluationService {
       if (item.assignedTo === auditorUserId) {
         throw new AppError(403, 'SELF_REVIEW_FORBIDDEN', '填写人不能复核自己的评估单元');
       }
+      await lookupService.assertSelectable('auditors', 'review-transfer', [auditorUserId], user, item.taskId);
       const assigned = await AssessmentAuditor.findOne({
         where: { taskId: item.taskId, auditorUserId },
         transaction,

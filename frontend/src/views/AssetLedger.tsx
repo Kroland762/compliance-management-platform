@@ -4,6 +4,7 @@ import { EditOutlined, PlusOutlined, ReloadOutlined, StopOutlined } from '@ant-d
 import apiClient from '../api/client';
 import { useAuthStore } from '../store/auth';
 import { getApiErrorMessage } from '../utils/error';
+import { DepartmentSelect, PersonnelSelect } from '../components/lookups';
 
 const criticality = {
   low: { label: '低', color: 'green' },
@@ -25,8 +26,6 @@ export default function AssetLedger() {
   const [open, setOpen] = useState(false);
   const [editingAsset, setEditingAsset] = useState<any | null>(null);
   const [statusFilter, setStatusFilter] = useState<AssetStatusFilter>('active');
-  const [departments, setDepartments] = useState<any[]>([]);
-  const [people, setPeople] = useState<any[]>([]);
   const [form] = Form.useForm();
 
   const load = async (
@@ -50,10 +49,7 @@ export default function AssetLedger() {
 
   useEffect(() => {
     load(1);
-    Promise.all([apiClient.get('/lookup/departments'), apiClient.get('/lookup/personnel')]).then(([d, p]: any[]) => {
-      setDepartments(d.data || []);
-      setPeople(p.data || []);
-    });
+    return undefined;
   }, []);
 
   const closeModal = () => {
@@ -201,8 +197,13 @@ export default function AssetLedger() {
         destroyOnHidden
       >
         <Form form={form} layout="vertical" onFinish={submit} preserve={false}>
-          <Form.Item name="code" label="资产编码" rules={[{ required: true }, { pattern: /^[A-Z0-9][A-Z0-9_-]{1,63}$/, message: '使用大写字母、数字、下划线或连字符' }]}>
-            <Input disabled={Boolean(editingAsset)} placeholder="例如 CORE-BANKING" />
+          <Form.Item
+            name="code"
+            label="资产编码"
+            normalize={(value: string) => value?.toUpperCase()}
+            rules={[{ required: true }, { pattern: /^[A-Z0-9][A-Z0-9_-]{1,63}$/, message: '使用字母、数字、下划线或连字符' }]}
+          >
+            <Input disabled={Boolean(editingAsset)} autoCapitalize="characters" placeholder="例如 CORE-BANKING" />
           </Form.Item>
           <Form.Item name="name" label="资产名称" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="assetType" label="资产类型" rules={[{ required: true }]}>
@@ -212,10 +213,10 @@ export default function AssetLedger() {
             <Select options={Object.entries(criticality).map(([value, option]) => ({ value, label: option.label }))} />
           </Form.Item>
           <Form.Item name="ownerDepartmentId" label="责任部门">
-            <Select allowClear options={departments.map((item) => ({ value: item.id, label: `${item.name} (${item.code})` }))} />
+            <DepartmentSelect purpose="asset-owner" contextId={editingAsset?.id} allowClear />
           </Form.Item>
           <Form.Item name="ownerUserId" label="负责人">
-            <Select allowClear showSearch optionFilterProp="label" options={people.map((item) => ({ value: item.userId, label: item.displayName || item.username }))} />
+            <PersonnelSelect purpose="asset-owner" contextId={editingAsset?.id} allowClear />
           </Form.Item>
           <Form.Item name="description" label="说明"><Input.TextArea rows={3} /></Form.Item>
         </Form>

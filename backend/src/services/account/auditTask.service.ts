@@ -1,4 +1,4 @@
-import { Op, fn, col } from 'sequelize';
+import { Op } from 'sequelize';
 import {
   AccountAuditTask,
   ScheduleType,
@@ -12,7 +12,10 @@ import {
   ProblemAccount,
   ProblemStatus,
   AuditRule,
+  ProblemStatusHistory,
+  ProblemStatusChangeSource,
 } from '../../models/account';
+import sequelize from '../../config/database';
 import DataSource, { DataSourceStatus } from '../../models/account/DataSource';
 import ruleEngineService from './ruleEngine.service';
 import cronSchedulerService from './cronScheduler.service';
@@ -20,6 +23,9 @@ import { v4 as uuidv4 } from 'uuid';
 import auditLogService from '../audit-log.service';
 import { OperationType } from '../../models';
 import { parsePagination, pagination } from '../../utils/pagination';
+import lookupService from '../lookup.service';
+
+type RequestUser = NonNullable<Express.Request['user']>;
 
 interface ListQuery {
   page?: number;
@@ -70,14 +76,12 @@ class AuditTaskService {
     // 补充数据源名称
     const items = await Promise.all(
       rows.map(async (t) => {
-        const json: any = t.toJSON();
         try {
           const ds = await DataSource.findByPk(t.sourceId, { attributes: ['name'] });
-          json.sourceName = ds?.name || '未知数据源';
+          return this.serializeTask(t, ds?.name || '未知数据源');
         } catch {
-          json.sourceName = '未知数据源';
+          return this.serializeTask(t, '未知数据源');
         }
-        return json;
       }),
     );
 
@@ -94,21 +98,24 @@ class AuditTaskService {
     const task = await AccountAuditTask.findByPk(id);
     if (!task) throw new Error('审计任务不存在');
 
-    const json: any = task.toJSON();
     try {
       const ds = await DataSource.findByPk(task.sourceId, { attributes: ['name'] });
-      json.sourceName = ds?.name || '未知数据源';
+      return this.serializeTask(task, ds?.name || '未知数据源');
     } catch {
-      json.sourceName = '未知数据源';
+      return this.serializeTask(task, '未知数据源');
     }
-
-    return json;
   }
 
   /**
    * 创建任务
    */
-  async createTask(data: CreateTaskInput, userId?: string) {
+  async createTask(data: CreateTaskInput, actor?: RequestUser | string) {
+    const user = typeof actor === 'object' ? actor : undefined;
+    const userId = typeof actor === 'string' ? actor : actor?.userId;
+    if (user) {
+      await lookupService.assertSelectable('account-data-sources', 'account-task-source', [data.sourceId], user);
+      await lookupService.assertSelectable('account-rules', 'account-task-rules', data.selectedRules, user);
+    }
     const ds = await DataSource.findByPk(data.sourceId);
     if (!ds) throw new Error('数据源不存在');
     if (ds.status === DataSourceStatus.INACTIVE) throw new Error('数据源已停用，无法创建任务');
@@ -116,11 +123,14 @@ class AuditTaskService {
     // 验证规则都存在
     if (data.selectedRules.length > 0) {
       const ruleCount = await AuditRule.count({
-        where: { id: { [Op.in]: data.selectedRules } },
+        where: { id: { [Op.in]: data.selectedRules }, isActive: true },
       });
       if (ruleCount !== data.selectedRules.length) {
-        throw new Error('部分选定的规则不存在');
+        throw new Error('部分选定的规则不存在或已停用');
       }
+    }
+    if (data.scheduleType !== ScheduleType.MANUAL && !cronSchedulerService.buildCronExpression(data.scheduleType, data.scheduleConfig as any)) {
+      throw new Error('调度配置不能为空');
     }
 
     const task = await AccountAuditTask.create({
@@ -137,7 +147,12 @@ class AuditTaskService {
 
     // Register cron job for non-MANUAL tasks
     if (task.scheduleType !== ScheduleType.MANUAL && task.status === TaskStatus.ACTIVE) {
-      await cronSchedulerService.registerJob(task.id, task.scheduleType, task.scheduleConfig as any);
+      try {
+        await cronSchedulerService.registerJob(task.id, task.scheduleType, task.scheduleConfig as any);
+      } catch (error) {
+        await task.destroy();
+        throw error;
+      }
     }
 
     if (userId) {
@@ -151,13 +166,15 @@ class AuditTaskService {
       });
     }
 
-    return task.toJSON();
+    return this.serializeTask(task, ds.name);
   }
 
   /**
    * 更新任务
    */
-  async updateTask(id: string, data: UpdateTaskInput, userId?: string) {
+  async updateTask(id: string, data: UpdateTaskInput, actor?: RequestUser | string) {
+    const user = typeof actor === 'object' ? actor : undefined;
+    const userId = typeof actor === 'string' ? actor : actor?.userId;
     const task = await AccountAuditTask.findByPk(id);
     if (!task) throw new Error('审计任务不存在');
 
@@ -168,13 +185,22 @@ class AuditTaskService {
     if (data.status !== undefined) updates.status = data.status;
 
     if (data.selectedRules !== undefined) {
+      const existing = new Set(task.selectedRules || []);
+      const addedRuleIds = data.selectedRules.filter((ruleId) => !existing.has(ruleId));
+      if (user) await lookupService.assertSelectable('account-rules', 'account-task-rules', addedRuleIds, user);
       const ruleCount = await AuditRule.count({
-        where: { id: { [Op.in]: data.selectedRules } },
+        where: { id: { [Op.in]: addedRuleIds }, isActive: true },
       });
-      if (ruleCount !== data.selectedRules.length) {
-        throw new Error('部分选定的规则不存在');
+      if (ruleCount !== addedRuleIds.length) {
+        throw new Error('部分新增规则不存在或已停用');
       }
       updates.selectedRules = data.selectedRules;
+    }
+
+    const effectiveScheduleType = data.scheduleType ?? task.scheduleType;
+    const effectiveScheduleConfig = data.scheduleConfig === undefined ? task.scheduleConfig : data.scheduleConfig;
+    if (effectiveScheduleType !== ScheduleType.MANUAL && !cronSchedulerService.buildCronExpression(effectiveScheduleType, effectiveScheduleConfig as any)) {
+      throw new Error('调度配置不能为空');
     }
 
     await task.update(updates);
@@ -198,7 +224,8 @@ class AuditTaskService {
       });
     }
 
-    return updated.toJSON();
+    const ds = await DataSource.findByPk(updated.sourceId, { attributes: ['name'] });
+    return this.serializeTask(updated, ds?.name || '未知数据源');
   }
 
   /**
@@ -358,7 +385,7 @@ class AuditTaskService {
       }
 
       // 批量评估
-      const evaluationResults = await ruleEngineService.evaluateBatch(accountIds, ruleIds);
+      const evaluationResults = await ruleEngineService.evaluateBatch(accountIds, ruleIds, task.sourceId);
       const matchedResults = evaluationResults.filter(r => r.matched);
 
       // === 阶段4: 去重 & 自动解决 ===
@@ -390,10 +417,21 @@ class AuditTaskService {
       for (const prev of previousProblems) {
         const key = `${prev.accountId}::${prev.ruleId}`;
         if (!currentProblemKeys.has(key)) {
-          await prev.update({
-            status: ProblemStatus.AUTO_RESOLVED,
-            resolvedAt: new Date(),
-            resolutionNotes: '本轮审计中该问题不再触发，自动关闭',
+          await sequelize.transaction(async (transaction) => {
+            const fromStatus = prev.status;
+            await prev.update({
+              status: ProblemStatus.AUTO_RESOLVED,
+              resolvedAt: new Date(),
+              resolutionNotes: '本轮审计中该问题不再触发，自动关闭',
+            }, { transaction });
+            await ProblemStatusHistory.create({
+              problemId: prev.id,
+              fromStatus,
+              toStatus: ProblemStatus.AUTO_RESOLVED,
+              changedBy: userId || null,
+              source: ProblemStatusChangeSource.AUTO,
+              notes: '本轮审计中该问题不再触发，自动关闭',
+            }, { transaction });
           });
           autoResolvedCount++;
         }
@@ -446,18 +484,28 @@ class AuditTaskService {
         }
 
         // 全新问题 → 创建
-        await ProblemAccount.create({
-          taskId: id,
-          accountDataId: result.accountDataId,
-          ruleId: result.ruleId,
-          accountId: result.accountId,
-          problemDescription: `[${result.ruleName}] ${result.description}`,
-          severity: result.severity,
-          status: ProblemStatus.PENDING,
-          firstDetectedAt: now,
-          lastSeenAt: now,
-          auditBatchId: batchId,
-        } as any);
+        await sequelize.transaction(async (transaction) => {
+          const created = await ProblemAccount.create({
+            taskId: id,
+            accountDataId: result.accountDataId,
+            ruleId: result.ruleId,
+            accountId: result.accountId,
+            problemDescription: `[${result.ruleName}] ${result.description}`,
+            severity: result.severity,
+            status: ProblemStatus.PENDING,
+            firstDetectedAt: now,
+            lastSeenAt: now,
+            auditBatchId: batchId,
+          } as any, { transaction });
+          await ProblemStatusHistory.create({
+            problemId: created.id,
+            fromStatus: null,
+            toStatus: ProblemStatus.PENDING,
+            changedBy: userId || null,
+            source: ProblemStatusChangeSource.AUTO,
+            notes: '审计任务首次发现问题',
+          }, { transaction });
+        });
         newProblemCount++;
       }
 
@@ -540,6 +588,14 @@ class AuditTaskService {
       items: rows.map(r => r.toJSON()),
       pagination: pagination(page, pageSize, count),
     };
+  }
+
+  private serializeTask(task: AccountAuditTask, sourceName: string) {
+    const json = task.toJSON() as any;
+    json.sourceName = sourceName;
+    json.ruleCount = task.selectedRules.length;
+    json.problemsFound = Number((task.lastExecResult as any)?.problemsFound || 0);
+    return json;
   }
 }
 

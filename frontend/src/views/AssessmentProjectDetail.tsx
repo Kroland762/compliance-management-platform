@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Button, Card, Descriptions, message, Progress, Select, Space, Table, Tabs, Tag, Typography } from 'antd';
+import { Button, Card, Descriptions, message, Progress, Space, Table, Tabs, Tag, Typography } from 'antd';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import apiClient from '../api/client';
 import { TASK_STATUS } from '../constants/status';
 import { useAuthStore } from '../store/auth';
 import { getApiErrorMessage } from '../utils/error';
 import Findings from './Findings';
+import { AuditorSelect } from '../components/lookups';
 
 export default function AssessmentProjectDetail() {
   const { id } = useParams();
@@ -17,7 +18,6 @@ export default function AssessmentProjectDetail() {
   const [risks, setRisks] = useState<any[]>([]);
   const [actions, setActions] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
-  const [auditorOptions, setAuditorOptions] = useState<any[]>([]);
   const [auditorIds, setAuditorIds] = useState<string[]>([]);
 
   const load = async () => {
@@ -34,7 +34,6 @@ export default function AssessmentProjectDetail() {
   };
   useEffect(() => {
     void load();
-    if (can('tasks', 'update')) apiClient.get('/lookup/auditors').then((response: any) => setAuditorOptions(response.data || []));
   }, [id]);
 
   const saveAuditors = async () => {
@@ -63,7 +62,7 @@ export default function AssessmentProjectDetail() {
             { key: 'auditors', label: '审计员', children: (task.auditors || []).map((item: any) => item.auditor?.username).filter(Boolean).join('、') || '-' },
             { key: 'progress', label: '评估进度', children: `${task.progress?.reviewed || 0} / ${task.progress?.total || 0}` },
           ]} /><Progress percent={percent} status="active" /></Card>
-          {can('tasks', 'update') && <Card title="审计员池"><Space.Compact style={{ width: '100%' }}><Select mode="multiple" value={auditorIds} onChange={setAuditorIds} style={{ width: '100%' }} options={auditorOptions.map((item) => ({ value: item.userId, label: item.displayName || item.username }))} /><Button type="primary" onClick={saveAuditors}>保存</Button></Space.Compact></Card>}
+          {can('tasks', 'update') && <Card title="审计员池"><Space.Compact style={{ width: '100%' }}><AuditorSelect contextId={id} mode="multiple" value={auditorIds} onChange={setAuditorIds} style={{ width: '100%' }} /><Button type="primary" onClick={saveAuditors}>保存</Button></Space.Compact></Card>}
         </Space> },
         { key: 'scope', label: '评估范围', children: <Table rowKey="id" dataSource={assets} columns={[
           { title: '资产编码', dataIndex: 'assetCodeSnapshot' }, { title: '资产名称', dataIndex: 'assetNameSnapshot' },

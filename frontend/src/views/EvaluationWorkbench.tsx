@@ -45,6 +45,7 @@ import {
   type EvaluationFilterOptions,
   type EvaluationFilters,
 } from '../utils/evaluationFilters';
+import { AuditorSelect, PersonnelSelect } from '../components/lookups';
 import {
   ColumnFilterButton,
   DynamicColumnFilterControl,
@@ -241,7 +242,6 @@ export default function EvaluationWorkbench() {
   const user = useAuthStore((state) => state.user);
   const [task, setTask] = useState<any>();
   const [scopeAssets, setScopeAssets] = useState<any[]>([]);
-  const [people, setPeople] = useState<any[]>([]);
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<React.Key[]>([]);
@@ -288,33 +288,6 @@ export default function EvaluationWorkbench() {
     String(record.currentStatusDescription || '').trim()
     || (record.evidenceFiles || []).length > 0
   ));
-  const assigneeOptions = useMemo(() => {
-    const byUserId = new Map(people.map((person) => [person.userId, {
-      value: person.userId,
-      label: person.displayName || person.username || person.userId,
-    }]));
-    items.forEach((item) => {
-      if (item.assignedTo && !byUserId.has(item.assignedTo)) {
-        byUserId.set(item.assignedTo, {
-          value: item.assignedTo,
-          label: item.assignee?.displayName || item.responsiblePerson || item.assignedTo,
-        });
-      }
-    });
-    return [...byUserId.values()];
-  }, [items, people]);
-  const transferOptions = useMemo(() => {
-    const peopleByUserId = new Map(people.map((person) => [person.userId, person]));
-    return (task?.auditors || []).map((assignment: any) => {
-      const person = peopleByUserId.get(assignment.auditorUserId);
-      const username = person?.username || assignment.auditor?.username;
-      return {
-        value: assignment.auditorUserId,
-        label: username || '账号不可用',
-        disabled: !username || assignment.auditorUserId === transferring?.assignedTo,
-      };
-    });
-  }, [people, task?.auditors, transferring?.assignedTo]);
 
   useEffect(() => {
     setWidthPreference((current) => current.storageKey === widthPreferenceKey
@@ -398,11 +371,9 @@ export default function EvaluationWorkbench() {
       apiClient.get(`/tasks/${id}`),
       apiClient.get(`/tasks/${id}/assets`),
       loadFilterOptions(),
-      can('tasks', 'update') ? apiClient.get('/lookup/personnel') : Promise.resolve({ data: [] }),
-    ]).then(([taskResponse, scopeResponse, _filterResponse, personnelResponse]: any[]) => {
+    ]).then(([taskResponse, scopeResponse]: any[]) => {
       setTask(taskResponse.data);
       setScopeAssets(scopeResponse.data?.items || []);
-      setPeople(personnelResponse.data || []);
     }).catch((error) => message.error(getApiErrorMessage(error, '评估表配置加载失败')));
     void loadPage(initialPage, initialPageSize, initialQuery, initialFilters);
     return () => {
@@ -847,6 +818,8 @@ export default function EvaluationWorkbench() {
         <Space.Compact style={{ width: '100%' }}>
           <Select
             mode="multiple"
+            showSearch
+            optionFilterProp="label"
             disabled={saving[item.id]}
             maxTagCount="responsive"
             value={(item.assets || []).map((asset: any) => asset.id)}
@@ -862,12 +835,11 @@ export default function EvaluationWorkbench() {
     assignee: {
       title: '责任人', key: 'assignee', width: 180,
       render: (_: unknown, item: any) => can('tasks', 'update') && editableStatuses.includes(item.workflowStatus) ? (
-        <Select
-          showSearch
-          optionFilterProp="label"
+        <PersonnelSelect
+          purpose="evaluation-assignment"
+          contextId={item.id}
           aria-label={`设置 ${item.sequenceNumber} 的责任人`}
           value={item.assignedTo || undefined}
-          options={assigneeOptions}
           loading={saving[item.id]}
           disabled={saving[item.id]}
           style={{ width: '100%' }}
@@ -1104,6 +1076,7 @@ export default function EvaluationWorkbench() {
         }}
       />
       <Select mode="multiple" allowClear showSearch maxTagCount="responsive" aria-label="筛选关联资产"
+        optionFilterProp="label"
         placeholder="关联资产" style={{ minWidth: 180, maxWidth: 300 }} value={filterDraft.assetIds || []}
         options={scopeAssets.map((asset) => ({ value: asset.assetId, label: asset.assetNameSnapshot }))}
         onChange={(value) => updateFilters({ ...filterDraftRef.current, assetIds: value.length ? value : undefined })} />
@@ -1165,7 +1138,7 @@ export default function EvaluationWorkbench() {
 
     <Modal title="拆分资产为新评估行" open={Boolean(splitting)} onCancel={() => setSplitting(undefined)} onOk={split} okButtonProps={{ disabled: !splitAssetIds.length }}>
       <Typography.Paragraph type="secondary">新行会复制已保存的回答，但不会复制本次证据。若当前行有未提交内容，请先提交。至少为原行保留一个资产。</Typography.Paragraph>
-      <Select mode="multiple" style={{ width: '100%' }} value={splitAssetIds} onChange={setSplitAssetIds}
+      <Select mode="multiple" showSearch optionFilterProp="label" style={{ width: '100%' }} value={splitAssetIds} onChange={setSplitAssetIds}
         options={(splitting?.assets || []).map((asset: any) => ({ value: asset.id, label: asset.name }))} />
     </Modal>
 
@@ -1213,15 +1186,14 @@ export default function EvaluationWorkbench() {
     </Modal>
 
     <Modal title="强制转派复核" open={Boolean(transferring)} onCancel={() => setTransferring(undefined)} onOk={transfer} okButtonProps={{ disabled: !transferTo }}>
-      <Select
-        showSearch
-        optionFilterProp="label"
-        aria-label="按用户名搜索复核人"
-        placeholder="搜索用户名"
+      <AuditorSelect
+        purpose="review-transfer"
+        contextId={id}
+        aria-label="按姓名搜索复核人"
+        placeholder="搜索姓名"
         style={{ width: '100%' }}
         value={transferTo}
         onChange={setTransferTo}
-        options={transferOptions}
       />
     </Modal>
     <FilePreviewModal file={previewFile} open={Boolean(previewFile)} onClose={() => setPreviewFile(null)} />

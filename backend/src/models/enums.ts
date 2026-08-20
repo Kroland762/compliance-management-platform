@@ -129,21 +129,6 @@ export enum AssessmentPlanExecutionStatus {
   REQUIRES_ATTENTION = 'requires_attention',
 }
 
-/** @deprecated vNext uses RemediationActionStatus. */
-export enum RemediationStatus {
-  REMEDIATED = 'remediated',
-  IN_PROGRESS = 'in_progress',
-  NOT_REMEDIATED = 'not_remediated',
-}
-
-/** @deprecated vNext uses TreatmentStrategy and RiskLifecycleStatus. */
-export enum RiskStatus {
-  RISK_ACCEPTANCE = 'risk_acceptance',
-  RISK_TRANSFER = 'risk_transfer',
-  RISK_REDUCTION = 'risk_reduction',
-  RISK_ELIMINATION = 'risk_elimination',
-}
-
 export enum NotificationType {
   TASK_ASSIGNED = 'task_assigned',
   TASK_RETURNED = 'task_returned',

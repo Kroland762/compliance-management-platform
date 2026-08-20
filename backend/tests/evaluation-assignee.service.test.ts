@@ -24,6 +24,7 @@ import auditLogService from '../src/services/audit-log.service';
 import evaluationService from '../src/services/evaluation.service';
 import findingService from '../src/services/finding.service';
 import memberContextService from '../src/services/member-context.service';
+import lookupService from '../src/services/lookup.service';
 import notificationService from '../src/services/notification.service';
 import objectAccessService from '../src/services/object-access.service';
 
@@ -79,6 +80,7 @@ describe('evaluation assignee updates', () => {
     } as any);
     vi.spyOn(sequelize, 'transaction').mockImplementation(async (callback: any) => callback({ LOCK: { UPDATE: 'UPDATE' } }));
     vi.spyOn(QuestionItem, 'findByPk').mockResolvedValue(item);
+    vi.spyOn(lookupService, 'assertSelectable').mockResolvedValue();
     vi.spyOn(AuditTask, 'findByPk').mockResolvedValue({ name: '年度评估' } as any);
     const audit = vi.spyOn(auditLogService, 'log').mockResolvedValue(undefined);
     const notify = vi.spyOn(notificationService, 'notifyTaskAssigned').mockResolvedValue({} as any);

@@ -1,16 +1,18 @@
 import { useState, useEffect } from 'react';
-import { Table, Button, Input, Space, Tag, message, Popconfirm, Tooltip, Switch } from 'antd';
-import { PlusOutlined, SyncOutlined, DeleteOutlined, EyeOutlined, LinkOutlined, SearchOutlined, ExclamationCircleOutlined, EditOutlined } from '@ant-design/icons';
+import { Table, Button, Input, Space, Tag, Typography, message, Popconfirm, Tooltip, Switch } from 'antd';
+import { PlusOutlined, SyncOutlined, DeleteOutlined, EyeOutlined, LinkOutlined, SearchOutlined, ExclamationCircleOutlined, EditOutlined, UploadOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { dataSourceApi, type DataSource } from '../../api/account';
 import { getApiErrorMessage } from '../../utils/error';
-import DataSourceForm from './DataSourceForm';
 import { useAuthStore } from '../../store/auth';
+import CsvReuploadModal from './CsvReuploadModal';
 
-const statusColors: Record<string, string> = { active: 'green', inactive: 'default', error: 'red' };
-const statusLabels: Record<string, string> = { active: '正常', inactive: '停用', error: '异常' };
-const mappingColors: Record<string, string> = { mapped: 'green', partial: 'orange', unmapped: 'default' };
-const mappingLabels: Record<string, string> = { mapped: '已映射', partial: '部分映射', unmapped: '未映射' };
+const { Text } = Typography;
+
+const statusColors: Record<string, string> = { ACTIVE: 'green', INACTIVE: 'default' };
+const statusLabels: Record<string, string> = { ACTIVE: '正常', INACTIVE: '停用' };
+const mappingColors: Record<string, string> = { CONFIGURED: 'green', UNCONFIGURED: 'default' };
+const mappingLabels: Record<string, string> = { CONFIGURED: '已配置', UNCONFIGURED: '未配置' };
 
 export default function DataSourceList() {
   const navigate = useNavigate();
@@ -20,22 +22,17 @@ export default function DataSourceList() {
   const [keyword, setKeyword] = useState('');
   const [syncing, setSyncing] = useState<string | null>(null);
   const [togglingDs, setTogglingDs] = useState<string | null>(null);
-  const [editingDs, setEditingDs] = useState<DataSource | null>(null);
-  const [formOpen, setFormOpen] = useState(false);
   const [connectionMap, setConnectionMap] = useState<Record<string, 'ok' | 'fail' | 'testing'>>({});
+  const [uploadingSource, setUploadingSource] = useState<DataSource | null>(null);
 
   const fetchData = () => {
     setLoading(true);
     const params: any = {};
-    if (keyword) params.keyword = keyword;
+    if (keyword) params.search = keyword;
     dataSourceApi.list(params)
       .then((res: any) => {
         const items = res.data?.items || [];
         setData(items);
-        // Auto-test database connections
-        items.filter((ds: DataSource) => ds.sourceType === 'DATABASE').forEach((ds: DataSource) => {
-          handleTestConnection(ds.id);
-        });
       })
       .catch(() => message.error('获取数据源列表失败'))
       .finally(() => setLoading(false));
@@ -105,8 +102,10 @@ export default function DataSourceList() {
     },
     {
       title: '类型', dataIndex: 'sourceType', width: 80,
-      render: (v: string) => (
-        <Tag color="blue" style={{ borderRadius: 6 }}>PostgreSQL</Tag>
+      render: (value: string) => (
+        <Tag color={value === 'CSV' ? 'cyan' : 'blue'} style={{ borderRadius: 6 }}>
+          {value === 'CSV' ? 'CSV' : 'PostgreSQL'}
+        </Tag>
       ),
     },
     {
@@ -117,7 +116,9 @@ export default function DataSourceList() {
         if (s === 'testing') return <Tag color="processing" style={{ borderRadius: 6 }} icon={<SyncOutlined spin />}>检测中</Tag>;
         if (s === 'ok') return <Tag color="success" style={{ borderRadius: 6 }}>已连接</Tag>;
         if (s === 'fail') return <Tag color="error" style={{ borderRadius: 6 }}>连接失败</Tag>;
-        return <a onClick={() => handleTestConnection(record.id)} style={{ cursor: 'pointer', color: '#007AFF', fontSize: 13 }}>点击检测</a>;
+        return can('data_sources', 'update')
+          ? <a onClick={() => handleTestConnection(record.id)} style={{ cursor: 'pointer', color: '#007AFF', fontSize: 13 }}>点击检测</a>
+          : <Text type="secondary">未检测</Text>;
       },
     },
     {
@@ -131,12 +132,12 @@ export default function DataSourceList() {
     {
       title: '启用', dataIndex: 'status', width: 60, align: 'center' as const,
       render: (v: string, record: DataSource) => (
-        <Switch
+        can('data_sources', 'update') ? <Switch
           size="small"
           checked={v === 'ACTIVE'}
           loading={togglingDs === record.id}
           onChange={() => handleToggle(record.id)}
-        />
+        /> : <Tag color={v === 'ACTIVE' ? 'green' : 'default'}>{v === 'ACTIVE' ? '启用' : '停用'}</Tag>
       ),
     },
     {
@@ -156,27 +157,30 @@ export default function DataSourceList() {
           <Tooltip title="查看详情">
             <Button size="small" icon={<EyeOutlined />} onClick={() => navigate(`/account-audit/data-sources/${record.id}`)} />
           </Tooltip>
-          <Tooltip title="编辑">
+          {can('data_sources', 'update') && <Tooltip title="编辑">
             <Button size="small" icon={<EditOutlined />}
-              onClick={() => { setEditingDs(record); setFormOpen(true); }} />
-          </Tooltip>
-          <Tooltip title="同步">
+              onClick={() => navigate(`/account-audit/data-sources/${record.id}/edit`)} />
+          </Tooltip>}
+          {record.sourceType === 'DATABASE' && can('data_sources', 'sync') && <Tooltip title="同步">
             <Button size="small" icon={<SyncOutlined spin={syncing === record.id} />}
               loading={syncing === record.id} onClick={() => handleSync(record.id)} />
-          </Tooltip>
-          <Tooltip title="强制同步">
+          </Tooltip>}
+          {record.sourceType === 'DATABASE' && can('data_sources', 'sync') && <Tooltip title="强制同步">
             <Button size="small" onClick={() => handleSync(record.id, true)}
               loading={syncing === record.id}>强制</Button>
-          </Tooltip>
-          <Tooltip title="测试连接">
+          </Tooltip>}
+          {record.sourceType === 'DATABASE' && can('data_sources', 'update') && <Tooltip title="测试连接">
             <Button size="small" icon={<LinkOutlined />}
               loading={connectionMap[record.id] === 'testing'}
               onClick={() => handleTestConnection(record.id)} />
-          </Tooltip>
-          <Popconfirm title="确定删除？" icon={<ExclamationCircleOutlined style={{ color: '#FF3B30' }} />}
+          </Tooltip>}
+          {record.sourceType === 'CSV' && can('data_sources', 'sync') && <Tooltip title="重新上传 CSV">
+            <Button size="small" icon={<UploadOutlined />} onClick={() => setUploadingSource(record)} />
+          </Tooltip>}
+          {can('data_sources', 'delete') && <Popconfirm title="确定删除？" icon={<ExclamationCircleOutlined style={{ color: '#FF3B30' }} />}
             onConfirm={() => handleDelete(record.id)} cancelText="取消" okText="确认">
             <Button size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
+          </Popconfirm>}
         </Space>
       ),
     },
@@ -206,14 +210,13 @@ export default function DataSourceList() {
 
       <Table columns={columns} dataSource={data} rowKey="id" loading={loading} scroll={{ x: 1100 }} size="small" />
 
-      {formOpen && (
-        <DataSourceForm
-          open
-          editingDataSource={editingDs}
-          onClose={() => { setFormOpen(false); setEditingDs(null); }}
-          onSuccess={() => { setFormOpen(false); setEditingDs(null); fetchData(); }}
-        />
-      )}
+      <CsvReuploadModal
+        open={Boolean(uploadingSource)}
+        source={uploadingSource}
+        onClose={() => setUploadingSource(null)}
+        onSuccess={fetchData}
+      />
+
     </div>
   );
 }

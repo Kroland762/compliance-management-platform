@@ -1,14 +1,22 @@
 import { expect, request, test } from '@playwright/test';
 
 test('global administrator selects a tenant and completes core control flow', async ({ page }) => {
+  const mutationTenantSlug = process.env.E2E_MUTATION_TENANT_SLUG;
+  test.skip(
+    !mutationTenantSlug,
+    'Set E2E_MUTATION_TENANT_SLUG to an isolated disposable tenant; this flow creates and mutates tenant data.',
+  );
+
   await page.goto('/login');
   await page.getByPlaceholder('用户名').fill(process.env.E2E_ADMIN_USERNAME || 'admin');
-  await page.getByPlaceholder('密码').fill(process.env.E2E_ADMIN_PASSWORD || 'Admin1234!');
+  await page.getByPlaceholder('密码').fill(process.env.E2E_ADMIN_PASSWORD || 'Admin1234');
   await page.getByPlaceholder('验证码').fill('0000');
   await page.locator('button[type="submit"]').click();
 
   await expect(page).toHaveURL(/\/tenants$/);
-  await page.getByRole('row', { name: /CI Tenant/ }).getByRole('button', { name: '查看用户' }).click();
+  await page.getByRole('row', { name: new RegExp(mutationTenantSlug!) })
+    .getByRole('button', { name: '查看用户' })
+    .click();
   await expect(page).toHaveURL(/\/users$/);
 
   const auth = await page.evaluate(() => (window as any).__authStore);
@@ -23,9 +31,11 @@ test('global administrator selects a tenant and completes core control flow', as
   expect(roleResponse.ok()).toBeTruthy();
   const roles = (await roleResponse.json()).data.items;
   const userRole = roles.find((role: any) => role.name === '普通用户') || roles[0];
-  const departmentsResponse = await page.request.get('http://127.0.0.1:3001/api/lookup/departments', { headers });
+  const departmentsResponse = await page.request.get('http://127.0.0.1:3001/api/lookup/options/departments?purpose=user-membership&pageSize=50', { headers });
   expect(departmentsResponse.ok()).toBeTruthy();
-  const rootDepartment = (await departmentsResponse.json()).data.find((department: any) => department.code === 'ROOT');
+  const departments = (await departmentsResponse.json()).data.items;
+  const rootDepartment = departments[0];
+  expect(rootDepartment).toBeTruthy();
 
   const userResponse = await page.request.post('http://127.0.0.1:3001/api/members', {
     headers,
@@ -34,7 +44,7 @@ test('global administrator selects a tenant and completes core control flow', as
       displayName: `E2E User ${suffix}`,
       email: `e2e-${suffix}@example.com`,
       roleIds: [userRole.id],
-      departments: [{ departmentId: rootDepartment.id, isPrimary: true }],
+      departments: [{ departmentId: rootDepartment.value, isPrimary: true }],
     },
   });
   expect(userResponse.status()).toBe(201);
@@ -48,7 +58,7 @@ test('global administrator selects a tenant and completes core control flow', as
     data: {
       name: qualificationName,
       category: '企业资质',
-      ownerDepartmentId: rootDepartment.id,
+      ownerDepartmentId: rootDepartment.value,
       expiryDate: '2030-12-31',
     },
   });
@@ -81,11 +91,21 @@ test('global administrator selects a tenant and completes core control flow', as
       templateId,
       assessmentType: 'ISO27001',
       assessmentTarget: `E2E任务-${suffix}`,
-      departmentId: rootDepartment.id,
+      departmentId: rootDepartment.value,
     },
   });
   expect(taskResponse.status()).toBe(201);
   const taskId = (await taskResponse.json()).data.id;
+  const auditorsResponse = await page.request.get('http://127.0.0.1:3001/api/lookup/options/auditors?purpose=assessment-owner&pageSize=50', { headers });
+  expect(auditorsResponse.ok()).toBeTruthy();
+  const availableAuditors = (await auditorsResponse.json()).data.items;
+  expect(availableAuditors.length).toBeGreaterThan(0);
+  const assignedAuditor = availableAuditors[0];
+  expect(assignedAuditor).toBeTruthy();
+  expect((await page.request.put(`http://127.0.0.1:3001/api/tasks/${taskId}/auditors`, {
+    headers,
+    data: { auditorUserIds: [assignedAuditor.value] },
+  })).ok()).toBeTruthy();
 
   const assetSpecs = [
     { code: `E2E-APP-${suffix}`, name: `E2E应用-${suffix}`, assetType: 'application' },
@@ -99,7 +119,7 @@ test('global administrator selects a tenant and completes core control flow', as
       data: {
         ...assetSpec,
         criticality: 'high',
-        ownerDepartmentId: rootDepartment.id,
+        ownerDepartmentId: rootDepartment.value,
         ownerUserId: userId,
       },
     });
@@ -124,7 +144,7 @@ test('global administrator selects a tenant and completes core control flow', as
     controlPointId: controlPoint.id,
     assetId: asset.id,
     assignedTo: userId,
-    responsibleDepartmentId: rootDepartment.id,
+    responsibleDepartmentId: rootDepartment.value,
   }));
   expect((await page.request.put(`http://127.0.0.1:3001/api/tasks/${taskId}/control-asset-matrix`, {
     headers,
@@ -264,11 +284,25 @@ test('global administrator selects a tenant and completes core control flow', as
 
   const reviewedEvaluations = [];
   for (const evaluation of submittedEvaluations) {
+    const claimResponse = await page.request.post(
+      `http://127.0.0.1:3001/api/evaluations/${evaluation.id}/review-claim`,
+      { headers },
+    );
+    expect(claimResponse.ok()).toBeTruthy();
+    const claimed = (await claimResponse.json()).data;
     const reviewResponse = await page.request.post(
       `http://127.0.0.1:3001/api/evaluations/${evaluation.id}/review`,
       {
-        headers: { ...headers, 'If-Match': `"${evaluation.lockVersion}"` },
-        data: { complianceStatus: 'non_compliant' },
+        headers: { ...headers, 'If-Match': `"${claimed.lockVersion}"` },
+        data: {
+          complianceStatus: 'non_compliant',
+          finding: {
+            description: `E2E不符合项-${evaluation.sequenceNumber}`,
+            severity: 'high',
+            ownerDepartmentId: rootDepartment.value,
+            ownerUserId: userId,
+          },
+        },
       },
     );
     expect(reviewResponse.ok()).toBeTruthy();
@@ -283,7 +317,7 @@ test('global administrator selects a tenant and completes core control flow', as
       description: '三个评估单元共同形成高风险',
       riskLevel: 'high',
       treatmentStrategy: 'mitigate',
-      ownerDepartmentId: rootDepartment.id,
+      ownerDepartmentId: rootDepartment.value,
       ownerUserId: userId,
       sources: reviewedEvaluations.slice(0, 3).map((evaluation: any) => ({
         controlEvaluationId: evaluation.id,
@@ -304,7 +338,7 @@ test('global administrator selects a tenant and completes core control flow', as
       description: '组织治理评估单元形成独立风险',
       riskLevel: 'medium',
       treatmentStrategy: 'mitigate',
-      ownerDepartmentId: rootDepartment.id,
+      ownerDepartmentId: rootDepartment.value,
       ownerUserId: userId,
       sources: [{ controlEvaluationId: reviewedEvaluations[3].id }],
       assets: [{ assetId: createdAssets[2].id }],
@@ -318,7 +352,7 @@ test('global administrator selects a tenant and completes core control flow', as
     { headers },
   );
   expect(completeReviewResponse.ok()).toBeTruthy();
-  expect((await completeReviewResponse.json()).data.status).toBe('completed');
+  expect((await completeReviewResponse.json()).data.status).toBe('pending_closure');
 
   expect((await page.request.post(
     `http://127.0.0.1:3001/api/risks/${risk.id}/confirm`,
@@ -339,7 +373,7 @@ test('global administrator selects a tenant and completes core control flow', as
         title: `E2E整改行动${actionIndex}-${suffix}`,
         description: `完成第${actionIndex}项整改`,
         ownerUserId: userId,
-        ownerDepartmentId: rootDepartment.id,
+        ownerDepartmentId: rootDepartment.value,
         dueDate: '2030-12-31',
         riskLinks: riskLinks.map((link) => ({
           riskId: link.riskId,
@@ -481,7 +515,7 @@ test('global administrator selects a tenant and completes core control flow', as
   expect(riskExportResponse.headers()['content-type']).toContain('spreadsheetml');
 
   const accountCsvResponse = await page.request.get(
-    'http://127.0.0.1:3001/api/account/problems/export/data?format=csv',
+    'http://127.0.0.1:3001/api/account/problems/export/data',
     { headers },
   );
   expect(accountCsvResponse.ok()).toBeTruthy();
@@ -502,23 +536,41 @@ test('global administrator selects a tenant and completes core control flow', as
   await page.getByRole('button', { name: '下一步' }).click();
   await page.getByLabel('评估名称').fill(`E2E稀疏矩阵-${suffix}`);
   await page.getByRole('combobox', { name: '归属部门' }).click();
-  await page.locator('.ant-select-item-option', { hasText: rootDepartment.name }).first().click();
+  await page.locator('.ant-select-item-option', { hasText: rootDepartment.label }).first().click();
+  await page.getByRole('combobox', { name: '默认责任人' }).click();
+  await page.locator('.ant-select-item-option', { hasText: `E2E User ${suffix}` }).click();
+  const auditorSelect = page.getByRole('combobox', { name: '审计员池' });
+  await auditorSelect.click();
+  const [auditorSearchResponse] = await Promise.all([
+    page.waitForResponse((response) => response.url().includes('/api/lookup/options/auditors') && response.url().includes('q=')),
+    auditorSelect.fill(assignedAuditor.label),
+  ]);
+  expect(auditorSearchResponse.ok()).toBeTruthy();
+  await auditorSelect.press('ArrowDown');
+  await auditorSelect.press('Enter');
+  await page.keyboard.press('Escape');
   await page.getByRole('button', { name: '下一步' }).click();
-  const assetSearch = page.locator('main input[role="combobox"]');
+  const assetSelect = page.locator('main .ant-select').first();
+  await expect(assetSelect).toBeVisible();
+  await assetSelect.locator('.ant-select-selector').click();
+  const assetSearch = assetSelect.locator('input[role="combobox"]');
+  await expect(assetSearch).toHaveCount(1);
   await expect(assetSearch).toBeVisible();
   for (const asset of createdAssets) {
     await assetSearch.click();
-    await page.keyboard.type(asset.name);
-    await page.locator('.ant-select-item-option', { hasText: asset.name }).click();
+    const [assetSearchResponse] = await Promise.all([
+      page.waitForResponse((response) => response.url().includes('/api/lookup/options/assets') && response.url().includes('q=')),
+      assetSearch.fill(asset.name),
+    ]);
+    expect(assetSearchResponse.ok()).toBeTruthy();
+    await page.locator('.ant-select-dropdown:visible .ant-select-item-option', { hasText: asset.name }).click();
+    await expect(assetSelect).toContainText(asset.name);
   }
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: '下一步' }).click();
-  await expect(page.getByText('已启用 6 / 6 个组合')).toBeVisible();
-  const matrixCheckboxes = page.locator('main').getByRole('checkbox');
-  await expect(matrixCheckboxes).toHaveCount(6);
-  await matrixCheckboxes.nth(4).click();
-  await matrixCheckboxes.nth(5).click();
-  await expect(page.getByText('已启用 4 / 6 个组合')).toBeVisible();
+  await expect(page.getByText('将生成 2 个评估行，每行默认关联所选 3 个资产。', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: '发布评估' }).click();
+  await expect(page).toHaveURL(/\/assessments\/[0-9a-f-]+$/);
 
   await page.goto('/users');
   await page.getByPlaceholder('搜索成员姓名').fill(`E2E User ${suffix}`);

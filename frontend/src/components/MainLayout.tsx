@@ -3,7 +3,7 @@ import {
   DashboardOutlined, FileTextOutlined, UserOutlined,
   AuditOutlined, FormOutlined, WarningOutlined,
   BellOutlined, LogoutOutlined, FileSearchOutlined,
-  MenuFoldOutlined, MenuUnfoldOutlined, DatabaseOutlined, ScheduleOutlined,
+  MenuFoldOutlined, DatabaseOutlined, ScheduleOutlined,
   SecurityScanOutlined, SafetyCertificateOutlined, HomeOutlined, ApartmentOutlined,
   AppstoreOutlined, ToolOutlined,
 } from '@ant-design/icons';
@@ -151,7 +151,7 @@ export default function MainLayout() {
 
   const accountAuditMenuItems: any[] = [
     ...(can('account_dashboard', 'read') ? [
-      { key: '/account-audit', icon: <DashboardOutlined />, label: '概览' },
+      { key: '/account-audit/dashboard', icon: <DashboardOutlined />, label: '概览' },
     ] : []),
     ...(can('data_sources', 'read') ? [
       { key: '/account-audit/data-sources', icon: <DatabaseOutlined />, label: '数据源' },
@@ -255,7 +255,7 @@ export default function MainLayout() {
       if (location.pathname.startsWith('/account-audit/rules')) return '/account-audit/rules';
       if (location.pathname.startsWith('/account-audit/tasks')) return '/account-audit/tasks';
       if (location.pathname.startsWith('/account-audit/problems')) return '/account-audit/problems';
-      return '/account-audit';
+      return '/account-audit/dashboard';
     }
     if (location.pathname.startsWith('/users')) return '/users';
     if (location.pathname.startsWith('/roles')) return '/roles';
@@ -308,8 +308,9 @@ export default function MainLayout() {
                   <button style={navTabStyle(activeNav === 'product-compliance')}
                     onClick={() => { setActiveNav('product-compliance'); navigate(firstProductCompliancePath); }}>产品合规</button>
                 )}
-                <button style={navTabStyle(activeNav === 'account-audit')}
+                {(can('account_dashboard', 'read') || can('data_sources', 'read') || can('rules', 'read') || can('account_tasks', 'read') || can('problems', 'read')) && <button style={navTabStyle(activeNav === 'account-audit')}
                   onClick={() => { setActiveNav('account-audit'); navigate('/account-audit'); }}>账户审计</button>
+                }
                 <button style={navTabStyle(activeNav === 'system')}
                   onClick={() => { setActiveNav('system'); navigate(firstSystemPath); }}>系统设置</button>
               </>

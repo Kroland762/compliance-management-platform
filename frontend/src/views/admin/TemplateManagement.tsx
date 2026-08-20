@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Table, Button, Space, Modal, Upload, message, Popconfirm, Checkbox, Input, Select, Typography } from 'antd';
+import { Table, Button, Space, Modal, Upload, message, Popconfirm, Checkbox, Input, Typography } from 'antd';
 import { UploadOutlined, DeleteOutlined, EyeOutlined, CaretLeftOutlined, CaretRightOutlined } from '@ant-design/icons';
 import apiClient from '../../api/client';
 import { getApiErrorMessage } from '../../utils/error';
@@ -7,6 +7,7 @@ import {
   LOCKED_VISIBLE_EVALUATION_COLUMN_KEYS,
   normalizeEvaluationColumnSchema,
 } from '../../utils/evaluationColumns';
+import { SearchableSelect } from '../../components/lookups';
 
 
 export default function TemplateManagement() {
@@ -163,7 +164,7 @@ export default function TemplateManagement() {
               <Input addonBefore="标准系列标识" value={seriesKey} placeholder="同一标准跨版本保持一致" onChange={(event) => setSeriesKey(event.target.value)} />
               <Input addonBefore="版本" value={version} onChange={(event) => setVersion(event.target.value)} style={{ width: 180 }} />
             </Space>
-            <Select value={controlKeyField} onChange={setControlKeyField} style={{ width: 320 }}
+            <SearchableSelect value={controlKeyField} onChange={setControlKeyField} style={{ width: 320 }}
               options={(importPreview.headers || []).map((header: string) => ({ value: header, label: `稳定控制项标识：${header}` }))} />
             <Typography.Text type="secondary">共 {importPreview.rowCount} 行。取消勾选只会隐藏评估表中的列，CSV 数据仍会完整导入。</Typography.Text>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>

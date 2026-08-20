@@ -72,8 +72,9 @@ export interface Migration {
   scope: 'control' | 'tenant';
   description: string;
   checksumSource: string;
-  up: (schemaName: string, transaction: Transaction) => Promise<void>;
-  down?: (schemaName: string, transaction: Transaction) => Promise<void>;
+  transactional?: boolean;
+  up: (schemaName: string, transaction?: Transaction) => Promise<void>;
+  down?: (schemaName: string, transaction?: Transaction) => Promise<void>;
 }
 
 const controlModels = [Tenant, RoleTemplate, User, ControlAuditEvent, TaskSchedule];
@@ -1738,6 +1739,161 @@ const migrations: Migration[] = [
         ['products', 'products_status_check'],
         ['product_types', 'product_types_status_check'],
       ]) await sequelize.query(`ALTER TABLE ${quoted}.${table} DROP CONSTRAINT IF EXISTS ${constraint}`, { transaction });
+    },
+  },
+  {
+    id: '021_tenant_account_problem_history',
+    scope: 'tenant',
+    description: 'Add account problem status history and enforce account audit status domains',
+    checksumSource: 'tenant:v1:account-problem-history-status-severity-task-schedule-execution-phase-constraints',
+    up: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      const domains: Array<[string, string, string[]]> = [
+        ['account_problems', 'status', ['PENDING', 'PROCESSING', 'RESOLVED', 'AUTO_RESOLVED', 'FALSE_POSITIVE', 'IGNORED']],
+        ['account_problems', 'severity', ['LOW', 'MEDIUM', 'HIGH']],
+        ['account_audit_rules', 'severity', ['LOW', 'MEDIUM', 'HIGH']],
+        ['account_audit_tasks', 'status', ['ACTIVE', 'INACTIVE']],
+        ['account_audit_tasks', 'scheduleType', ['MANUAL', 'DAILY', 'WEEKLY', 'MONTHLY', 'CRON']],
+        ['account_task_executions', 'status', ['RUNNING', 'SUCCESS', 'FAILED']],
+      ];
+      for (const [table, column, values] of domains) {
+        const unsupported = await sequelize.query<{ value: string; count: number }>(
+          `SELECT "${column}" AS value, count(*)::int AS count FROM ${quoted}.${table}
+           WHERE "${column}" IS NOT NULL AND "${column}" NOT IN (${values.map((value) => `'${value}'`).join(',')})
+           GROUP BY "${column}"`,
+          { type: QueryTypes.SELECT, transaction },
+        );
+        if (unsupported.length) {
+          throw new Error(`${table}.${column} 存在非法值: ${unsupported.map((row) => `${row.value}(${row.count})`).join(', ')}`);
+        }
+      }
+      const invalidPhases = await sequelize.query<{ value: string; count: number }>(
+        `SELECT "currentPhase" AS value, count(*)::int AS count FROM ${quoted}.account_task_executions
+         WHERE "currentPhase" IS NOT NULL AND "currentPhase" NOT IN ('SYNCING','MAPPING','MATCHING','SAVING')
+         GROUP BY "currentPhase"`,
+        { type: QueryTypes.SELECT, transaction },
+      );
+      if (invalidPhases.length) throw new Error(`account_task_executions.currentPhase 存在非法值: ${invalidPhases.map((row) => `${row.value}(${row.count})`).join(', ')}`);
+
+      await sequelize.query(`CREATE TABLE ${quoted}.account_problem_status_history (
+        id uuid PRIMARY KEY,
+        "problemId" uuid NOT NULL REFERENCES ${quoted}.account_problems(id) ON DELETE CASCADE,
+        "fromStatus" varchar(20),
+        "toStatus" varchar(20) NOT NULL,
+        "changedBy" uuid,
+        source varchar(20) NOT NULL,
+        notes text,
+        "changedAt" timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT account_problem_history_from_status_check CHECK ("fromStatus" IS NULL OR "fromStatus" IN ('PENDING','PROCESSING','RESOLVED','AUTO_RESOLVED','FALSE_POSITIVE','IGNORED')),
+        CONSTRAINT account_problem_history_to_status_check CHECK ("toStatus" IN ('PENDING','PROCESSING','RESOLVED','AUTO_RESOLVED','FALSE_POSITIVE','IGNORED')),
+        CONSTRAINT account_problem_history_source_check CHECK (source IN ('MANUAL','BULK','AUTO','MIGRATION'))
+      )`, { transaction });
+      await sequelize.query(`CREATE INDEX account_problem_history_problem_changed_idx
+        ON ${quoted}.account_problem_status_history ("problemId", "changedAt" DESC)`, { transaction });
+      await sequelize.query(`INSERT INTO ${quoted}.account_problem_status_history
+        (id, "problemId", "fromStatus", "toStatus", "changedBy", source, notes, "changedAt")
+        SELECT gen_random_uuid(), id, NULL, status, NULL, 'MIGRATION', '迁移时的当前状态快照', "updatedAt"
+        FROM ${quoted}.account_problems`, { transaction });
+
+      for (const [table, column, values] of domains) {
+        await sequelize.query(`ALTER TABLE ${quoted}.${table}
+          ADD CONSTRAINT ${table}_${column.toLowerCase()}_domain_check
+          CHECK ("${column}" IS NULL OR "${column}" IN (${values.map((value) => `'${value}'`).join(',')}))`, { transaction });
+      }
+      await sequelize.query(`ALTER TABLE ${quoted}.account_task_executions
+        ADD CONSTRAINT account_task_executions_phase_domain_check
+        CHECK ("currentPhase" IS NULL OR "currentPhase" IN ('SYNCING','MAPPING','MATCHING','SAVING'))`, { transaction });
+    },
+    down: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      const [{ count }] = await sequelize.query<{ count: number }>(
+        `SELECT count(*)::int AS count FROM ${quoted}.account_problem_status_history WHERE source <> 'MIGRATION'`,
+        { type: QueryTypes.SELECT, transaction },
+      );
+      if (Number(count) > 0) throw new Error('已存在迁移后的问题状态历史，不能安全回滚');
+      for (const constraint of [
+        ['account_task_executions', 'account_task_executions_phase_domain_check'],
+        ['account_task_executions', 'account_task_executions_status_domain_check'],
+        ['account_audit_tasks', 'account_audit_tasks_scheduletype_domain_check'],
+        ['account_audit_tasks', 'account_audit_tasks_status_domain_check'],
+        ['account_audit_rules', 'account_audit_rules_severity_domain_check'],
+        ['account_problems', 'account_problems_severity_domain_check'],
+        ['account_problems', 'account_problems_status_domain_check'],
+      ]) await sequelize.query(`ALTER TABLE ${quoted}.${constraint[0]} DROP CONSTRAINT IF EXISTS ${constraint[1]}`, { transaction });
+      await sequelize.query(`DROP TABLE ${quoted}.account_problem_status_history`, { transaction });
+    },
+  },
+  {
+    id: '022_control_pg_trgm',
+    scope: 'control',
+    description: 'Enable PostgreSQL trigram search support for human-readable lookups',
+    checksumSource: 'control:v1:pg-trgm-extension',
+    up: async (_schemaName, transaction) => {
+      await sequelize.query('CREATE EXTENSION IF NOT EXISTS pg_trgm', { transaction });
+    },
+    // pg_trgm is database-wide and may be shared by other schemas. Rollback only
+    // removes indexes created by the following migrations, never the extension.
+    down: async () => undefined,
+  },
+  {
+    id: '023_control_lookup_trgm_indexes',
+    scope: 'control',
+    description: 'Create concurrent trigram index for username lookup',
+    checksumSource: 'control:v1:users-username-trgm-concurrent',
+    transactional: false,
+    up: async () => {
+      const [invalid] = await sequelize.query<{ invalid: boolean }>(`
+        SELECT NOT i.indisvalid AS invalid
+        FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = 'users_username_trgm_idx'
+      `, { type: QueryTypes.SELECT });
+      if (invalid?.invalid) await sequelize.query('DROP INDEX CONCURRENTLY IF EXISTS public.users_username_trgm_idx');
+      await sequelize.query('CREATE INDEX CONCURRENTLY IF NOT EXISTS users_username_trgm_idx ON public.users USING gin (username gin_trgm_ops)');
+    },
+    down: async () => {
+      await sequelize.query('DROP INDEX CONCURRENTLY IF EXISTS public.users_username_trgm_idx');
+    },
+  },
+  {
+    id: '024_tenant_lookup_trgm_indexes',
+    scope: 'tenant',
+    description: 'Create concurrent trigram indexes for tenant lookup labels',
+    checksumSource: 'tenant:v1:lookup-name-title-trgm-concurrent',
+    transactional: false,
+    up: async (schemaName) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      const definitions: Array<[string, string, string]> = [
+        ['departments_name_trgm_idx', 'departments', 'name'],
+        ['tenant_members_display_name_trgm_idx', 'tenant_members', 'displayName'],
+        ['roles_name_trgm_idx', 'roles', 'name'],
+        ['assets_name_trgm_idx', 'assets', 'name'],
+        ['risk_records_title_trgm_idx', 'risk_records', 'title'],
+        ['questionnaire_templates_name_trgm_idx', 'questionnaire_templates', 'name'],
+        ['account_data_sources_name_trgm_idx', 'account_data_sources', 'name'],
+        ['account_audit_rules_name_trgm_idx', 'account_audit_rules', 'name'],
+        ['product_types_name_trgm_idx', 'product_types', 'name'],
+        ['product_questionnaire_templates_name_trgm_idx', 'product_questionnaire_templates', 'name'],
+      ];
+      for (const [index, table, column] of definitions) {
+        const [invalid] = await sequelize.query<{ invalid: boolean }>(`
+          SELECT NOT i.indisvalid AS invalid
+          FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = :schemaName AND c.relname = :index
+        `, { replacements: { schemaName, index }, type: QueryTypes.SELECT });
+        if (invalid?.invalid) await sequelize.query(`DROP INDEX CONCURRENTLY IF EXISTS ${quoted}."${index}"`);
+        await sequelize.query(`CREATE INDEX CONCURRENTLY IF NOT EXISTS "${index}" ON ${quoted}."${table}" USING gin ("${column}" gin_trgm_ops)`);
+      }
+    },
+    down: async (schemaName) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      for (const index of [
+        'departments_name_trgm_idx', 'tenant_members_display_name_trgm_idx', 'roles_name_trgm_idx',
+        'assets_name_trgm_idx', 'risk_records_title_trgm_idx', 'questionnaire_templates_name_trgm_idx',
+        'account_data_sources_name_trgm_idx', 'account_audit_rules_name_trgm_idx', 'product_types_name_trgm_idx',
+        'product_questionnaire_templates_name_trgm_idx',
+      ]) await sequelize.query(`DROP INDEX CONCURRENTLY IF EXISTS ${quoted}."${index}"`);
     },
   },
 ];

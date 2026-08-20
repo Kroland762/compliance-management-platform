@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { authenticate, authorize } from '../../middlewares/auth';
 import auditTaskService from '../../services/account/auditTask.service';
+import { validate } from '../../middlewares/validate';
+import { taskExecutionQuery, taskListQuery } from './validation';
 
 const router = Router();
 router.use(authenticate);
@@ -12,7 +14,7 @@ router.use(authorize('account_tasks', 'read'));
  * GET /api/account/tasks
  * 列表查询
  */
-router.get('/', async (req: Request, res: Response) => {
+router.get('/', validate({ query: taskListQuery }), async (req: Request, res: Response) => {
   try {
     const result = await auditTaskService.listTasks(req.query as any);
     res.json({ success: true, data: result });
@@ -41,7 +43,7 @@ router.get('/:id', async (req: Request, res: Response) => {
  */
 router.post('/', authorize('account_tasks', 'create'), async (req: Request, res: Response) => {
   try {
-    const result = await auditTaskService.createTask(req.body, req.user!.userId);
+    const result = await auditTaskService.createTask(req.body, req.user!);
     res.status(201).json({ success: true, data: result });
   } catch (error: any) {
     res.status(400).json({ success: false, error: { code: 'CREATE_FAILED', message: error.message } });
@@ -54,7 +56,7 @@ router.post('/', authorize('account_tasks', 'create'), async (req: Request, res:
  */
 router.put('/:id', authorize('account_tasks', 'update'), async (req: Request, res: Response) => {
   try {
-    const result = await auditTaskService.updateTask(req.params.id, req.body, req.user!.userId);
+    const result = await auditTaskService.updateTask(req.params.id, req.body, req.user!);
     res.json({ success: true, data: result });
   } catch (error: any) {
     const status = error.message === '审计任务不存在' ? 404 : 400;
@@ -94,7 +96,7 @@ router.post('/:id/execute', authorize('account_tasks', 'execute'), async (req: R
  * GET /api/account/tasks/:id/executions
  * 执行历史
  */
-router.get('/:id/executions', async (req: Request, res: Response) => {
+router.get('/:id/executions', validate({ query: taskExecutionQuery }), async (req: Request, res: Response) => {
   try {
     const result = await auditTaskService.getExecutionHistory(req.params.id, req.query as any);
     res.json({ success: true, data: result });

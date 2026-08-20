@@ -26,7 +26,7 @@ router.post('/', authorize('tasks', 'create'), async (req: Request, res: Respons
     const departmentId = req.body.departmentId || req.user!.primaryDepartmentId;
     if (!departmentId) throw new AppError(400, 'PRIMARY_DEPARTMENT_REQUIRED', '请选择任务归属部门');
     // assignedTo 不再必填 — 创建草稿任务，后续再指派
-    const task = await taskService.createTask({ ...req.body, departmentId, createdBy: req.user!.userId });
+    const task = await taskService.createTask({ ...req.body, departmentId, createdBy: req.user!.userId }, req.user!);
     res.status(201).json({ success: true, data: task });
   } catch (error: any) {
     sendError(res, error, 400, 'CREATE_FAILED');
@@ -91,7 +91,7 @@ router.put('/:id/auditors', authorize('tasks', 'update'), async (req: Request, r
   }
 });
 
-router.post('/:id/submit', authorize('tasks', 'submit'), async (req: Request, res: Response) => {
+router.post('/:id/submit', authorize('tasks', 'submit'), async (_req: Request, res: Response) => {
   res.status(410).json({
     success: false,
     error: {
@@ -101,7 +101,7 @@ router.post('/:id/submit', authorize('tasks', 'submit'), async (req: Request, re
   });
 });
 
-router.post('/:id/return', authorize('tasks', 'update'), async (req: Request, res: Response) => {
+router.post('/:id/return', authorize('tasks', 'update'), async (_req: Request, res: Response) => {
   res.status(410).json({
     success: false,
     error: {
@@ -132,7 +132,7 @@ router.post('/:id/close', authorize('tasks', 'update'), async (req: Request, res
 });
 
 // 审计员配置任务：更新问题责任分配
-router.put('/:id/configure', authorize('tasks', 'update'), async (req: Request, res: Response) => {
+router.put('/:id/configure', authorize('tasks', 'update'), async (_req: Request, res: Response) => {
   res.status(410).json({
     success: false,
     error: {
@@ -145,7 +145,7 @@ router.put('/:id/configure', authorize('tasks', 'update'), async (req: Request, 
 // 删除任务（仅管理员）
 router.delete('/:id', authorize('tasks', 'delete'), async (req: Request, res: Response) => {
   try {
-    const { AuditTask, QuestionItem, EvidenceFile, Notification, AuditLog, OperationType } = await import('../models');
+    const { OperationType } = await import('../models');
     const task = await objectAccessService.taskOrNotFound(req.params.id, req.user!);
     if (!task) {
       res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '任务不存在' } });

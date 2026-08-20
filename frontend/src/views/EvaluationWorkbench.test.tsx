@@ -72,11 +72,15 @@ describe('EvaluationWorkbench column layout', () => {
       if (url === '/tasks/task-1/assets') return {
         data: { items: [{ assetId: 'asset-1', assetNameSnapshot: '生产系统' }] },
       } as any;
-      if (url === '/lookup/personnel') return {
-        data: [
-          { userId: 'member-1', displayName: '当前责任人', username: 'member' },
-          { userId: 'member-2', displayName: '新责任人', username: 'member-2' },
-        ],
+      if (url === '/lookup/options/personnel') return {
+        data: {
+          items: [
+            { value: 'member-1', label: '当前责任人', disabled: false, meta: { userId: 'member-1', username: 'member' } },
+            { value: 'member-2', label: '新责任人', disabled: false, meta: { userId: 'member-2', username: 'member-2' } },
+          ],
+          selectedItems: [],
+          pagination: { page: 1, pageSize: 20, total: 2, totalPages: 1, hasMore: false },
+        },
       } as any;
       if (url === '/tasks/task-1/evaluations/filter-options') return {
         data: {
@@ -236,7 +240,7 @@ describe('EvaluationWorkbench column layout', () => {
     ]);
     expect(container.querySelector('.evaluation-workbench-table .ant-table-cell-fix-left')).toBeNull();
     expect(screen.getByRole('combobox', { name: '关联资产' }).closest('td')).toHaveClass('evaluation-assets-cell');
-    await waitFor(() => expect(apiClient.get).toHaveBeenCalledTimes(5));
+    await waitFor(() => expect(apiClient.get).toHaveBeenCalledTimes(4));
     expect(screen.queryByRole('combobox', { name: '设置 A.1 的符合性结论' })).not.toBeInTheDocument();
     await user.click(screen.getByRole('combobox', { name: '设置 A.1 的责任人' }));
     await user.click(await screen.findByText('新责任人'));
@@ -390,7 +394,7 @@ describe('EvaluationWorkbench column layout', () => {
     ));
   }, 10_000);
 
-  it('reviews inline with finding fields and exposes return, review, and username-based transfer', async () => {
+  it('reviews inline with finding fields and exposes return, review, and name-based transfer', async () => {
     useAuthStore.setState({
       user: {
         id: 'member-1', username: 'reviewer_one', email: null, role: '管理员', roleIds: [],
@@ -407,10 +411,16 @@ describe('EvaluationWorkbench column layout', () => {
           { auditorUserId: 'member-3', auditor: { username: 'target_reviewer' } },
         ] } } as any;
       }
-      if (url === '/lookup/personnel') return { data: [
-        { userId: 'member-1', username: 'reviewer_one', displayName: '复核人' },
-        { userId: 'member-3', username: 'target_reviewer', displayName: '目标复核人' },
-      ] } as any;
+      if (url === '/lookup/options/auditors') return {
+        data: {
+          items: [
+            { value: 'member-1', label: '复核人', disabled: false, meta: { username: 'reviewer_one' } },
+            { value: 'member-3', label: '目标复核人', disabled: false, meta: { username: 'target_reviewer' } },
+          ],
+          selectedItems: [],
+          pagination: { page: 1, pageSize: 20, total: 2, totalPages: 1, hasMore: false },
+        },
+      } as any;
       if (url === '/tasks/task-1/evaluations') return {
         data: {
           items: [{
@@ -470,11 +480,11 @@ describe('EvaluationWorkbench column layout', () => {
     }, { headers: { 'If-Match': '"3"' } }));
 
     await user.click(screen.getByRole('button', { name: /转\s*派/ }));
-    const transferSearch = await screen.findByRole('combobox', { name: '按用户名搜索复核人' });
-    await user.type(transferSearch, 'target');
-    expect(await screen.findByText('target_reviewer')).toBeInTheDocument();
+    const transferSearch = await screen.findByRole('combobox', { name: '按姓名搜索复核人' });
+    await user.type(transferSearch, '目标');
+    expect(await screen.findByText('目标复核人')).toBeInTheDocument();
     expect(screen.queryByText('member-3', { selector: '.ant-select-item-option-content' })).not.toBeInTheDocument();
-    await user.click(screen.getByText('target_reviewer'));
+    await user.click(screen.getByText('目标复核人'));
     await user.click(screen.getByRole('button', { name: 'OK' }));
     await waitFor(() => expect(apiClient.put).toHaveBeenCalledWith('/evaluations/evaluation-1/review-claim', { auditorUserId: 'member-3' }));
 

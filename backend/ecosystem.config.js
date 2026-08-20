@@ -6,7 +6,6 @@ module.exports = {
     name: 'compliance',
     script: 'dist/index.js',
     cwd: __dirname,
-    instances: 2,
     exec_mode: 'cluster',
     env_production: {
       NODE_ENV: 'production',

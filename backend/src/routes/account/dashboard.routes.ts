@@ -10,7 +10,7 @@ router.use(authorize('account_dashboard', 'read'));
  * GET /api/account/dashboard/overview
  * 全局概览
  */
-router.get('/overview', async (req: Request, res: Response) => {
+router.get('/overview', async (_req: Request, res: Response) => {
   try {
     const result = await dashboardService.getOverview();
     res.json({ success: true, data: result });
@@ -37,7 +37,7 @@ router.get('/trends', async (req: Request, res: Response) => {
  * GET /api/account/dashboard/risk-distribution
  * 风险分布
  */
-router.get('/risk-distribution', async (req: Request, res: Response) => {
+router.get('/risk-distribution', async (_req: Request, res: Response) => {
   try {
     const result = await dashboardService.getRiskDistribution();
     res.json({ success: true, data: result });

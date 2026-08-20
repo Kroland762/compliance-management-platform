@@ -5,7 +5,7 @@ import apiClient from '../api/client';
 import { useAuthStore } from '../store/auth';
 import { buildPermissionConfiguration } from '../utils/membership';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 interface Role {
   id: string;

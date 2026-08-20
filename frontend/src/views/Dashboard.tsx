@@ -64,7 +64,6 @@ const StatCard = ({
 );
 
 export default function Dashboard() {
-  const user = useAuthStore((s) => s.user);
   const can = useAuthStore((s) => s.hasPermission);
   const navigate = useNavigate();
   const [stats, setStats] = useState({

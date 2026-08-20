@@ -6,6 +6,8 @@ build/
 *.log
 uploads/
 coverage/
+playwright-report/
+test-results/
 .DS_Store
 *.tsbuildinfo
 *.bak
@@ -16,3 +18,5 @@ audit-api.js.bak
 *.dump
 *.backup
 backend/backups/
+backups/
+restore-uploads/

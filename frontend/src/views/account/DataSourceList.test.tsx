@@ -12,6 +12,8 @@ vi.mock('../../api/account', () => ({
     sync: vi.fn(),
     toggle: vi.fn(),
     delete: vi.fn(),
+    previewCsv: vi.fn(),
+    reuploadCsv: vi.fn(),
   },
 }));
 
@@ -44,5 +46,29 @@ describe('DataSourceList permissions', () => {
     render(<MemoryRouter><DataSourceList /></MemoryRouter>);
     await waitFor(() => expect(dataSourceApi.list).toHaveBeenCalled());
     expect(screen.queryByRole('button', { name: /添加数据源/ })).not.toBeInTheDocument();
+  });
+
+  it('renders CSV systems distinctly and exposes reupload only with sync permission', async () => {
+    vi.mocked(dataSourceApi.list).mockResolvedValue({
+      data: {
+        items: [{
+          id: 'csv-1', name: 'HR CSV', sourceType: 'CSV', mappingStatus: 'CONFIGURED',
+          taskCount: 1, totalAccounts: 2, status: 'ACTIVE', lastSyncTime: null,
+          createdAt: '2026-08-20T00:00:00Z', updatedAt: '2026-08-20T00:00:00Z',
+          fieldMappingConfig: { accountId: 'uid' },
+        }],
+      },
+    } as any);
+    useAuthStore.setState(state => ({
+      ...state,
+      user: state.user ? { ...state.user, permissions: { data_sources: ['read', 'sync'] } } : null,
+    }));
+
+    render(<MemoryRouter><DataSourceList /></MemoryRouter>);
+
+    expect(await screen.findByText('HR CSV')).toBeInTheDocument();
+    expect(screen.getByText('CSV')).toBeInTheDocument();
+    expect(screen.queryByText('点击检测')).not.toBeInTheDocument();
+    expect(document.querySelector('.anticon-upload')).toBeInTheDocument();
   });
 });

@@ -1,7 +1,6 @@
 import ExcelJS from 'exceljs';
 import { Op, type WhereOptions } from 'sequelize';
 import {
-  Asset,
   AuditTask,
   EvidenceFile,
   QuestionItem,

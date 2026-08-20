@@ -34,6 +34,7 @@ import objectAccessService from './object-access.service';
 import { riskConfirmations } from './metrics.service';
 import { assertLockVersion } from '../utils/optimistic-lock';
 import idempotencyService from './idempotency.service';
+import lookupService from './lookup.service';
 
 type RequestUser = NonNullable<Express.Request['user']>;
 
@@ -197,6 +198,7 @@ class RiskDomainService {
       throw new AppError(400, 'VALIDATION_ERROR', '风险标题、描述和评估必填');
     }
     await objectAccessService.taskOrNotFound(input.taskId, user, 'update');
+    await lookupService.assertOwners('risk-owner', input.ownerDepartmentId, input.ownerUserId, user);
     const idempotencyKey = idempotencyService.requireKey(rawIdempotencyKey);
     const result = await idempotencyService.execute(
       'risk.create',
@@ -268,6 +270,7 @@ class RiskDomainService {
     const findingIds = [...new Set(input.findingIds)];
     if (findingIds.length !== input.findingIds.length) throw new AppError(409, 'CONFLICT', '不能重复选择不符合项');
     for (const id of findingIds) await objectAccessService.findingOrNotFound(id, user);
+    await lookupService.assertOwners('finding-escalation-owner', input.ownerDepartmentId, input.ownerUserId, user);
     const idempotencyKey = idempotencyService.requireKey(rawIdempotencyKey);
     const result = await idempotencyService.execute(
       'risk.create_from_findings',

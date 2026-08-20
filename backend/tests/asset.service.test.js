@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import { Asset } from '../src/models';
 import assetService from '../src/services/asset.service';
 import auditLogService from '../src/services/audit-log.service';
 import objectAccessService from '../src/services/object-access.service';
@@ -40,6 +41,26 @@ function asset(overrides = {}) {
 
 describe('asset service lifecycle', () => {
   afterEach(() => vi.restoreAllMocks());
+
+  test('create normalizes a lowercase asset code before duplicate checks and persistence', async () => {
+    vi.spyOn(Asset, 'findOne').mockResolvedValue(null);
+    vi.spyOn(Asset, 'create').mockImplementation(async (values) => asset(values));
+    vi.spyOn(auditLogService, 'log').mockResolvedValue({});
+
+    const created = await assetService.create({
+      code: '  core-banking_01  ',
+      name: '  核心银行系统  ',
+      assetType: '  application  ',
+    }, actor);
+
+    expect(Asset.findOne).toHaveBeenCalledWith({ where: { code: 'CORE-BANKING_01' } });
+    expect(Asset.create).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'CORE-BANKING_01',
+      name: '核心银行系统',
+      assetType: 'application',
+    }));
+    expect(created.code).toBe('CORE-BANKING_01');
+  });
 
   test('update only writes editable fields and keeps code and status immutable', async () => {
     const model = asset();

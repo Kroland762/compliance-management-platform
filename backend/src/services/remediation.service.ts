@@ -30,6 +30,7 @@ import objectAccessService from './object-access.service';
 import { verificationDuration } from './metrics.service';
 import { assertLockVersion } from '../utils/optimistic-lock';
 import idempotencyService from './idempotency.service';
+import lookupService from './lookup.service';
 
 type RequestUser = NonNullable<Express.Request['user']>;
 
@@ -69,7 +70,7 @@ class RemediationService {
     return `ACT-${period}-${String(row.sequence).padStart(6, '0')}`;
   }
 
-  private async validateInput(input: CreateActionInput, user: RequestUser, transaction?: any) {
+  private async validateInput(input: CreateActionInput, user: RequestUser, transaction?: any, contextId = '') {
     if (!input.title?.trim() || !input.description?.trim() || !input.dueDate) {
       throw new AppError(400, 'VALIDATION_ERROR', '整改行动标题、描述和期限必填');
     }
@@ -78,14 +79,7 @@ class RemediationService {
     }
     const riskIds = [...new Set(input.riskLinks.map((link) => link.riskId))];
     if (riskIds.length !== input.riskLinks.length) throw new AppError(409, 'CONFLICT', '不能重复关联同一风险');
-    const department = await Department.findOne({
-      where: { id: input.ownerDepartmentId, status: 'active' },
-      transaction,
-    });
-    const member = await TenantMember.findOne({
-      where: { userId: input.ownerUserId, status: TenantMemberStatus.ACTIVE },
-      transaction,
-    });
+    await lookupService.assertOwners('remediation-owner', input.ownerDepartmentId, input.ownerUserId, user, contextId);
     const risks = await RiskRecord.findAll({
       where: {
         id: { [Op.in]: riskIds },
@@ -94,7 +88,6 @@ class RemediationService {
       transaction,
       ...(transaction ? { lock: transaction.LOCK.UPDATE } : {}),
     });
-    if (!department || !member) throw new AppError(404, 'NOT_FOUND', '整改责任部门或负责人不存在');
     if (risks.length !== riskIds.length) throw new AppError(404, 'NOT_FOUND', '关联风险不存在或已关闭');
     for (const risk of risks) await objectAccessService.riskOrNotFound(risk.id, user, 'update');
     if (input.riskLinks.some((link) => !link.contributionDescription?.trim())) {
@@ -282,7 +275,7 @@ class RemediationService {
       if ([RemediationActionStatus.PENDING_VERIFICATION, RemediationActionStatus.COMPLETED, RemediationActionStatus.CANCELLED].includes(locked.status)) {
         throw new AppError(409, 'CONFLICT', '当前状态不能修改风险关联');
       }
-      await this.validateInput(input, user, transaction);
+      await this.validateInput(input, user, transaction, id);
       const before = await RiskActionLink.findAll({
         where: { actionId: id },
         attributes: ['riskId'],

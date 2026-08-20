@@ -16,6 +16,7 @@ import apiClient from '../../api/client';
 import { getApiErrorMessage } from '../../utils/error';
 import { useAuthStore } from '../../store/auth';
 import { buildDepartmentAssignments, resolvePrimaryDepartmentId } from '../../utils/membership';
+import { DepartmentSelect, RoleSelect } from '../../components/lookups';
 
 const { Text, Paragraph } = Typography;
 
@@ -304,15 +305,13 @@ export default function UserManagement() {
             </Form.Item>
           )}
           <Form.Item name="roleIds" label="多角色" rules={[{ required: true, type: 'array', min: 1 }]}>
-            <Select mode="multiple" options={roles.map((role) => ({ value: role.id, label: role.name }))} />
+            <RoleSelect mode="multiple" />
           </Form.Item>
           <Form.Item name="departmentIds" label="所属部门（可多选）" rules={[{ required: true, type: 'array', min: 1 }]}>
-            <Select
+            <DepartmentSelect
+              purpose="user-membership"
+              contextId={editing?.id}
               mode="multiple"
-              showSearch
-              optionFilterProp="label"
-              placeholder="按部门名称搜索"
-              options={departmentOptions}
               disabled={editing && !canOrganization}
             />
           </Form.Item>
@@ -341,15 +340,12 @@ export default function UserManagement() {
             <Input placeholder="输入对方现有登录用户名" />
           </Form.Item>
           <Form.Item name="roleIds" label="租户角色" rules={[{ required: true, type: 'array', min: 1 }]}>
-            <Select mode="multiple" options={roles.map((role) => ({ value: role.id, label: role.name }))} />
+            <RoleSelect mode="multiple" />
           </Form.Item>
           <Form.Item name="departmentIds" label="所属部门（可多选）" rules={[{ required: true, type: 'array', min: 1 }]}>
-            <Select
+            <DepartmentSelect
+              purpose="user-membership"
               mode="multiple"
-              showSearch
-              optionFilterProp="label"
-              placeholder="按部门名称搜索"
-              options={departmentOptions}
             />
           </Form.Item>
           <Form.Item name="primaryDepartmentId" label="主部门" rules={[{ required: true }]}>

@@ -164,30 +164,14 @@ describeIntegration('vNext assessment, risk and remediation relationship graph',
 
   afterAll(async () => {
     if (sequelize && suffix) {
-      const schemaName = `tenant_graph_${suffix}`;
-      if (/^tenant_graph_[a-z0-9_]+$/.test(schemaName)) {
-        require('../src/services/account/cronScheduler.service').default.shutdown();
-        await sequelize.query('DELETE FROM public.task_schedules WHERE "tenantSchema" = :schemaName', {
-          replacements: { schemaName },
-        }).catch(() => undefined);
-        await sequelize.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`).catch(() => undefined);
-        await sequelize.query('DELETE FROM public.schema_migrations WHERE schema_name = :schemaName', {
-          replacements: { schemaName },
-        }).catch(() => undefined);
-        await sequelize.query('DELETE FROM public.tenants WHERE slug = :slug', {
-          replacements: { slug: `graph_${suffix}` },
-        }).catch(() => undefined);
-        await sequelize.query(`DELETE FROM public.users
-          WHERE username IN (:admin, :auditor, :auditorTwo)`, {
-          replacements: {
-            admin: `graph_admin_${suffix}`,
-            auditor: `graph_auditor_${suffix}`,
-            auditorTwo: `graph_auditor_two_${suffix}`,
-          },
-        }).catch(() => undefined);
-      }
+      const { cleanupIntegrationState } = require('./helpers/tenant-cleanup');
+      await cleanupIntegrationState({
+        sequelize,
+        tenants: [tenant],
+        userIds: [user?.id, auditorUser?.id, auditorTwo?.id],
+      });
     }
-    await sequelize.close();
+    if (sequelize) await sequelize.close();
   });
 
   test('publishing a sparse 2 x 3 matrix creates four stable, unique evaluations and is idempotent', async () => {
@@ -220,7 +204,10 @@ describeIntegration('vNext assessment, risk and remediation relationship graph',
       await scopeService.replaceAssets(sheetTask.id, assets.map((asset) => asset.id), requestUser);
       const published = await scopeService.publish(sheetTask.id, requestUser);
       expect(published.created).toBe(2);
-      expect((await AuditTask.findByPk(sheetTask.id)).columnSchemaSnapshot).toHaveLength(2);
+      expect((await AuditTask.findByPk(sheetTask.id)).columnSchemaSnapshot.map((column) => column.key)).toEqual([
+        'sequenceNumber', 'controlPoint', 'assets', 'assignee', 'answer', 'evidence', 'history',
+        'compliance', 'findingDescription', 'findingSeverity', 'status', 'actions',
+      ]);
       let rows = await QuestionItem.findAll({ where: { taskId: sheetTask.id }, order: [['sequenceNumber', 'ASC']] });
       expect(rows).toHaveLength(2);
       expect(await EvaluationAsset.count({ where: { taskId: sheetTask.id } })).toBe(6);

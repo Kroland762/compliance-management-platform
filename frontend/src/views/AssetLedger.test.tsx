@@ -68,6 +68,15 @@ describe('AssetLedger', () => {
         const items = status === 'archived' ? [archivedAsset] : [activeAsset];
         return { data: { items, pagination: { page: 1, pageSize: 20, total: 1 } } } as any;
       }
+      if (url === '/lookup/options/departments') {
+        const departments = [
+          { value: '11111111-1111-4111-8111-111111111111', label: '财务部', disabled: false },
+          { value: '22222222-2222-4222-8222-222222222222', label: '风险管理部', disabled: false },
+        ];
+        const keyword = String(config.params?.q || '').toLowerCase();
+        const items = departments.filter((department) => department.label.toLowerCase().includes(keyword));
+        return { data: { items, selectedItems: [], pagination: { page: 1, pageSize: 20, total: items.length, totalPages: 1, hasMore: false } } } as any;
+      }
       return { data: [] } as any;
     });
     vi.mocked(apiClient.put).mockResolvedValue({ data: activeAsset } as any);
@@ -104,5 +113,56 @@ describe('AssetLedger', () => {
     });
     expect(screen.getByRole('button', { name: /恢复/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /编辑/ })).not.toBeInTheDocument();
+  });
+
+  it('normalizes a newly entered asset code to uppercase', async () => {
+    const user = userEvent.setup();
+    render(<AssetLedger />);
+
+    await screen.findByText('示例应用');
+    await user.click(screen.getByRole('button', { name: /新增资产/ }));
+    const codeInput = await screen.findByLabelText('资产编码');
+    await user.type(codeInput, 'core-banking_01');
+
+    expect(codeInput).toHaveValue('CORE-BANKING_01');
+    await user.type(screen.getByLabelText('资产名称'), '核心系统');
+    await user.click(screen.getByLabelText('资产类型'));
+    const systemOption = (await screen.findAllByText('system'))
+      .find((element) => element.classList.contains('ant-select-item-option-content'))!;
+    await user.click(systemOption.closest('.ant-select-item-option') as HTMLElement);
+    await user.click(screen.getByRole('button', { name: /创.*建/ }));
+    await waitFor(() => expect(apiClient.post).toHaveBeenCalledWith('/assets', expect.objectContaining({
+      code: 'CORE-BANKING_01', name: '核心系统', assetType: 'system',
+    })));
+  });
+
+  it('shows and filters responsibility departments by human-readable name only', async () => {
+    const user = userEvent.setup();
+    render(<AssetLedger />);
+
+    await screen.findByText('示例应用');
+    await user.click(screen.getByRole('button', { name: /新增资产/ }));
+    const departmentSelect = await screen.findByLabelText('责任部门');
+    expect(screen.getByText('输入部门名称检索')).toBeInTheDocument();
+    await user.click(departmentSelect);
+    expect(await screen.findByText('风险管理部')).toBeInTheDocument();
+    expect(screen.queryByText('风险管理部 (RISK)')).not.toBeInTheDocument();
+
+    await user.type(departmentSelect, '风险');
+
+    await waitFor(() => expect(apiClient.get).toHaveBeenCalledWith('/lookup/options/departments', expect.objectContaining({
+      params: expect.objectContaining({ purpose: 'asset-owner', q: '风险' }),
+    })));
+    expect(await screen.findByText('风险管理部')).toBeInTheDocument();
+    expect(screen.queryByText('财务部')).not.toBeInTheDocument();
+
+    await user.clear(departmentSelect);
+    await user.type(departmentSelect, 'RISK');
+
+    await waitFor(() => expect(apiClient.get).toHaveBeenCalledWith('/lookup/options/departments', expect.objectContaining({
+      params: expect.objectContaining({ purpose: 'asset-owner', q: 'RISK' }),
+    })));
+    expect(screen.queryByText('风险管理部')).not.toBeInTheDocument();
+    expect(screen.queryByText('财务部')).not.toBeInTheDocument();
   });
 });

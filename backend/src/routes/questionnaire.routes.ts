@@ -71,7 +71,7 @@ router.get('/tasks/:taskId/questions', authorize('tasks', 'read'), asyncHandler(
 }));
 
 // 保存问题答案
-router.put('/questions/:id/answer', authorize('tasks', 'update'), asyncHandler(async (req: Request, res: Response) => {
+router.put('/questions/:id/answer', authorize('tasks', 'update'), asyncHandler(async (_req: Request, _res: Response) => {
   throw new AppError(
     410,
     'LEGACY_WRITE_PATH_DISABLED',

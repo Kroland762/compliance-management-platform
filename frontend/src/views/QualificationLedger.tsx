@@ -5,6 +5,7 @@ import dayjs from 'dayjs';
 import apiClient from '../api/client';
 import { getApiErrorMessage } from '../utils/error';
 import { useAuthStore } from '../store/auth';
+import { DepartmentSelect, PersonnelSelect } from '../components/lookups';
 
 const STATUS_LABELS: Record<string, string> = {
   valid: '有效',
@@ -44,8 +45,6 @@ export default function QualificationLedger() {
   const [pageSize, setPageSize] = useState(20);
   const [total, setTotal] = useState(0);
   const [stats, setStats] = useState({ total: 0, valid: 0, expiring: 0, expired: 0, missing: 0 });
-  const [departments, setDepartments] = useState<any[]>([]);
-  const [personnel, setPersonnel] = useState<any[]>([]);
   const [form] = Form.useForm();
 
   const fetchData = async () => {
@@ -69,14 +68,6 @@ export default function QualificationLedger() {
   };
 
   useEffect(() => { fetchData(); }, [filters, page, pageSize]);
-  useEffect(() => {
-    Promise.all([apiClient.get('/lookup/departments'), apiClient.get('/lookup/personnel')])
-      .then(([departmentResponse, personnelResponse]: any[]) => {
-        setDepartments(departmentResponse.data || []);
-        setPersonnel(personnelResponse.data || []);
-      })
-      .catch(() => message.error('部门或负责人选项加载失败'));
-  }, []);
 
   const openCreate = () => {
     setEditing(null);
@@ -142,13 +133,13 @@ export default function QualificationLedger() {
       title: '所属部门',
       dataIndex: 'ownerDepartmentId',
       width: 120,
-      render: (value: string) => departments.find((item) => item.id === value)?.name || '-',
+      render: (_value: string, record: any) => record.ownerDepartmentName || record.ownerDepartment || '-',
     },
     {
       title: '负责人',
       dataIndex: 'responsibleUserId',
       width: 100,
-      render: (value: string) => personnel.find((item) => item.userId === value)?.displayName || '-',
+      render: (_value: string, record: any) => record.responsibleDisplayName || record.responsiblePerson || '-',
     },
     { title: '签发日期', dataIndex: 'issueDate', width: 110, render: (v: string) => v || '-' },
     { title: '有效期至', dataIndex: 'expiryDate', width: 110, render: (v: string) => v || '-' },
@@ -267,25 +258,10 @@ export default function QualificationLedger() {
               <Input placeholder="例如：集团总部/子公司名称" />
             </Form.Item>
             <Form.Item name="ownerDepartmentId" label="归属部门" rules={[{ required: true, message: '请选择归属部门' }]}>
-              <Select
-                showSearch
-                optionFilterProp="label"
-                options={departments.map((department) => ({
-                  value: department.id,
-                  label: `${department.name} (${department.code})`,
-                }))}
-              />
+              <DepartmentSelect purpose="qualification-owner" contextId={editing?.id} />
             </Form.Item>
             <Form.Item name="responsibleUserId" label="负责人">
-              <Select
-                allowClear
-                showSearch
-                optionFilterProp="label"
-                options={personnel.map((member) => ({
-                  value: member.userId,
-                  label: `${member.displayName || member.username} (${member.primaryDepartmentName || '-'})`,
-                }))}
-              />
+              <PersonnelSelect purpose="qualification-owner" contextId={editing?.id} allowClear />
             </Form.Item>
             <Form.Item name="issueDate" label="签发日期">
               <DatePicker style={{ width: '100%' }} />

@@ -65,6 +65,7 @@ export function normalizeEvaluationColumnSchema(
   const hasSystemColumns = unique.some((column) => SYSTEM_KEYS.has(column.key));
 
   const normalizeTemplateColumn = (column: Partial<EvaluationColumnDefinition> & { key: string }): EvaluationColumnDefinition => ({
+    ...column,
     key: column.key,
     label: column.label || column.key,
     source: column.source === 'extra' ? 'extra' : 'core',

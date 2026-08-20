@@ -21,6 +21,8 @@ describeIntegration('tenant identity, membership, roles and organization governa
   let roleB;
   let taskB;
   let qualificationB;
+  const cleanupTenants = [];
+  const cleanupUsernames = [];
   const sharedPassword = 'SharedMember123!';
 
   beforeAll(async () => {
@@ -67,6 +69,8 @@ describeIntegration('tenant identity, membership, roles and organization governa
     });
     tenantA = provisionA.tenant;
     tenantB = provisionB.tenant;
+    cleanupTenants.push(tenantA, tenantB);
+    cleanupUsernames.push(provisionA.bootstrapCredentials.username, provisionB.bootstrapCredentials.username);
 
     sharedUser = await User.create({
       username: `shared_${suffix}`,
@@ -173,7 +177,19 @@ describeIntegration('tenant identity, membership, roles and organization governa
   }, 90_000);
 
   afterAll(async () => {
-    await sequelize.close();
+    try {
+      if (sequelize) {
+        const { cleanupIntegrationState } = require('./helpers/tenant-cleanup');
+        await cleanupIntegrationState({
+          sequelize,
+          tenants: cleanupTenants,
+          userIds: sharedUser ? [sharedUser.id] : [],
+          usernames: cleanupUsernames,
+        });
+      }
+    } finally {
+      if (sequelize) await sequelize.close();
+    }
   });
 
   test('one global identity selects either tenant and receives different member context', async () => {
@@ -309,13 +325,15 @@ describeIntegration('tenant identity, membership, roles and organization governa
   });
 
   test('auth-session migration is idempotent and refuses rollback with active sessions', async () => {
-    const { migrateDown, migrateUp, status } = require('../src/config/migrations/runner');
+    const { migrateUp, status } = require('../src/config/migrations/runner');
+    const migrations = require('../src/config/migrations/registry').default;
     await migrateUp();
     await migrateUp();
     const migration = (await status()).find((item) =>
       item.migrationId === '016_control_auth_sessions' && item.schemaName === 'public');
     expect(migration).toMatchObject({ applied: true, checksumValid: true });
-    await expect(migrateDown('public', '016_control_auth_sessions'))
+    const authSessionMigration = migrations.find((item) => item.id === '016_control_auth_sessions');
+    await expect(sequelize.transaction((transaction) => authSessionMigration.down('public', transaction)))
       .rejects.toThrow('存在未过期的登录会话');
   });
 
@@ -344,6 +362,8 @@ describeIntegration('tenant identity, membership, roles and organization governa
         displayName: '临时管理员',
       },
     });
+    cleanupTenants.push(result.tenant);
+    cleanupUsernames.push(result.bootstrapCredentials.username);
     const captchaService = require('../src/services/captcha.service').default;
     const captcha = jest.spyOn(captchaService, 'verify').mockReturnValueOnce(true);
     const login = await request.post('/api/auth/login').send({
@@ -438,6 +458,12 @@ describeIntegration('tenant identity, membership, roles and organization governa
           VALUES (:departmentMemberId, :departmentId, :userId)`, {
         replacements: { roleId, tenantId, departmentId, departmentMemberId, userId: legacyUser.id },
       });
+      const {
+        DataSource, AccountData, AuditRule, AccountAuditTask, ProblemAccount, TaskExecution,
+      } = require('../src/models/account');
+      for (const model of [DataSource, AccountData, AuditRule, AccountAuditTask, ProblemAccount, TaskExecution]) {
+        await model.schema(schema).sync();
+      }
       for (const migrationId of ['001_tenant_business', '002_tenant_security_fields']) {
         const migration = migrations.find((item) => item.id === migrationId);
         await sequelize.query(`INSERT INTO public.schema_migrations

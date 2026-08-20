@@ -33,6 +33,7 @@ export function MultiColumnFilter({ value, options, placeholder, onChange }: {
     mode="multiple"
     allowClear
     showSearch
+    optionFilterProp="label"
     maxTagCount="responsive"
     style={{ width: 280 }}
     value={value || []}

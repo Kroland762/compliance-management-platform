@@ -11,9 +11,14 @@ import {
   User,
 } from '../models';
 import { asyncHandler } from '../utils/http';
+import lookupService from '../services/lookup.service';
 
 const router = Router();
 router.use(authenticate);
+
+router.get('/options/:kind', asyncHandler(async (req, res) => {
+  res.json({ success: true, data: await lookupService.list(req.params.kind, req.query, req.user!) });
+}));
 
 /**
  * Lightweight tenant-scoped lookups used by task and qualification forms.
@@ -35,14 +40,9 @@ router.get('/departments', authorizeAny(
   const departments = await Department.findAll({
     where: {
       status: 'active',
-      ...(keyword ? {
-        [Op.or]: [
-          { name: { [Op.iLike]: `%${keyword}%` } },
-          { code: { [Op.iLike]: `%${keyword}%` } },
-        ],
-      } : {}),
+      ...(keyword ? { name: { [Op.iLike]: `%${keyword}%` } } : {}),
     },
-    attributes: ['id', 'name', 'code', 'parentId'],
+    attributes: ['id', 'name', 'parentId'],
     order: [['sortOrder', 'ASC'], ['name', 'ASC']],
     limit: 100,
   });
@@ -91,7 +91,7 @@ router.get('/personnel', authorizeAny(
     members.length
       ? DepartmentMember.findAll({ where: { memberId: { [Op.in]: members.map((member) => member.id) } } })
       : [],
-    Department.findAll({ where: { status: 'active' }, attributes: ['id', 'name', 'code'] }),
+    Department.findAll({ where: { status: 'active' }, attributes: ['id', 'name'] }),
   ]);
   const userMap = new Map(users.map((user) => [user.id, user]));
   const departmentMap = new Map(departments.map((department) => [department.id, department]));

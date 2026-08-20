@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Typography, Row, Col, Card, Progress } from 'antd';
+import { Typography, Row, Col, Card, Alert, Button } from 'antd';
 import {
   DatabaseOutlined,
   UserOutlined,
@@ -11,10 +11,8 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { dashboardApi, type DashboardOverview, type DashboardTrend, type DashboardDistribution, type DashboardRanking } from '../../api/account';
-import { getApiErrorMessage } from '../../utils/error';
-import { message } from 'antd';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 const StatCard = ({
   icon, label, value, color, onClick,
@@ -77,25 +75,29 @@ export default function AccountDashboard() {
   const [distribution, setDistribution] = useState<DashboardDistribution[]>([]);
   const [ranking, setRanking] = useState<DashboardRanking[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     const fetchData = async () => {
-      try {
-        const [overviewRes, trendsRes, distRes, rankRes] = await Promise.allSettled([
-          dashboardApi.overview(),
-          dashboardApi.trends({ period: '30d' }),
-          dashboardApi.distribution(),
-          dashboardApi.ranking({ top: 10 }),
-        ]);
-        if (cancelled) return;
-        if (overviewRes.status === 'fulfilled') {
+      setLoading(true);
+      setErrors({});
+      const [overviewRes, trendsRes, distRes, rankRes] = await Promise.allSettled([
+        dashboardApi.overview(),
+        dashboardApi.trends({ days: 30 }),
+        dashboardApi.distribution(),
+        dashboardApi.ranking({ limit: 10 }),
+      ]);
+      if (cancelled) return;
+      const nextErrors: Record<string, string> = {};
+      if (overviewRes.status === 'fulfilled') {
           setOverview((overviewRes.value as any).data);
-        }
-        if (trendsRes.status === 'fulfilled') {
+      } else nextErrors.overview = '概览加载失败';
+      if (trendsRes.status === 'fulfilled') {
           setTrends((trendsRes.value as any).data || []);
-        }
-        if (distRes.status === 'fulfilled') {
+      } else nextErrors.trends = '趋势加载失败';
+      if (distRes.status === 'fulfilled') {
           const rawDist = (distRes.value as any).data || {};
           // API 返回 { HIGH: N, MEDIUM: N, LOW: N }，转数组
           const distArray = Object.entries(rawDist).map(([key, value]) => ({
@@ -104,8 +106,8 @@ export default function AccountDashboard() {
             color: key === 'HIGH' ? '#FF3B30' : key === 'MEDIUM' ? '#FF9500' : '#34C759',
           }));
           setDistribution(distArray);
-        }
-        if (rankRes.status === 'fulfilled') {
+      } else nextErrors.distribution = '风险分布加载失败';
+      if (rankRes.status === 'fulfilled') {
           const rawRank = (rankRes.value as any).data || [];
           // API 返回 [{ taskName, sourceName, problemCount }]，映射为图表字段
           const rankArray = rawRank.map((r: any) => ({
@@ -113,19 +115,22 @@ export default function AccountDashboard() {
             count: r.problemCount || 0,
           }));
           setRanking(rankArray);
-        }
-      } catch {
-        message.error('获取概览数据失败');
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      } else nextErrors.ranking = '排行加载失败';
+      setErrors(nextErrors);
+      setLoading(false);
     };
     fetchData();
     return () => { cancelled = true; };
-  }, []);
+  }, [reloadKey]);
 
   return (
     <div>
+      {Object.keys(errors).length > 0 && (
+        <Alert type="error" showIcon style={{ marginBottom: 16 }}
+          message="部分账户审计数据加载失败"
+          description={Object.values(errors).join('、')}
+          action={<Button size="small" onClick={() => setReloadKey((value) => value + 1)}>重试</Button>} />
+      )}
       {/* Stat Cards */}
       <div style={{
         display: 'grid',

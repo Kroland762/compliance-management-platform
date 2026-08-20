@@ -22,6 +22,7 @@ import {
 import auditLogService from '../services/audit-log.service';
 import memberService from '../services/member.service';
 import { AppError, asyncHandler } from '../utils/http';
+import lookupService from '../services/lookup.service';
 
 const router = Router();
 router.use(authenticate);
@@ -129,6 +130,8 @@ router.post('/', authorize('organization', 'create'), asyncHandler(async (req, r
   if (!name || !/^[A-Z0-9_-]{2,60}$/.test(code)) {
     throw new AppError(400, 'VALIDATION_ERROR', '部门名称必填，编码需为 2-60 位大写字母、数字、下划线或横线');
   }
+  await lookupService.assertSelectable('departments', 'organization-parent', parentId ? [parentId] : [], req.user!);
+  await lookupService.assertSelectable('personnel', 'organization-manager', req.body.managerMemberId ? [req.body.managerMemberId] : [], req.user!);
   await validateParent(undefined, parentId);
   await validateManager(req.body.managerMemberId);
   await ensureUnique(name, code, parentId);
@@ -163,6 +166,8 @@ router.put('/:id', authorize('organization', 'update'), asyncHandler(async (req,
   if (req.body.code !== undefined && String(req.body.code).toUpperCase() !== department.code) {
     throw new AppError(409, 'DEPARTMENT_CODE_IMMUTABLE', '部门编码创建后不可修改');
   }
+  await lookupService.assertSelectable('departments', 'organization-parent', parentId ? [parentId] : [], req.user!, department.id);
+  await lookupService.assertSelectable('personnel', 'organization-manager', req.body.managerMemberId ? [req.body.managerMemberId] : [], req.user!, department.id);
   await validateParent(department.id, parentId);
   await validateManager(req.body.managerMemberId);
   await ensureUnique(name, department.code, parentId, department.id);

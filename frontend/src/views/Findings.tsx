@@ -4,6 +4,7 @@ import apiClient from '../api/client';
 import { getApiErrorMessage } from '../utils/error';
 import { useAuthStore } from '../store/auth';
 import { RISK_LEVEL } from '../constants/status';
+import { DepartmentSelect, PersonnelSelect } from '../components/lookups';
 
 const statusMap: Record<string, { text: string; color: string }> = {
   open: { text: '待处置', color: 'orange' }, remediating: { text: '整改中', color: 'blue' },
@@ -17,8 +18,6 @@ export default function Findings({ taskId }: { taskId?: string }) {
   const [selected, setSelected] = useState<React.Key[]>([]);
   const [remediating, setRemediating] = useState<any>();
   const [riskOpen, setRiskOpen] = useState(false);
-  const [departments, setDepartments] = useState<any[]>([]);
-  const [people, setPeople] = useState<any[]>([]);
   const [remediationForm] = Form.useForm();
   const [riskForm] = Form.useForm();
   const load = async () => {
@@ -27,10 +26,6 @@ export default function Findings({ taskId }: { taskId?: string }) {
   };
   useEffect(() => {
     void load();
-    if (can('findings', 'remediate') || can('findings', 'escalate')) {
-      Promise.all([apiClient.get('/lookup/departments'), apiClient.get('/lookup/personnel')])
-        .then(([d, p]: any[]) => { setDepartments(d.data || []); setPeople(p.data || []); });
-    }
   }, [taskId]);
 
   const createRemediation = async (values: any) => {
@@ -95,8 +90,8 @@ export default function Findings({ taskId }: { taskId?: string }) {
         <Form form={remediationForm} layout="vertical" onFinish={createRemediation}>
           <Form.Item name="title" label="整改标题" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="description" label="整改措施" rules={[{ required: true }]}><Input.TextArea rows={3} /></Form.Item>
-          <Form.Item name="ownerDepartmentId" label="责任部门" rules={[{ required: true }]}><Select options={departments.map((item) => ({ value: item.id, label: item.name }))} /></Form.Item>
-          <Form.Item name="ownerUserId" label="责任人" rules={[{ required: true }]}><Select showSearch optionFilterProp="label" options={people.map((item) => ({ value: item.userId, label: item.displayName || item.username }))} /></Form.Item>
+          <Form.Item name="ownerDepartmentId" label="责任部门" rules={[{ required: true }]}><DepartmentSelect purpose="finding-remediation-owner" contextId={remediating?.id} /></Form.Item>
+          <Form.Item name="ownerUserId" label="责任人" rules={[{ required: true }]}><PersonnelSelect purpose="finding-remediation-owner" contextId={remediating?.id} /></Form.Item>
           <Form.Item name="dueDate" label="整改期限" rules={[{ required: true }]}><DatePicker style={{ width: '100%' }} /></Form.Item>
         </Form>
       </Modal>
@@ -109,8 +104,8 @@ export default function Findings({ taskId }: { taskId?: string }) {
             <Form.Item name="treatmentStrategy" label="处置策略"><Select style={{ width: 140 }} options={[{ value: 'mitigate', label: '降低' }, { value: 'accept', label: '接受' }, { value: 'avoid', label: '规避' }, { value: 'transfer', label: '转移' }]} /></Form.Item>
             <Form.Item name="dueDate" label="处置期限"><DatePicker /></Form.Item>
           </Space>
-          <Form.Item name="ownerDepartmentId" label="责任部门" rules={[{ required: true }]}><Select options={departments.map((item) => ({ value: item.id, label: item.name }))} /></Form.Item>
-          <Form.Item name="ownerUserId" label="负责人" rules={[{ required: true }]}><Select showSearch optionFilterProp="label" options={people.map((item) => ({ value: item.userId, label: item.displayName || item.username }))} /></Form.Item>
+          <Form.Item name="ownerDepartmentId" label="责任部门" rules={[{ required: true }]}><DepartmentSelect purpose="finding-escalation-owner" /></Form.Item>
+          <Form.Item name="ownerUserId" label="负责人" rules={[{ required: true }]}><PersonnelSelect purpose="finding-escalation-owner" /></Form.Item>
         </Form>
       </Modal>
     </div>

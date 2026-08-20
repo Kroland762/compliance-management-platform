@@ -3,8 +3,15 @@ import {
   LOCKED_VISIBLE_EVALUATION_COLUMN_KEYS,
   normalizeEvaluationColumnSchema,
 } from './evaluationColumns';
+import goldenFixtures from '../../../fixtures/evaluation-columns.golden.json';
 
 describe('evaluation column layout', () => {
+  it.each(goldenFixtures)('matches shared golden fixture: $name', ({ input, expectedKeys }) => {
+    const normalized = normalizeEvaluationColumnSchema(input as any);
+    expect(normalized.map((column) => column.key)).toEqual(expectedKeys);
+    expect(normalized.filter((column) => column.source === 'system').every((column) => column.visible)).toBe(true);
+  });
+
   it('upgrades a legacy template schema to the recommended full-table order', () => {
     const result = normalizeEvaluationColumnSchema([
       { key: 'sequenceNumber', label: '序号', source: 'core', visible: true, width: 140 },

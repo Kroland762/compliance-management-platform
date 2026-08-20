@@ -5,14 +5,16 @@ import { useNavigate } from 'react-router-dom';
 import { taskApi, type Task } from '../../api/account';
 import { getApiErrorMessage } from '../../utils/error';
 import TaskForm from './TaskForm';
+import { useAuthStore } from '../../store/auth';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
-const statusColors: Record<string, string> = { idle: 'default', running: 'processing', completed: 'green', failed: 'red' };
-const statusLabels: Record<string, string> = { idle: '空闲', running: '运行中', completed: '已完成', failed: '失败' };
+const statusColors: Record<string, string> = { ACTIVE: 'green', INACTIVE: 'default' };
+const statusLabels: Record<string, string> = { ACTIVE: '启用', INACTIVE: '停用' };
 const scheduleLabels: Record<string, string> = { MANUAL: '手动', DAILY: '每日', WEEKLY: '每周', MONTHLY: '每月', CRON: 'Cron' };
 
 export default function TaskList() {
+  const can = useAuthStore((state) => state.hasPermission);
   const navigate = useNavigate();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(false);
@@ -26,7 +28,7 @@ export default function TaskList() {
     setLoading(true);
     const params: any = {};
     if (statusFilter) params.status = statusFilter;
-    if (keyword) params.keyword = keyword;
+    if (keyword) params.search = keyword;
     taskApi.list(params)
       .then((res: any) => setTasks(res.data?.items || []))
       .catch(() => message.error('获取任务列表失败'))
@@ -89,18 +91,18 @@ export default function TaskList() {
       title: '操作', width: 180, fixed: 'right' as const,
       render: (_: any, record: Task) => (
         <Space size="small">
-          <Button size="small" icon={<PlayCircleOutlined />} loading={executing === record.id}
+          {can('account_tasks', 'execute') && <Button size="small" icon={<PlayCircleOutlined />} loading={executing === record.id}
             onClick={() => handleExecute(record.id)}>
             执行
-          </Button>
-          <Button size="small" icon={<EditOutlined />}
-            onClick={() => { setEditingTask(record); setFormOpen(true); }} />
+          </Button>}
+          {can('account_tasks', 'update') && <Button size="small" icon={<EditOutlined />}
+            onClick={() => { setEditingTask(record); setFormOpen(true); }} />}
           <Button size="small" icon={<HistoryOutlined />}
             onClick={() => navigate(`/account-audit/tasks/${record.id}/history`)} />
-          <Popconfirm title="确定删除？" icon={<ExclamationCircleOutlined style={{ color: '#FF3B30' }} />}
+          {can('account_tasks', 'delete') && <Popconfirm title="确定删除？" icon={<ExclamationCircleOutlined style={{ color: '#FF3B30' }} />}
             onConfirm={() => handleDelete(record.id)} cancelText="取消" okText="确认">
             <Button size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
+          </Popconfirm>}
         </Space>
       ),
     },
@@ -126,17 +128,15 @@ export default function TaskList() {
             allowClear
             style={{ width: 110 }}
             options={[
-              { value: 'idle', label: '空闲' },
-              { value: 'running', label: '运行中' },
-              { value: 'completed', label: '已完成' },
-              { value: 'failed', label: '失败' },
+              { value: 'ACTIVE', label: '启用' },
+              { value: 'INACTIVE', label: '停用' },
             ]}
           />
           <Button onClick={handleSearch}>查询</Button>
-          <Button type="primary" icon={<PlusOutlined />}
+          {can('account_tasks', 'create') && <Button type="primary" icon={<PlusOutlined />}
             onClick={() => { setEditingTask(null); setFormOpen(true); }}>
             创建任务
-          </Button>
+          </Button>}
         </div>
       </div>
 

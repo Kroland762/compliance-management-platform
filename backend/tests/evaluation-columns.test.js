@@ -3,10 +3,17 @@ import { normalizeEvaluationColumnSchema } from '../src/utils/evaluation-columns
 import { AuditTask, QuestionnaireTemplate, OperationType } from '../src/models';
 import auditLogService from '../src/services/audit-log.service';
 import taskService from '../src/services/task.service';
+import goldenFixtures from '../../fixtures/evaluation-columns.golden.json';
 
 afterEach(() => vi.restoreAllMocks());
 
 describe('evaluation column schema', () => {
+  test.each(goldenFixtures)('matches shared golden fixture: $name', ({ input, expectedKeys }) => {
+    const normalized = normalizeEvaluationColumnSchema(input);
+    expect(normalized.map((column) => column.key)).toEqual(expectedKeys);
+    expect(normalized.filter((column) => column.source === 'system').every((column) => column.visible)).toBe(true);
+  });
+
   test('adds workflow columns to legacy template layouts in the recommended order', () => {
     const normalized = normalizeEvaluationColumnSchema([
       { key: 'sequenceNumber', label: '序号', source: 'core', visible: true, width: 140 },

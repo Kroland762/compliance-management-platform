@@ -15,6 +15,7 @@ import {
 import { AppError } from '../utils/http';
 import auditLogService from './audit-log.service';
 import objectAccessService from './object-access.service';
+import lookupService from './lookup.service';
 
 type RequestUser = NonNullable<Express.Request['user']>;
 
@@ -35,6 +36,7 @@ class AssessmentAuditorService {
       throw new AppError(409, 'CONFLICT', '已关闭或已取消的评估不能调整审计员');
     }
     const uniqueIds = [...new Set((userIds || []).filter(Boolean))];
+    await lookupService.assertSelectable('auditors', 'assessment-owner', uniqueIds, user);
     const members = uniqueIds.length
       ? await TenantMember.findAll({ where: { userId: { [Op.in]: uniqueIds }, status: TenantMemberStatus.ACTIVE } })
       : [];

@@ -6,4 +6,5 @@ export { default as AuditRule, RuleType, Severity, BuiltinKey } from './AuditRul
 export { default as AccountAuditTask, ScheduleType, TaskStatus } from './AuditTask';
 export { default as AccountData } from './AccountData';
 export { default as ProblemAccount, ProblemStatus } from './ProblemAccount';
+export { default as ProblemStatusHistory, ProblemStatusChangeSource } from './ProblemStatusHistory';
 export { default as TaskExecution, ExecutionStatus, TriggerType, ExecutionPhase } from './TaskExecution';
