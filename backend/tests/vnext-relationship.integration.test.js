@@ -38,6 +38,7 @@ describeIntegration('vNext assessment, risk and remediation relationship graph',
     } = require('../src/models');
     const taskService = require('../src/services/task.service').default;
     const scopeService = require('../src/services/assessment-scope.service').default;
+    const memberContextService = require('../src/services/member-context.service').default;
 
     await migrateUp();
     suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -64,16 +65,17 @@ describeIntegration('vNext assessment, risk and remediation relationship graph',
     await runWithTenantContext({ schema: tenant.schemaName, tenantId: tenant.id }, async () => {
       const member = await TenantMember.findOne({ where: { userId: user.id } });
       department = await Department.findOne({ where: { code: 'ROOT' } });
+      const memberContext = await memberContextService.resolve(user.id);
       requestUser = {
         userId: user.id,
         memberId: member.id,
         tenantId: tenant.id,
-        roleIds: [],
+        roleIds: memberContext.roleIds,
         isGlobalAdmin: true,
-        permissions: {},
-        permissionScopes: {},
-        departmentIds: [department.id],
-        primaryDepartmentId: department.id,
+        permissions: memberContext.permissions,
+        permissionScopes: memberContext.permissionScopes,
+        departmentIds: memberContext.departmentIds,
+        primaryDepartmentId: memberContext.primaryDepartmentId,
       };
       requestAuditor = {
         userId: auditorUser.id,
@@ -300,7 +302,7 @@ describeIntegration('vNext assessment, risk and remediation relationship graph',
         ownerUserId: user.id,
         ownerDepartmentId: department.id,
         dueDate: new Date(Date.now() + 7 * 86400000),
-      }, requestAuditor, finding.lockVersion, `finding-remediate-${finding.id}`);
+      }, requestUser, finding.lockVersion, `finding-remediate-${finding.id}`);
       const action = findingWithAction.actionLinks[0].action;
       const progressed = await remediationService.update(
         action.id,
@@ -517,7 +519,7 @@ describeIntegration('vNext assessment, risk and remediation relationship graph',
   }, 30_000);
 
   test('assessment plan execution is idempotent and archived assets require attention', async () => {
-    const { AssessmentPlan, Asset } = require('../src/models');
+    const { AssessmentPlan, AssessmentPlanExecution, Asset } = require('../src/models');
     const planService = require('../src/services/assessment-plan.service').default;
     await runWithTenantContext({ schema: tenant.schemaName, tenantId: tenant.id }, async () => {
       const snapshot = matrixEntries;
@@ -537,8 +539,9 @@ describeIntegration('vNext assessment, risk and remediation relationship graph',
         planService.executeScheduled(plan.id, `test:${plan.id}:1`, 'jest-2'),
       ]);
       expect(repeated.id).toBe(first.id);
-      expect(first.status).toBe('success');
-      const generatedTask = await require('../src/models').AuditTask.findByPk(first.taskId);
+      const completedExecution = await AssessmentPlanExecution.findByPk(first.id);
+      expect(completedExecution.status).toBe('success');
+      const generatedTask = await require('../src/models').AuditTask.findByPk(completedExecution.taskId);
       expect(generatedTask.publishedAt).toBeNull();
       expect(generatedTask.status).toBe('preparing');
       await Asset.update({ status: 'archived', archivedAt: new Date() }, { where: { id: assets[1].id } });
