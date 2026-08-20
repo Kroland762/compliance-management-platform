@@ -56,9 +56,9 @@ test('CSV system reuses its saved mapping and blocks incompatible replacement fi
   await page.goto('/account-audit/data-sources/new');
   await page.getByLabel('数据源名称').fill(sourceName);
   const sourceType = page.getByLabel('数据源类型');
-  await sourceType.focus();
-  await sourceType.press('ArrowDown');
-  await page.getByRole('option', { name: 'CSV 文件' }).click();
+  await sourceType.locator('xpath=ancestor::*[contains(@class, "ant-select-selector")]').click();
+  await page.locator('.ant-select-dropdown:visible').last().locator('.ant-select-item-option', { hasText: /^CSV 文件$/ }).click();
+  await expect(page.getByRole('button', { name: '选择 CSV 文件' })).toBeVisible();
   await page.locator('input[type="file"]').setInputFiles({
     name: 'accounts.csv',
     mimeType: 'text/csv',
@@ -67,11 +67,11 @@ test('CSV system reuses its saved mapping and blocks incompatible replacement fi
   await expect(page.getByText(/检测到 2 行/)).toBeVisible();
 
   await page.getByTestId('mapping-accountId').click();
-  await page.getByRole('option', { name: 'uid', exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible').last().locator('.ant-select-item-option', { hasText: /^uid$/ }).click();
   await page.getByTestId('mapping-accountName').click();
-  await page.getByRole('option', { name: 'name', exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible').last().locator('.ant-select-item-option', { hasText: /^name$/ }).click();
   await page.getByTestId('mapping-accountStatus').click();
-  await page.getByRole('option', { name: 'status', exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible').last().locator('.ant-select-item-option', { hasText: /^status$/ }).click();
   await page.getByRole('button', { name: '创建数据源' }).click();
   const createDialog = page.getByRole('dialog', { name: /确认创建 CSV 数据源并导入/ });
   await createDialog.getByRole('button', { name: '确认导入' }).click();
