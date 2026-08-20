@@ -55,7 +55,9 @@ test('CSV system reuses its saved mapping and blocks incompatible replacement fi
 
   await page.goto('/account-audit/data-sources/new');
   await page.getByLabel('数据源名称').fill(sourceName);
-  await page.getByLabel('数据源类型').click();
+  const sourceType = page.getByLabel('数据源类型');
+  await sourceType.focus();
+  await sourceType.press('ArrowDown');
   await page.getByRole('option', { name: 'CSV 文件' }).click();
   await page.locator('input[type="file"]').setInputFiles({
     name: 'accounts.csv',

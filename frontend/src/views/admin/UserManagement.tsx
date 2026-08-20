@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   App,
   Button,
@@ -62,6 +62,7 @@ export default function UserManagement() {
   const [temporaryPassword, setTemporaryPassword] = useState('');
   const [inviteOpen, setInviteOpen] = useState(false);
   const [invitationLink, setInvitationLink] = useState('');
+  const memberRequestSequence = useRef(0);
   const [form] = Form.useForm();
   const [inviteForm] = Form.useForm();
   const selectedDepartmentIds: string[] = Form.useWatch('departmentIds', form) || [];
@@ -77,6 +78,7 @@ export default function UserManagement() {
   };
 
   const loadMembers = async () => {
+    const requestSequence = ++memberRequestSequence.current;
     setLoading(true);
     try {
       const [response, invitationResponse]: any[] = await Promise.all([
@@ -97,11 +99,14 @@ export default function UserManagement() {
           roleIds: invitation.roleIds,
           departments: invitation.departments,
         }));
+      if (requestSequence !== memberRequestSequence.current) return;
       setMembers([...(response.data?.items || []), ...invitations]);
     } catch (error) {
-      message.error(getApiErrorMessage(error, '成员列表加载失败'));
+      if (requestSequence === memberRequestSequence.current) {
+        message.error(getApiErrorMessage(error, '成员列表加载失败'));
+      }
     } finally {
-      setLoading(false);
+      if (requestSequence === memberRequestSequence.current) setLoading(false);
     }
   };
 

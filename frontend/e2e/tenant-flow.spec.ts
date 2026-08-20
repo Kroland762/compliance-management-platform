@@ -573,6 +573,10 @@ test('global administrator selects a tenant and completes core control flow', as
   await expect(page).toHaveURL(/\/assessments\/[0-9a-f-]+$/);
 
   await page.goto('/users');
-  await page.getByPlaceholder('搜索成员姓名').fill(`E2E User ${suffix}`);
+  const [memberSearchResponse] = await Promise.all([
+    page.waitForResponse((response) => response.url().includes('/api/members?') && response.url().includes('keyword=')),
+    page.getByPlaceholder('搜索成员姓名').fill(`E2E User ${suffix}`),
+  ]);
+  expect(memberSearchResponse.ok()).toBeTruthy();
   await expect(page.getByText(`e2e_user_${suffix}`)).toBeVisible();
 });
