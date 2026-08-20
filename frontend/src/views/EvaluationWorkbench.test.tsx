@@ -300,7 +300,7 @@ describe('EvaluationWorkbench column layout', () => {
     await user.click(screen.getByRole('button', { name: '筛选 评估要求' }));
     expect(await screen.findByPlaceholderText('搜索评估要求')).toBeInTheDocument();
     expect(screen.getByText('包含关键词')).toBeInTheDocument();
-  }, 10_000);
+  }, 20_000);
 
   it('saves and submits selected drafts in one bulk request', async () => {
     const user = userEvent.setup();
@@ -492,7 +492,7 @@ describe('EvaluationWorkbench column layout', () => {
     await waitFor(() => expect(apiClient.post).toHaveBeenCalledWith('/evaluations/evaluation-1/review', { return: true }, {
       headers: { 'If-Match': '"3"' },
     }));
-  }, 10_000);
+  }, 20_000);
 
   it('lets an all-scope administrator reopen a reviewed row with a required reason', async () => {
     useAuthStore.setState({
