@@ -24,6 +24,9 @@ describe('useRemoteLookup', () => {
       kind: 'departments', purpose: 'asset-owner', selectedIds: ['selected-1'], contextId: 'asset-1',
     }));
 
+    await act(async () => { await Promise.resolve(); });
+    vi.mocked(apiClient.get).mockClear();
+
     act(() => {
       result.current.search('风');
       result.current.search('风险管理部');
@@ -37,6 +40,23 @@ describe('useRemoteLookup', () => {
       params: expect.objectContaining({ purpose: 'asset-owner', q: '风险管理部', selectedIds: 'selected-1', contextId: 'asset-1' }),
       signal: expect.any(AbortSignal),
     }));
+  });
+
+  it('automatically resolves labels for selected ids that are not cached', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue(page([], 1, false, [
+      { value: 'auditor-1', label: '审计员甲', disabled: false },
+    ]) as any);
+
+    const { result } = renderHook(() => useRemoteLookup({
+      kind: 'auditors', purpose: 'assessment-owner', selectedIds: ['auditor-1'], contextId: 'task-1',
+    }));
+
+    await waitFor(() => expect(apiClient.get).toHaveBeenCalledWith('/lookup/options/auditors', expect.objectContaining({
+      params: expect.objectContaining({ selectedIds: 'auditor-1', contextId: 'task-1' }),
+    })));
+    await waitFor(() => expect(result.current.options).toEqual([
+      expect.objectContaining({ value: 'auditor-1', label: '审计员甲' }),
+    ]));
   });
 
   it('ignores an older response that arrives after the latest search', async () => {

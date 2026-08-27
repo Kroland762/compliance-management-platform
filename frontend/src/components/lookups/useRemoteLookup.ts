@@ -110,11 +110,14 @@ export function useRemoteLookup({ kind, purpose, selectedIds = [], contextId, pa
   }, [kind, purpose, contextId]);
 
   useEffect(() => {
+    let missingSelection = false;
     selectedIds.forEach((id) => {
       const selected = cache.current.get(id);
       if (selected) setOptions((previous) => previous.some((item) => item.value === id) ? previous : [selected, ...previous]);
+      else missingSelection = true;
     });
-  }, [selectedKey]);
+    if (missingSelection) void request('', 1);
+  }, [request, selectedKey]);
 
   return useMemo(() => ({ options, loading, error, search, open, loadMore, retry }), [error, loadMore, loading, open, options, retry, search]);
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Button, Empty, message, Space, Table, Tabs, Tag, Typography } from 'antd';
+import { Alert, Button, Empty, message, Space, Spin, Table, Tabs, Tag, Typography } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import apiClient from '../api/client';
 import { getApiErrorMessage } from '../utils/error';
@@ -13,12 +13,16 @@ export default function WorkItems() {
   const navigate = useNavigate();
   const [data, setData] = useState<any>({ fill: [], review: [], remediate: [], verify: [], counts: {} });
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const load = async () => {
     setLoading(true);
+    setError('');
     try {
       const response: any = await apiClient.get('/work-items');
       setData(response.data || { fill: [], review: [], remediate: [], verify: [], counts: {} });
+    } catch (loadError) {
+      setError(getApiErrorMessage(loadError, '待办加载失败，请稍后重试'));
     } finally { setLoading(false); }
   };
   useEffect(() => { void load(); }, []);
@@ -41,11 +45,15 @@ export default function WorkItems() {
     { title: '状态', dataIndex: 'workflowStatus', width: 100, render: (value: string) => <Tag>{statusText[value] || value}</Tag> },
   ];
   const empty = <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无待办" />;
+  const hasLoadedData = ['fill', 'review', 'remediate', 'verify'].some((key) => data[key]?.length);
 
   return (
     <div>
       <Typography.Title level={3} style={{ marginBottom: 4 }}>我的待办</Typography.Title>
       <Typography.Text type="secondary">只展示需要当前账号处理的评估、复核、整改和验证事项</Typography.Text>
+      {error && <Alert style={{ marginTop: 20 }} type="error" showIcon message="待办加载失败" description={error}
+        action={<Button onClick={() => void load()}>重试</Button>} />}
+      {loading && !hasLoadedData ? <div style={{ padding: 64, textAlign: 'center' }}><Spin /><div style={{ marginTop: 10 }}>正在加载待办</div></div> : !error || hasLoadedData ? (
       <Tabs style={{ marginTop: 20 }} items={[
         {
           key: 'fill', label: `待填写 ${data.counts?.fill || 0}`,
@@ -81,6 +89,7 @@ export default function WorkItems() {
           ]} /> : empty,
         },
       ]} />
+      ) : null}
     </div>
   );
 }

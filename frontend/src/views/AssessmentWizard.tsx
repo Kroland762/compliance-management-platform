@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Alert, Button, Card, DatePicker, Form, Input, message, Space, Steps, Typography } from 'antd';
+import { Alert, Breadcrumb, Button, Card, DatePicker, Form, Input, message, Space, Steps, Typography } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import apiClient from '../api/client';
 import { getApiErrorMessage } from '../utils/error';
@@ -16,11 +16,15 @@ export default function AssessmentWizard() {
   const templateId = Form.useWatch('templateId', form);
 
   useEffect(() => {
-    return undefined;
-  }, []);
-
-  useEffect(() => {
-    if (templateId) apiClient.get(`/templates/${templateId}`).then((response: any) => setTemplate(response.data));
+    if (!templateId) {
+      setTemplate(undefined);
+      return;
+    }
+    let active = true;
+    apiClient.get(`/templates/${templateId}`)
+      .then((response: any) => { if (active) setTemplate(response.data); })
+      .catch((error) => { if (active) message.error(getApiErrorMessage(error, '标准详情加载失败')); });
+    return () => { active = false; };
   }, [templateId]);
 
   const createDraft = async () => {
@@ -37,7 +41,13 @@ export default function AssessmentWizard() {
     });
     setTaskId(response.data.id);
     await apiClient.put(`/tasks/${response.data.id}/auditors`, { auditorUserIds: values.auditorUserIds });
+    message.success('评估项目草稿已保存');
     return response.data.id as string;
+  };
+
+  const exit = () => {
+    if (taskId) message.info('草稿已保存，已返回项目列表');
+    navigate('/assessments');
   };
 
   const next = async () => {
@@ -90,13 +100,30 @@ export default function AssessmentWizard() {
   ][current];
 
   return <div>
-    <Typography.Title level={3}>创建评估项目</Typography.Title>
+    <Breadcrumb style={{ marginBottom: 16 }} items={[
+      { title: <Button type="link" onClick={exit} style={{ padding: 0 }}>评估项目</Button> },
+      { title: '创建评估项目' },
+    ]} />
+    <Typography.Title level={3} style={{ marginTop: 0 }}>创建评估项目</Typography.Title>
     <Card>
+      {taskId && (
+        <Alert
+          type="success"
+          showIcon
+          message="评估项目草稿已保存"
+          description="你可以继续配置资产范围并发布，也可以返回项目列表。"
+          action={<Button size="small" onClick={exit}>返回项目列表</Button>}
+          style={{ marginBottom: 24 }}
+        />
+      )}
       <Steps current={current} items={['标准版本', '基本信息', '资产范围', '发布预览'].map((title) => ({ title }))} style={{ marginBottom: 32 }} />
       <Form form={form} layout="vertical" style={{ minHeight: 260 }}>{stepContent}</Form>
-      <Space style={{ width: '100%', justifyContent: 'flex-end', marginTop: 24 }}>
-        {current > 0 && <Button onClick={() => setCurrent((value) => value - 1)}>上一步</Button>}
-        {current < 3 ? <Button type="primary" loading={loading} onClick={next}>下一步</Button> : <Button type="primary" loading={loading} onClick={publish}>发布评估</Button>}
+      <Space style={{ width: '100%', justifyContent: 'space-between', marginTop: 24 }}>
+        <Button onClick={exit}>{taskId ? '保存草稿并退出' : '取消创建'}</Button>
+        <Space>
+          {current > 0 && <Button onClick={() => setCurrent((value) => value - 1)}>上一步</Button>}
+          {current < 3 ? <Button type="primary" loading={loading} onClick={next}>下一步</Button> : <Button type="primary" loading={loading} onClick={publish}>发布评估</Button>}
+        </Space>
       </Space>
     </Card>
   </div>;

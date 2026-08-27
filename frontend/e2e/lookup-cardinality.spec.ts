@@ -18,13 +18,40 @@ async function selectTenant(page: Page, tenantSlug: string) {
   await expect(page).toHaveURL(/\/users$/);
 }
 
+async function tenantApiAuth(page: Page, tenantSlug: string) {
+  const loginResponse = await page.request.post('http://127.0.0.1:3001/api/auth/login', {
+    data: {
+      username: process.env.E2E_ADMIN_USERNAME || 'admin',
+      password: process.env.E2E_ADMIN_PASSWORD || 'Admin1234',
+      captchaCode: '0000',
+    },
+  });
+  expect(loginResponse.ok()).toBeTruthy();
+  let payload = (await loginResponse.json()).data;
+  let token = payload.token;
+  let selectedTenant = (payload.contexts || []).find((item: any) => item.slug === tenantSlug)
+    || (payload.user?.tenantId ? (payload.contexts || []).find((item: any) => item.id === payload.user.tenantId) : null);
+  expect(selectedTenant?.id).toBeTruthy();
+  if (payload.user?.tenantId !== selectedTenant.id) {
+    const contextResponse = await page.request.post('http://127.0.0.1:3001/api/auth/context', {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { tenantId: selectedTenant.id },
+    });
+    expect(contextResponse.ok()).toBeTruthy();
+    payload = (await contextResponse.json()).data;
+    token = payload.token;
+    selectedTenant = (payload.contexts || []).find((item: any) => item.id === payload.user?.tenantId) || selectedTenant;
+  }
+  return { token, selectedTenant };
+}
+
 test('human-readable lookups find records beyond the former first-page limits', async ({ page }) => {
   test.setTimeout(240_000);
   const tenantSlug = process.env.E2E_MUTATION_TENANT_SLUG;
   test.skip(!tenantSlug, 'Set E2E_MUTATION_TENANT_SLUG to an isolated disposable tenant.');
   await selectTenant(page, tenantSlug!);
 
-  const auth = await page.evaluate(() => (window as any).__authStore);
+  const auth = await tenantApiAuth(page, tenantSlug!);
   const headers = {
     Authorization: `Bearer ${auth.token}`,
     'X-Tenant-ID': auth.selectedTenant.id,

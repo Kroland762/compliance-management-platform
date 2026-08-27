@@ -1,5 +1,32 @@
 import { expect, request, test } from '@playwright/test';
 
+async function tenantApiAuth(page: any, tenantSlug: string) {
+  const loginResponse = await page.request.post('http://127.0.0.1:3001/api/auth/login', {
+    data: {
+      username: process.env.E2E_ADMIN_USERNAME || 'admin',
+      password: process.env.E2E_ADMIN_PASSWORD || 'Admin1234',
+      captchaCode: '0000',
+    },
+  });
+  expect(loginResponse.ok()).toBeTruthy();
+  let payload = (await loginResponse.json()).data;
+  let token = payload.token;
+  let selectedTenant = (payload.contexts || []).find((item: any) => item.slug === tenantSlug)
+    || (payload.user?.tenantId ? (payload.contexts || []).find((item: any) => item.id === payload.user.tenantId) : null);
+  expect(selectedTenant?.id).toBeTruthy();
+  if (payload.user?.tenantId !== selectedTenant.id) {
+    const contextResponse = await page.request.post('http://127.0.0.1:3001/api/auth/context', {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { tenantId: selectedTenant.id },
+    });
+    expect(contextResponse.ok()).toBeTruthy();
+    payload = (await contextResponse.json()).data;
+    token = payload.token;
+    selectedTenant = (payload.contexts || []).find((item: any) => item.id === payload.user?.tenantId) || selectedTenant;
+  }
+  return { token, selectedTenant };
+}
+
 test('global administrator selects a tenant and completes core control flow', async ({ page }) => {
   const mutationTenantSlug = process.env.E2E_MUTATION_TENANT_SLUG;
   test.skip(
@@ -19,8 +46,7 @@ test('global administrator selects a tenant and completes core control flow', as
     .click();
   await expect(page).toHaveURL(/\/users$/);
 
-  const auth = await page.evaluate(() => (window as any).__authStore);
-  expect(auth.selectedTenant?.id).toBeTruthy();
+  const auth = await tenantApiAuth(page, mutationTenantSlug!);
   const headers = {
     Authorization: `Bearer ${auth.token}`,
     'X-Tenant-ID': auth.selectedTenant.id,

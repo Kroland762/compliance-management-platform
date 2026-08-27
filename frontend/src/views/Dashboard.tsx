@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Typography, Row, Col, Card, message } from 'antd';
+import { Alert, Button, Typography, Row, Col, Card, Empty, Spin } from 'antd';
 import {
   AuditOutlined, FileTextOutlined, CheckCircleOutlined, WarningOutlined,
   SafetyCertificateOutlined, ClockCircleOutlined, FundOutlined,
@@ -55,7 +55,7 @@ const StatCard = ({
       {icon}
     </div>
     <div>
-      <div style={{ fontSize: 13, color: '#8E8E93', marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 13, color: '#636366', marginBottom: 2 }}>{label}</div>
       <div style={{ fontSize: 28, fontWeight: 600, color: '#1D1D1F', letterSpacing: '-0.02em', lineHeight: 1 }}>
         {value}
       </div>
@@ -75,13 +75,14 @@ export default function Dashboard() {
   const [riskPie, setRiskPie] = useState<any[]>([]);
   const [riskTrend, setRiskTrend] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    let cancelled = false;
-    const fetchStats = async () => {
-      try {
+  const fetchStats = async () => {
+    setLoading(true);
+    setError('');
+    try {
         const statsRes: any = await apiClient.get('/stats');
-        if (cancelled) return;
         const pieData = statsRes?.data || {};
         const summary = pieData.summary || {};
 
@@ -101,24 +102,35 @@ export default function Dashboard() {
         setTaskPie(pieData.taskPie || []);
         setRiskPie(pieData.riskPie || []);
         setRiskTrend(pieData.riskTrend || []);
-      } catch (error) {
-        message.error(getApiErrorMessage(error, '工作台统计加载失败，请稍后重试'));
+        setLoaded(true);
+      } catch (loadError) {
+        setError(getApiErrorMessage(loadError, '工作台统计加载失败，请稍后重试'));
       } finally {
-        if (!cancelled) setLoading(false);
+        setLoading(false);
       }
-    };
-    fetchStats();
-    return () => { cancelled = true; };
+  };
+
+  useEffect(() => {
+    void fetchStats();
   }, []);
+
+  const hasPositiveValue = (data: any[], keys = ['value']) => data.some((item) => keys.some((key) => Number(item?.[key]) > 0));
 
   const hasAnyPermission = can('tasks', 'read') || can('risks', 'read') || can('qualifications', 'read');
   if (!hasAnyPermission) {
     return <Navigate to="/work-items" replace />;
   }
 
+  if (loading && !loaded) return <div style={{ padding: 80, textAlign: 'center' }}><Spin size="large" /><div style={{ marginTop: 12 }}>正在加载工作台</div></div>;
+
+  if (error && !loaded) return <Alert type="error" showIcon message="工作台加载失败" description={error}
+    action={<Button type="primary" onClick={() => void fetchStats()}>重试</Button>} />;
+
 
   return (
     <div>
+      {error && <Alert style={{ marginBottom: 16 }} type="warning" showIcon message="统计数据刷新失败" description={error}
+        action={<Button onClick={() => void fetchStats()}>重试</Button>} />}
       {/* Stat Cards */}
       <Row gutter={[16, 16]}>
         {can('tasks', 'read') && (
@@ -206,9 +218,9 @@ export default function Dashboard() {
       </Row>
 
       {/* Charts Row */}
-      {(taskPie.length > 0 || riskPie.length > 0) && (
+      {(can('tasks', 'read') || can('risks', 'read')) && (
         <Row gutter={[16, 16]} style={{ marginTop: 24 }}>
-          {taskPie.length > 0 && (
+          {can('tasks', 'read') && (
             <Col xs={24} lg={12}>
               <Card
                 loading={loading}
@@ -221,7 +233,7 @@ export default function Dashboard() {
                 }}
                 title={<Text strong style={{ fontSize: 15 }}>评估项目分布</Text>}
               >
-                <ResponsiveContainer width="100%" height={260}>
+                {hasPositiveValue(taskPie) ? <ResponsiveContainer width="100%" height={260}>
                   <PieChart>
                     <Pie data={taskPie} cx="50%" cy="50%" innerRadius={55} outerRadius={95}
                       paddingAngle={3} dataKey="value">
@@ -240,11 +252,13 @@ export default function Dashboard() {
                       formatter={(value: string) => <span style={{ fontSize: 12, color: '#636366' }}>{value}</span>}
                     />
                   </PieChart>
-                </ResponsiveContainer>
+                </ResponsiveContainer> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无评估项目数据">
+                  <Button onClick={() => navigate('/assessments')}>查看评估项目</Button>
+                </Empty>}
               </Card>
             </Col>
           )}
-          {riskPie.length > 0 && (
+          {can('risks', 'read') && (
             <Col xs={24} lg={12}>
               <Card
                 loading={loading}
@@ -257,7 +271,7 @@ export default function Dashboard() {
                 }}
                 title={<Text strong style={{ fontSize: 15 }}>风险级别分布</Text>}
               >
-                <ResponsiveContainer width="100%" height={260}>
+                {hasPositiveValue(riskPie) ? <ResponsiveContainer width="100%" height={260}>
                   <PieChart>
                     <Pie data={riskPie} cx="50%" cy="50%" innerRadius={55} outerRadius={95}
                       paddingAngle={3} dataKey="value">
@@ -276,15 +290,17 @@ export default function Dashboard() {
                       formatter={(value: string) => <span style={{ fontSize: 12, color: '#636366' }}>{value}</span>}
                     />
                   </PieChart>
-                </ResponsiveContainer>
+                </ResponsiveContainer> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无风险分布数据">
+                  <Button onClick={() => navigate('/governance')}>查看风险与整改</Button>
+                </Empty>}
               </Card>
             </Col>
           )}
         </Row>
       )}
-      {riskTrend.length > 0 && (
+      {can('risks', 'read') && (
         <Card title="本月新增与关闭趋势" style={{ marginTop: 24, borderRadius: 18 }}>
-          <ResponsiveContainer width="100%" height={280}>
+          {hasPositiveValue(riskTrend, ['created', 'closed']) ? <ResponsiveContainer width="100%" height={280}>
             <LineChart data={riskTrend}>
               <CartesianGrid strokeDasharray="3 3" stroke="#E5E5EA" />
               <XAxis dataKey="month" />
@@ -294,7 +310,7 @@ export default function Dashboard() {
               <Line type="monotone" dataKey="created" name="新增风险" stroke="#FF3B30" strokeWidth={2} />
               <Line type="monotone" dataKey="closed" name="关闭风险" stroke="#34C759" strokeWidth={2} />
             </LineChart>
-          </ResponsiveContainer>
+          </ResponsiveContainer> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="本月暂无风险变化" />}
         </Card>
       )}
     </div>

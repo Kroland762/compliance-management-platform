@@ -143,7 +143,20 @@ export default function QualificationLedger() {
     },
     { title: '签发日期', dataIndex: 'issueDate', width: 110, render: (v: string) => v || '-' },
     { title: '有效期至', dataIndex: 'expiryDate', width: 110, render: (v: string) => v || '-' },
-    { title: '附件', dataIndex: 'attachmentUrl', width: 90, render: (v: string) => v ? <a href={v} target="_blank" rel="noreferrer">查看</a> : '-' },
+    {
+      title: '附件',
+      dataIndex: 'attachmentUrl',
+      width: 90,
+      render: (v: string) => {
+        if (!v) return '-';
+        try {
+          if (new URL(v).protocol !== 'https:') return '-';
+        } catch {
+          return '-';
+        }
+        return <a href={v} target="_blank" rel="noreferrer">查看</a>;
+      },
+    },
     {
       title: '操作',
       width: 128,

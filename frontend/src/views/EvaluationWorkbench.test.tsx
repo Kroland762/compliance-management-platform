@@ -238,9 +238,13 @@ describe('EvaluationWorkbench column layout', () => {
       '序号', '评估点', '关联资产', '责任人', '现状说明',
       '控制域名', '评估要求', '本次证据', '历史回答与证据', '符合性结论', '不符合项描述', '严重度', '状态', '流程操作',
     ]);
-    expect(container.querySelector('.evaluation-workbench-table .ant-table-cell-fix-left')).toBeNull();
+    expect(container.querySelector('.evaluation-workbench-table .ant-table-cell-fix-left')).not.toBeNull();
+    expect(container.querySelector('.evaluation-workbench-table .ant-table-cell-fix-right')).not.toBeNull();
+    expect(apiClient.get).toHaveBeenCalledWith('/tasks/task-1/evaluations', expect.objectContaining({
+      params: expect.objectContaining({ pageSize: 20 }),
+    }));
     expect(screen.getByRole('combobox', { name: '关联资产' }).closest('td')).toHaveClass('evaluation-assets-cell');
-    await waitFor(() => expect(apiClient.get).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(vi.mocked(apiClient.get).mock.calls.length).toBeGreaterThanOrEqual(4));
     expect(screen.queryByRole('combobox', { name: '设置 A.1 的符合性结论' })).not.toBeInTheDocument();
     await user.click(screen.getByRole('combobox', { name: '设置 A.1 的责任人' }));
     await user.click(await screen.findByText('新责任人'));

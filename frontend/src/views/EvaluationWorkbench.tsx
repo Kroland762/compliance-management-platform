@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import {
+  Alert,
   Button,
   Empty,
   Input,
@@ -261,7 +262,7 @@ export default function EvaluationWorkbench() {
   const [syncingColumns, setSyncingColumns] = useState(false);
   const [previewFile, setPreviewFile] = useState<PreviewableEvidenceFile | null>(null);
   const initialPage = Math.max(1, Number(searchParams.get('page')) || 1);
-  const initialPageSize = [20, 50, 100].includes(Number(searchParams.get('pageSize'))) ? Number(searchParams.get('pageSize')) : 100;
+  const initialPageSize = [20, 50, 100].includes(Number(searchParams.get('pageSize'))) ? Number(searchParams.get('pageSize')) : 20;
   const initialFilters = compactEvaluationFilters(parseEvaluationFilters(searchParams.get('filters')));
   const initialQuery = searchParams.get('q') || '';
   const [queryDraft, setQueryDraft] = useState(initialQuery);
@@ -269,6 +270,8 @@ export default function EvaluationWorkbench() {
   const [filterOptions, setFilterOptions] = useState<EvaluationFilterOptions>(emptyFilterOptions);
   const [unfilteredTotal, setUnfilteredTotal] = useState(0);
   const [pagination, setPagination] = useState({ page: initialPage, pageSize: initialPageSize, total: 0 });
+  const [loadError, setLoadError] = useState('');
+  const [configError, setConfigError] = useState('');
   const answerDrafts = useRef(new Map<string, string>());
   const [dirtyItemIds, setDirtyItemIds] = useState<Set<string>>(() => new Set());
   const filterApplyTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -335,6 +338,7 @@ export default function EvaluationWorkbench() {
     const controller = new AbortController();
     requestController.current = controller;
     setLoading(true);
+    setLoadError('');
     try {
       const evaluationResponse: any = await apiClient.get(`/tasks/${id}/evaluations`, {
         params: requestParams(page, pageSize, q, filters),
@@ -350,7 +354,9 @@ export default function EvaluationWorkbench() {
       });
       setUnfilteredTotal(evaluationResponse.data?.summary?.unfilteredTotal ?? evaluationResponse.data?.pagination?.total ?? 0);
     } catch (error: any) {
-      if (error?.code !== 'ERR_CANCELED' && error?.name !== 'CanceledError') message.error(getApiErrorMessage(error, '评估表加载失败'));
+      if (error?.code !== 'ERR_CANCELED' && error?.name !== 'CanceledError') {
+        setLoadError(getApiErrorMessage(error, '评估表加载失败'));
+      }
     } finally {
       if (requestController.current === controller) setLoading(false);
     }
@@ -367,6 +373,7 @@ export default function EvaluationWorkbench() {
   };
 
   useEffect(() => {
+    setConfigError('');
     void Promise.all([
       apiClient.get(`/tasks/${id}`),
       apiClient.get(`/tasks/${id}/assets`),
@@ -374,7 +381,7 @@ export default function EvaluationWorkbench() {
     ]).then(([taskResponse, scopeResponse]: any[]) => {
       setTask(taskResponse.data);
       setScopeAssets(scopeResponse.data?.items || []);
-    }).catch((error) => message.error(getApiErrorMessage(error, '评估表配置加载失败')));
+    }).catch((error) => setConfigError(getApiErrorMessage(error, '评估表配置加载失败')));
     void loadPage(initialPage, initialPageSize, initialQuery, initialFilters);
     return () => {
       if (filterApplyTimer.current) clearTimeout(filterApplyTimer.current);
@@ -774,6 +781,7 @@ export default function EvaluationWorkbench() {
       title,
       key: column.key,
       width: Number(column.width) || 180,
+      fixed: ['sequenceNumber', 'controlPoint'].includes(column.key) ? 'left' as const : undefined,
       ellipsis: column.key === 'controlPoint' || requirement ? false : true,
       render: (_: unknown, item: any) => column.key === 'controlPoint'
         ? <Space direction="vertical" size={4}>
@@ -943,14 +951,14 @@ export default function EvaluationWorkbench() {
       title: <ColumnFilterButton label="状态" active={Boolean(filterDraft.workflowStatuses?.length)}>
         <MultiColumnFilter value={filterDraft.workflowStatuses} options={workflowOptions} placeholder="选择流程状态"
           onChange={(value) => updateFilters({ ...filterDraftRef.current, workflowStatuses: value })} />
-      </ColumnFilterButton>, key: 'status', width: 120,
+      </ColumnFilterButton>, key: 'status', width: 120, fixed: 'right',
       render: (_: unknown, item: any) => <Space direction="vertical" size={2}>
         <Tag color={workflow[item.workflowStatus]?.color}>{workflow[item.workflowStatus]?.text || item.workflowStatus}</Tag>
         {saving[item.id] && <Typography.Text type="secondary"><SaveOutlined /> 保存中</Typography.Text>}
       </Space>,
     },
     actions: {
-      title: '流程操作', key: 'actions', width: 180,
+      title: '流程操作', key: 'actions', width: 180, fixed: 'right',
       render: (_: unknown, item: any) => <Space direction="vertical" size={4}>
         <Space wrap>
         {can('evaluations', 'submit') && editableStatuses.includes(item.workflowStatus) && <Button
@@ -1057,9 +1065,24 @@ export default function EvaluationWorkbench() {
         >
           <Button icon={<SyncOutlined />} loading={syncingColumns}>同步模板列配置</Button>
         </Popconfirm>}
-        <Button type="primary" loading={bulkSubmitting} disabled={!selected.length} onClick={bulkSubmit}>批量提交（{selected.length}）</Button>
+        <Tooltip title={!selected.length ? '请先选择已填写且可提交的评估行' : undefined}>
+          <span><Button type="primary" loading={bulkSubmitting} disabled={!selected.length} onClick={bulkSubmit}>批量提交（{selected.length}）</Button></span>
+        </Tooltip>
       </Space>
     </Space>
+    {configError && <Alert style={{ marginBottom: 12 }} type="warning" showIcon message="评估表配置加载不完整" description={configError}
+      action={<Button onClick={() => window.location.reload()}>重新加载</Button>} />}
+    {loadError && <Alert style={{ marginBottom: 12 }} type="error" showIcon message="评估行加载失败" description={loadError}
+      action={<Button onClick={() => void load()}>重试</Button>} />}
+    <div style={{ marginBottom: 12, padding: '8px 12px', background: '#F5F5F7', border: '1px solid #E5E5EA', borderRadius: 6 }}>
+      <Space wrap size={16}>
+        <Typography.Text>当前结果 <strong>{pagination.total}</strong> 条</Typography.Text>
+        <Typography.Text type="secondary">全部 {unfilteredTotal} 条</Typography.Text>
+        <Typography.Text type={dirtyItemIds.size ? 'warning' : 'secondary'}>未提交填写 {dirtyItemIds.size} 行</Typography.Text>
+        <Typography.Text type={Object.keys(reviewDrafts).length ? 'warning' : 'secondary'}>未提交复核 {Object.keys(reviewDrafts).length} 行</Typography.Text>
+        <Typography.Text type={selected.length ? undefined : 'secondary'}>已选择 {selected.length} 行</Typography.Text>
+      </Space>
+    </div>
     <Space wrap size={[8, 8]} style={{ width: '100%', marginBottom: 10 }}>
       <Input
         allowClear
@@ -1109,7 +1132,7 @@ export default function EvaluationWorkbench() {
       <Typography.Text type="secondary">已筛选：</Typography.Text>
       {activeFilterTags.map((item) => <Tag key={item.key} closable onClose={(event) => { event.preventDefault(); item.clear(); }}>{item.label}</Tag>)}
     </Space>}
-    <Table
+    {(!loadError || items.length > 0) && <Table
       className="evaluation-workbench-table"
       components={{ header: { cell: ResizableHeaderCell } }}
       rowKey="id"
@@ -1119,14 +1142,20 @@ export default function EvaluationWorkbench() {
       pagination={false}
       dataSource={items}
       columns={columns}
+      locale={{
+        emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={(queryDraft || hasEvaluationFilters(filterDraft)) ? '当前筛选无结果' : '暂无评估行'}>
+          {(queryDraft || hasEvaluationFilters(filterDraft)) && <Button onClick={clearAllFilters}>清除筛选</Button>}
+        </Empty>,
+      }}
       scroll={{ x: Math.max(1500, columns.reduce((sum, column) => sum + Number(column.width || 160), 0)), y: 'calc(100vh - 300px)' }}
       rowSelection={{
+        fixed: true,
         selectedRowKeys: selected,
         onChange: setSelected,
         getCheckboxProps: (item: any) => ({ disabled: !editableStatuses.includes(item.workflowStatus) || !String(answerValue(item)).trim() }),
       }}
-    />
-    <Pagination
+    />}
+    {(!loadError || items.length > 0) && <Pagination
       style={{ marginTop: 16 }} current={pagination.page} pageSize={pagination.pageSize} total={pagination.total}
       showSizeChanger pageSizeOptions={[20, 50, 100]} showTotal={(total) => `筛选后 ${total} 条 / 全部 ${unfilteredTotal} 条`}
       onChange={(page, pageSize) => { void (async () => {
@@ -1134,7 +1163,7 @@ export default function EvaluationWorkbench() {
         syncUrl(page, pageSize, appliedQueryRef.current, appliedFiltersRef.current);
         await loadPage(page, pageSize);
       })(); }}
-    />
+    />}
 
     <Modal title="拆分资产为新评估行" open={Boolean(splitting)} onCancel={() => setSplitting(undefined)} onOk={split} okButtonProps={{ disabled: !splitAssetIds.length }}>
       <Typography.Paragraph type="secondary">新行会复制已保存的回答，但不会复制本次证据。若当前行有未提交内容，请先提交。至少为原行保留一个资产。</Typography.Paragraph>
