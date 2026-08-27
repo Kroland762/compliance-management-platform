@@ -8,6 +8,7 @@ FRONTEND_DIR="$PROJECT_DIR/frontend"
 LOG_DIR="$PROJECT_DIR/.dev-logs"
 BACKEND_LOG="$LOG_DIR/backend.log"
 FRONTEND_LOG="$LOG_DIR/frontend.log"
+POSTGRES_LOG="$LOG_DIR/postgresql.log"
 BACKEND_PORT=3001
 FRONTEND_PORT=5173
 BACKEND_PID=""
@@ -41,6 +42,63 @@ require_command() {
 
 port_in_use() {
   lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
+}
+
+is_local_host() {
+  case "$1" in
+    localhost|127.0.0.1|::1)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+find_pgdata() {
+  local candidate=""
+
+  if [[ -n "${PGDATA:-}" && -d "${PGDATA:-}" ]]; then
+    printf '%s' "$PGDATA"
+    return 0
+  fi
+
+  for candidate in \
+    /opt/homebrew/var/postgresql@17 \
+    /opt/homebrew/var/postgresql@16 \
+    /opt/homebrew/var/postgresql@15 \
+    /opt/homebrew/var/postgresql@14 \
+    /opt/homebrew/var/postgres \
+    /usr/local/var/postgresql@17 \
+    /usr/local/var/postgresql@16 \
+    /usr/local/var/postgresql@15 \
+    /usr/local/var/postgresql@14 \
+    /usr/local/var/postgres; do
+    if [[ -d "$candidate" ]]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+wait_for_database() {
+  local db_host="$1"
+  local db_port="$2"
+  local attempt=""
+
+  for attempt in $(seq 1 60); do
+    if nc -z "$db_host" "$db_port" >/dev/null 2>&1; then
+      printf '✓ PostgreSQL已就绪（%s:%s）\n' "$db_host" "$db_port"
+      return 0
+    fi
+    sleep 0.5
+  done
+
+  printf '✗ 等待PostgreSQL启动超时（%s:%s）。最近日志：\n' "$db_host" "$db_port" >&2
+  tail -n 40 "$POSTGRES_LOG" 2>/dev/null || true
+  return 1
 }
 
 show_port_owner() {
@@ -122,6 +180,43 @@ start_backend() {
   wait_for_service "后端" "$health_url" "$BACKEND_PID" "$BACKEND_LOG"
 }
 
+start_database() {
+  local db_host
+  local db_port
+  local pgdata
+
+  db_host="$(read_env_value "$BACKEND_DIR/.env" DB_HOST localhost)"
+  db_port="$(read_env_value "$BACKEND_DIR/.env" DB_PORT 5432)"
+
+  if nc -z "$db_host" "$db_port" >/dev/null 2>&1; then
+    printf '✓ PostgreSQL已在运行，直接复用（%s:%s）\n' "$db_host" "$db_port"
+    return 0
+  fi
+
+  if ! is_local_host "$db_host"; then
+    printf '✗ 无法连接 PostgreSQL（%s:%s），且该地址不是本机数据库，脚本不会尝试启动远程服务。\n' "$db_host" "$db_port" >&2
+    return 1
+  fi
+  if ! command -v pg_ctl >/dev/null 2>&1; then
+    printf '✗ 无法连接 PostgreSQL（%s:%s），且缺少 pg_ctl，无法自动启动本机数据库。\n' "$db_host" "$db_port" >&2
+    return 1
+  fi
+  if ! pgdata="$(find_pgdata)"; then
+    printf '✗ 无法连接 PostgreSQL（%s:%s），且未找到本机 PostgreSQL 数据目录。可设置 PGDATA 后重试。\n' "$db_host" "$db_port" >&2
+    return 1
+  fi
+
+  printf '→ 启动PostgreSQL（%s）...\n' "$pgdata"
+  : >"$POSTGRES_LOG"
+  if ! pg_ctl -D "$pgdata" -l "$POSTGRES_LOG" start >/dev/null 2>&1; then
+    printf '✗ PostgreSQL启动命令失败，最近日志：\n' >&2
+    tail -n 40 "$POSTGRES_LOG" 2>/dev/null || true
+    return 1
+  fi
+
+  wait_for_database "$db_host" "$db_port"
+}
+
 start_frontend() {
   local frontend_url="http://127.0.0.1:$FRONTEND_PORT"
 
@@ -192,15 +287,7 @@ main() {
   mkdir -p "$LOG_DIR"
   trap cleanup EXIT INT TERM HUP
 
-  local db_host
-  local db_port
-  db_host="$(read_env_value "$BACKEND_DIR/.env" DB_HOST localhost)"
-  db_port="$(read_env_value "$BACKEND_DIR/.env" DB_PORT 5432)"
-  if ! nc -z "$db_host" "$db_port" >/dev/null 2>&1; then
-    printf '✗ 无法连接 PostgreSQL（%s:%s）。请先启动数据库，再重新双击此脚本。\n' "$db_host" "$db_port" >&2
-    exit 1
-  fi
-
+  start_database
   start_backend
   start_frontend
 
