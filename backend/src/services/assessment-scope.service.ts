@@ -61,7 +61,13 @@ class AssessmentScopeService {
     const task = await this.editableTask(taskId, user);
     const uniqueIds = [...new Set(assetIds || [])];
     if (!uniqueIds.length) throw new AppError(400, 'VALIDATION_ERROR', '至少选择一个评估资产');
-    const assets = await Asset.findAll({ where: { id: { [Op.in]: uniqueIds }, status: 'active' } });
+    const assets = await Asset.findAll({
+      where: {
+        id: { [Op.in]: uniqueIds },
+        status: 'active',
+        ...(await objectAccessService.assetScope(user, 'read') as object),
+      },
+    });
     if (assets.length !== uniqueIds.length) throw new AppError(404, 'NOT_FOUND', '评估资产不存在或已归档');
     const departmentIds = [...new Set(assets.map((asset) => asset.ownerDepartmentId).filter(Boolean))] as string[];
     const departments = departmentIds.length

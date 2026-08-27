@@ -23,6 +23,7 @@ export default defineConfig({
       'tests/lookup.service.test.ts',
       'tests/migration-runner.test.ts',
       'tests/config.test.ts',
+      'tests/security-boundaries.test.ts',
       'tests/object-access.service.test.js',
       'tests/questionnaire-evidence.service.test.js',
       'tests/template.service.test.js',

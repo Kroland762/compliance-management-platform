@@ -127,7 +127,11 @@ class RiskDomainService {
       transaction,
     });
     const activeAssets = await Asset.findAll({
-      where: { id: { [Op.in]: assetIds }, status: 'active' },
+      where: {
+        id: { [Op.in]: assetIds },
+        status: 'active',
+        ...(await objectAccessService.assetScope(user, 'read') as object),
+      },
       transaction,
     });
     if (evaluations.length !== sourceIds.length) {

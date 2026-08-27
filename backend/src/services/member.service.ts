@@ -16,6 +16,8 @@ import { AppError } from '../utils/http';
 import { pagination, parsePagination } from '../utils/pagination';
 import { validatePassword } from '../utils/password';
 
+type RequestUser = NonNullable<Express.Request['user']>;
+
 export interface DepartmentAssignmentInput {
   departmentId: string;
   isPrimary: boolean;
@@ -67,6 +69,28 @@ class MemberService {
       Array.from(new Set(roleIds)).map((roleId) => ({ memberId: member.id, roleId })),
       { transaction },
     );
+  }
+
+  private hasAllUserUpdateScope(actor: RequestUser): boolean {
+    return actor.isGlobalAdmin || actor.permissionScopes?.users?.update === 'all';
+  }
+
+  private async assertAssignableRoles(actor: RequestUser, targetMemberId: string, nextRoles: Role[], transaction: Transaction) {
+    if (this.hasAllUserUpdateScope(actor)) return;
+    if (nextRoles.some((role) => role.systemKey === 'tenant_admin')) {
+      throw new AppError(
+        403,
+        'FORBIDDEN',
+        targetMemberId === actor.memberId ? '不能给自己授予租户管理员角色' : '没有权限授予租户管理员角色',
+      );
+    }
+    const actorLinks = actor.memberId
+      ? await MemberRole.findAll({ where: { memberId: actor.memberId }, transaction })
+      : [];
+    const actorRoleIds = new Set(actorLinks.map((link) => link.roleId));
+    if (nextRoles.some((role) => !actorRoleIds.has(role.id))) {
+      throw new AppError(403, 'FORBIDDEN', '不能授予自己未拥有的角色');
+    }
   }
 
   private async replaceDepartments(
@@ -214,12 +238,13 @@ class MemberService {
     });
   }
 
-  async setRoles(id: string, actorMemberId: string, roleIds: string[]): Promise<void> {
+  async setRoles(id: string, actor: RequestUser, roleIds: string[]): Promise<void> {
     await sequelize.transaction(async (transaction) => {
       const member = await TenantMember.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
       if (!member) throw new AppError(404, 'NOT_FOUND', '成员不存在');
       const nextRoles = await this.validateRoles(roleIds, transaction);
-      if (member.id === actorMemberId && !nextRoles.some((role) => role.systemKey === 'tenant_admin')) {
+      await this.assertAssignableRoles(actor, member.id, nextRoles, transaction);
+      if (member.id === actor.memberId && !nextRoles.some((role) => role.systemKey === 'tenant_admin')) {
         throw new AppError(409, 'SELF_DEMOTION_FORBIDDEN', '不能移除自己的租户管理员角色');
       }
       const currentAdmin = await MemberRole.findOne({

@@ -2,6 +2,7 @@ import { Op, type WhereOptions } from 'sequelize';
 import {
   Asset,
   AssessmentAuditor,
+  AssessmentPlan,
   AuditTask,
   Department,
   Qualification,
@@ -17,6 +18,9 @@ import {
   ProductVersion,
 } from '../models';
 import type { DataScope, PermissionResource } from '../models';
+import type AccountAuditTaskModel from '../models/account/AuditTask';
+import type AccountDataSourceModel from '../models/account/DataSource';
+import type ProblemAccountModel from '../models/account/ProblemAccount';
 import { AppError } from '../utils/http';
 
 type RequestUser = NonNullable<Express.Request['user']>;
@@ -164,6 +168,72 @@ class ObjectAccessService {
     });
     if (!asset) throw new AppError(404, 'NOT_FOUND', '资产不存在');
     return asset;
+  }
+
+  async accountDataSourceScope(user: RequestUser, action = 'read'): Promise<WhereOptions> {
+    if (this.scope(user, 'data_sources', action) === 'all') return {};
+    return { createdBy: user.userId };
+  }
+
+  async accountDataSourceOrNotFound(id: string, user: RequestUser, action = 'read'): Promise<AccountDataSourceModel> {
+    const { default: AccountDataSource } = await import('../models/account/DataSource');
+    const source = await AccountDataSource.findOne({
+      where: { id, ...(await this.accountDataSourceScope(user, action) as object) },
+    });
+    if (!source) throw new AppError(404, 'NOT_FOUND', '数据源不存在');
+    return source;
+  }
+
+  async accountTaskScope(user: RequestUser, action = 'read'): Promise<WhereOptions> {
+    if (this.scope(user, 'account_tasks', action) === 'all') return {};
+    return { createdBy: user.userId };
+  }
+
+  async accountTaskOrNotFound(id: string, user: RequestUser, action = 'read'): Promise<AccountAuditTaskModel> {
+    const { default: AccountAuditTask } = await import('../models/account/AuditTask');
+    const task = await AccountAuditTask.findOne({
+      where: { id, ...(await this.accountTaskScope(user, action) as object) },
+    });
+    if (!task) throw new AppError(404, 'NOT_FOUND', '审计任务不存在');
+    return task;
+  }
+
+  async accountProblemScope(user: RequestUser, action = 'read'): Promise<WhereOptions> {
+    const scope = this.scope(user, 'problems', action);
+    if (scope === 'all') return {};
+    const { default: AccountAuditTask } = await import('../models/account/AuditTask');
+    const tasks = await AccountAuditTask.findAll({
+      where: { createdBy: user.userId },
+      attributes: ['id'],
+      raw: true,
+    });
+    return { taskId: { [Op.in]: tasks.map((task: any) => task.id) } };
+  }
+
+  async accountProblemOrNotFound(id: string, user: RequestUser, action = 'read'): Promise<ProblemAccountModel> {
+    const { default: ProblemAccount } = await import('../models/account/ProblemAccount');
+    const problem = await ProblemAccount.findOne({
+      where: { id, ...(await this.accountProblemScope(user, action) as object) },
+    });
+    if (!problem) throw new AppError(404, 'NOT_FOUND', '问题记录不存在');
+    return problem;
+  }
+
+  async assessmentPlanScope(user: RequestUser, action = 'read'): Promise<WhereOptions> {
+    const scope = this.scope(user, 'assessment_plans', action);
+    if (scope === 'all') return {};
+    if (scope === 'department' || scope === 'department_tree') {
+      return { defaultDepartmentId: { [Op.in]: await this.departmentIds(user, scope) } };
+    }
+    return { createdBy: user.userId };
+  }
+
+  async assessmentPlanOrNotFound(id: string, user: RequestUser, action = 'read'): Promise<AssessmentPlan> {
+    const plan = await AssessmentPlan.findOne({
+      where: { id, ...(await this.assessmentPlanScope(user, action) as object) },
+    });
+    if (!plan) throw new AppError(404, 'NOT_FOUND', '周期评估计划不存在');
+    return plan;
   }
 
   async productScope(user: RequestUser, resource: 'products' | 'product_dossiers' = 'products', action = 'read'): Promise<WhereOptions> {

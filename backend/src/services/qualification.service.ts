@@ -210,6 +210,14 @@ class QualificationService {
     textFields.forEach((field) => {
       if (input[field] !== undefined) data[field] = input[field]?.trim() || null;
     });
+    if (input.attachmentUrl !== undefined && data.attachmentUrl) {
+      try {
+        const parsed = new URL(data.attachmentUrl);
+        if (parsed.protocol !== 'https:') throw new Error('unsupported');
+      } catch {
+        throw new Error('附件链接必须是有效的 HTTPS 地址');
+      }
+    }
     if (input.issueDate !== undefined) data.issueDate = normalizeDate(input.issueDate);
     if (input.expiryDate !== undefined) data.expiryDate = normalizeDate(input.expiryDate);
     return data as Partial<QualificationInput>;

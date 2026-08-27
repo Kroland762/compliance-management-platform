@@ -83,7 +83,7 @@ router.put('/:id', authorize('users', 'update'), asyncHandler(async (req, res) =
 router.put('/:id/roles', authorize('users', 'update'), asyncHandler(async (req, res) => {
   const roleIds = Array.isArray(req.body.roleIds) ? req.body.roleIds : [];
   await lookupService.assertSelectable('roles', 'user-membership', roleIds, req.user!, req.params.id);
-  await memberService.setRoles(req.params.id, req.user!.memberId || '', roleIds);
+  await memberService.setRoles(req.params.id, req.user!, roleIds);
   await auditLogService.log({
     userId: req.user!.userId,
     operationType: OperationType.UPDATE,
