@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { useAuthStore } from '../store/auth';
@@ -41,7 +42,7 @@ describe('PrivateRoute', () => {
 
   it('等待认证初始化完成', () => {
     renderRoute();
-    expect(screen.getByText('加载中...')).toBeInTheDocument();
+    expect(screen.getByText('正在加载账号信息')).toBeInTheDocument();
   });
 
   it('未登录时跳转到登录页', async () => {
@@ -50,7 +51,7 @@ describe('PrivateRoute', () => {
     await waitFor(() => expect(screen.getByTestId('path')).toHaveTextContent('/login'));
   });
 
-  it('权限不足时跳转到仪表盘', async () => {
+  it('权限不足时说明原因并允许返回仪表盘', async () => {
     useAuthStore.setState({
       initialized: true,
       isAuthenticated: true,
@@ -62,10 +63,13 @@ describe('PrivateRoute', () => {
       },
     });
     renderRoute(['users', 'delete']);
+    expect(await screen.findByText('无权访问此页面')).toBeInTheDocument();
+    expect(screen.getByTestId('path')).toHaveTextContent('/protected');
+    await userEvent.click(screen.getByRole('button', { name: '返回可访问页面' }));
     await waitFor(() => expect(screen.getByTestId('path')).toHaveTextContent('/dashboard'));
   });
 
-  it('权限不足时可以返回指定业务模块', async () => {
+  it('权限不足时可以主动返回指定业务模块', async () => {
     useAuthStore.setState({
       initialized: true,
       isAuthenticated: true,
@@ -77,6 +81,8 @@ describe('PrivateRoute', () => {
       },
     });
     renderRoute(['data_sources', 'create'], '/account-audit/data-sources');
+    expect(await screen.findByText('无权访问此页面')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '返回可访问页面' }));
     await waitFor(() => expect(screen.getByTestId('path')).toHaveTextContent('/account-audit/data-sources'));
     expect(screen.getByText('数据源列表')).toBeInTheDocument();
   });

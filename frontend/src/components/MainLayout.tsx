@@ -1,4 +1,4 @@
-import { Button, Badge, Typography, Dropdown, Space, Avatar, Popover, List, Tag, Menu, Layout, Select, message } from 'antd';
+import { Alert, Button, Badge, Typography, Dropdown, Space, Avatar, Popover, List, Tag, Menu, Layout, Select, message, Spin } from 'antd';
 import {
   DashboardOutlined, FileTextOutlined, UserOutlined,
   AuditOutlined, FormOutlined, WarningOutlined,
@@ -37,6 +37,8 @@ export default function MainLayout() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
+  const [notificationError, setNotificationError] = useState('');
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [isCompact, setIsCompact] = useState(false);
   const tenantOptions = [
@@ -49,6 +51,7 @@ export default function MainLayout() {
       try {
         await clearContext();
         navigate('/tenants');
+        message.success('已切换到平台管理');
       } catch {
         message.error('退出租户上下文失败');
       }
@@ -59,6 +62,7 @@ export default function MainLayout() {
     try {
       await selectContext(tenantId);
       navigate('/dashboard');
+      message.success(`已切换到${option.label}`);
     } catch {
       message.error('租户上下文切换失败');
     }
@@ -78,14 +82,23 @@ export default function MainLayout() {
     try {
       const res: any = await apiClient.get('/notifications/unread-count');
       setUnreadCount(res.data?.count || 0);
-    } catch {}
+      setNotificationError('');
+    } catch {
+      setNotificationError('通知状态暂时无法更新');
+    }
   };
 
   const fetchNotifications = async () => {
+    setNotificationsLoading(true);
     try {
       const res: any = await apiClient.get('/notifications?pageSize=20');
       setNotifications(res.data?.items || []);
-    } catch {}
+      setNotificationError('');
+    } catch {
+      setNotificationError('通知加载失败，请重试');
+    } finally {
+      setNotificationsLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -333,8 +346,12 @@ export default function MainLayout() {
               trigger="click" placement="bottomRight"
               content={
                 <div style={{ width: 360, maxHeight: 400, overflow: 'auto' }}>
-                  {notifications.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: 20, color: '#8E8E93' }}>暂无通知</div>
+                  {notificationError ? (
+                    <Alert type="warning" showIcon message={notificationError} action={<Button size="small" onClick={() => void fetchNotifications()}>重试</Button>} />
+                  ) : notificationsLoading ? (
+                    <div style={{ textAlign: 'center', padding: 28 }}><Spin /><div style={{ marginTop: 8 }}>正在加载通知</div></div>
+                  ) : notifications.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: 20, color: '#636366' }}>暂无通知</div>
                   ) : (
                     <List dataSource={notifications} renderItem={(item: any) => (
                       <List.Item
@@ -349,7 +366,11 @@ export default function MainLayout() {
                           if (!item.isRead) {
                             setNotifications(prev => prev.map(n => n.id === item.id ? { ...n, isRead: true } : n));
                             setUnreadCount(prev => Math.max(0, prev - 1));
-                            apiClient.put(`/notifications/${item.id}/read`).catch(() => fetchUnread());
+                            apiClient.put(`/notifications/${item.id}/read`).catch(() => {
+                              message.error('通知状态更新失败');
+                              void fetchNotifications();
+                              void fetchUnread();
+                            });
                           }
                         }}>
                         <div style={{ width: '100%' }}>
@@ -371,7 +392,7 @@ export default function MainLayout() {
                             )}
                           </div>
                           <Text style={{ fontSize: 12, color: '#636366' }}>{item.content}</Text>
-                          <div style={{ fontSize: 11, color: '#AEAEB2', marginTop: 2 }}>
+                          <div style={{ fontSize: 11, color: '#636366', marginTop: 2 }}>
                             {new Date(item.createdAt).toLocaleString('zh-CN')}
                           </div>
                         </div>
@@ -380,9 +401,7 @@ export default function MainLayout() {
                   )}
                 </div>
               }>
-              <Badge count={unreadCount} size="small" offset={[-2, 2]}>
-                <BellOutlined style={{ fontSize: 18, cursor: 'pointer', color: '#1D1D1F', opacity: 0.7 }} />
-              </Badge>
+              <Button type="text" aria-label={unreadCount ? `通知，${unreadCount} 条未读` : '通知'} icon={<Badge count={unreadCount} size="small" offset={[-2, 2]}><BellOutlined style={{ fontSize: 18, color: '#1D1D1F' }} /></Badge>} />
             </Popover>}
             <Dropdown menu={{
               items: userMenuItems,
@@ -391,12 +410,12 @@ export default function MainLayout() {
                 if (key === 'profile') setProfileOpen(true);
               },
             }} placement="bottomRight">
-              <div style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button type="button" aria-label="打开账户菜单" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, border: 0, background: 'transparent', padding: 0, font: 'inherit' }}>
                 <Avatar size={28} style={{ backgroundColor: '#007AFF', fontSize: 13 }}>
                   {user?.username?.[0]?.toUpperCase()}
                 </Avatar>
                 <Text className="app-username" style={{ fontSize: 14, fontWeight: 500, color: '#1D1D1F' }}>{user?.username}</Text>
-              </div>
+              </button>
             </Dropdown>
           </Space>
         </div>

@@ -1,4 +1,5 @@
-import { Navigate, useLocation } from 'react-router-dom';
+import { Button, Result, Spin } from 'antd';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/auth';
 
 interface PrivateRouteProps {
@@ -15,9 +16,10 @@ export default function PrivateRoute({ children, permission, fallbackPath = '/da
   const hasPermission = useAuthStore((s) => s.hasPermission);
   const selectedTenant = useAuthStore((s) => s.selectedTenant);
   const location = useLocation();
+  const navigate = useNavigate();
 
   if (!initialized) {
-    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', color: '#AEAEB2' }}>加载中...</div>;
+    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12, height: '100vh' }}><Spin size="large" /><span>正在加载账号信息</span></div>;
   }
 
   if (!isAuthenticated) {
@@ -35,7 +37,12 @@ export default function PrivateRoute({ children, permission, fallbackPath = '/da
   if (permission) {
     const [resource, action] = permission;
     if (!hasPermission(resource, action)) {
-      return <Navigate to={fallbackPath} replace />;
+      return <Result
+        status="403"
+        title="无权访问此页面"
+        subTitle="当前账号缺少所需权限。如需访问，请联系管理员调整角色权限。"
+        extra={<Button type="primary" onClick={() => navigate(fallbackPath, { replace: true })}>返回可访问页面</Button>}
+      />;
     }
   }
 

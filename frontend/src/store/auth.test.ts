@@ -114,6 +114,31 @@ describe('tenant session state', () => {
     expect(sessionStorage.getItem('selectedTenant')).toBeNull();
   });
 
+  it('does not expose the bearer token on window globals', async () => {
+    apiMock.post.mockResolvedValueOnce({
+      data: {
+        token: 'identity-token',
+        status: 'tenant_selection_required',
+        contexts: [],
+        user: {
+          id: 'user-a',
+          username: 'alice',
+          email: null,
+          role: 'identity',
+          roleIds: [],
+          permissions: {},
+          permissionScopes: {},
+          departmentIds: [],
+          mustChangePassword: false,
+          isGlobalAdmin: false,
+        },
+      },
+    });
+    await useAuthStore.getState().login('alice', 'secret');
+    expect((window as any).__authStore).toBeUndefined();
+    expect((window as any).__authSetState).toBeUndefined();
+  });
+
   it('surfaces forced password change before a tenant context is selected', async () => {
     apiMock.post.mockResolvedValueOnce({
       data: {

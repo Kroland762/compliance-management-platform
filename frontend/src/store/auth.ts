@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import apiClient from '../api/client';
+import { registerAuthBridge } from './authBridge';
 
 export interface TenantContext {
   id: string;
@@ -201,15 +202,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 }));
 
-(useAuthStore as any).subscribe((state: AuthState) => {
-  (window as any).__authStore = {
-    token: state.token,
-    user: state.user,
-    selectedTenant: state.selectedTenant,
-    isAuthenticated: state.isAuthenticated,
-  };
-  (window as any).__authSetState = useAuthStore.setState;
-});
+registerAuthBridge(
+  () => {
+    const state = useAuthStore.getState();
+    return { token: state.token, user: state.user, selectedTenant: state.selectedTenant };
+  },
+  useAuthStore.setState,
+);
 
 export function usePermission(resource: string, action: string): boolean {
   return useAuthStore((state) => state.hasPermission(resource, action));
