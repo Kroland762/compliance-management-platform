@@ -16,7 +16,7 @@ router.use(authorize('account_tasks', 'read'));
  */
 router.get('/', validate({ query: taskListQuery }), async (req: Request, res: Response) => {
   try {
-    const result = await auditTaskService.listTasks(req.query as any);
+    const result = await auditTaskService.listTasks(req.query as any, req.user!);
     res.json({ success: true, data: result });
   } catch (error: any) {
     res.status(500).json({ success: false, error: { code: 'QUERY_FAILED', message: error.message } });
@@ -29,7 +29,7 @@ router.get('/', validate({ query: taskListQuery }), async (req: Request, res: Re
  */
 router.get('/:id', async (req: Request, res: Response) => {
   try {
-    const result = await auditTaskService.getTask(req.params.id);
+    const result = await auditTaskService.getTask(req.params.id, req.user!);
     res.json({ success: true, data: result });
   } catch (error: any) {
     const status = error.message === '审计任务不存在' ? 404 : 500;
@@ -70,7 +70,7 @@ router.put('/:id', authorize('account_tasks', 'update'), async (req: Request, re
  */
 router.delete('/:id', authorize('account_tasks', 'delete'), async (req: Request, res: Response) => {
   try {
-    await auditTaskService.deleteTask(req.params.id, req.user!.userId);
+    await auditTaskService.deleteTask(req.params.id, req.user!);
     res.json({ success: true, message: '审计任务已删除' });
   } catch (error: any) {
     const status = error.message === '审计任务不存在' ? 404 : 400;
@@ -84,7 +84,7 @@ router.delete('/:id', authorize('account_tasks', 'delete'), async (req: Request,
  */
 router.post('/:id/execute', authorize('account_tasks', 'execute'), async (req: Request, res: Response) => {
   try {
-    const result = await auditTaskService.executeTask(req.params.id, req.user!.userId);
+    const result = await auditTaskService.executeTask(req.params.id, req.user!);
     res.json({ success: true, data: result });
   } catch (error: any) {
     const status = error.message === '审计任务不存在' ? 404 : 400;
@@ -98,7 +98,7 @@ router.post('/:id/execute', authorize('account_tasks', 'execute'), async (req: R
  */
 router.get('/:id/executions', validate({ query: taskExecutionQuery }), async (req: Request, res: Response) => {
   try {
-    const result = await auditTaskService.getExecutionHistory(req.params.id, req.query as any);
+    const result = await auditTaskService.getExecutionHistory(req.params.id, req.query as any, req.user!);
     res.json({ success: true, data: result });
   } catch (error: any) {
     res.status(400).json({ success: false, error: { code: 'QUERY_FAILED', message: error.message } });

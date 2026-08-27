@@ -51,7 +51,7 @@ export interface CsvPreview {
 
 export interface DataSourceConfig {
   // DATABASE
-  dbType?: string;
+  dbType?: 'postgres' | 'mysql' | 'mssql' | 'oracle' | 'sqlite' | string;
   host?: string;
   port?: number;
   database?: string;

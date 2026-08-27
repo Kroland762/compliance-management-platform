@@ -43,7 +43,7 @@ describe('P0 security foundations', () => {
     await expect(dataSourceService.createDataSource({
       name: 'csv',
       sourceType: 'CSV',
-    })).rejects.toThrow('仅允许创建 PostgreSQL');
+    })).rejects.toThrow('仅允许创建数据库只读数据源');
 
     await expect(dataSourceService.createDataSource({
       name: 'unsafe',

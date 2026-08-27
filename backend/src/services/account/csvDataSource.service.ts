@@ -13,11 +13,14 @@ import { OperationType } from '../../models';
 import { normalizeOriginalFilename } from '../../utils/upload';
 import auditLogService from '../audit-log.service';
 import { decodeCsvBuffer } from '../evidence-preview.service';
+import objectAccessService from '../object-access.service';
 
 const MAX_CSV_ROWS = 10_000;
 const MAX_CSV_BYTES = 50 * 1024 * 1024;
 const SAMPLE_ROWS = 10;
 const ALLOWED_DELIMITERS = new Set([',', ';', '\t']);
+
+type RequestUser = NonNullable<Express.Request['user']>;
 
 export type FieldMappingConfig = Record<string, string | {
   sourceField?: string;
@@ -203,8 +206,12 @@ class CsvDataSourceService {
     return normalizeMapping(input);
   }
 
-  async preview(file: Express.Multer.File, mappingInput?: unknown, sourceId?: string, delimiter?: unknown) {
-    const source = sourceId ? await DataSource.findByPk(sourceId) : null;
+  async preview(file: Express.Multer.File, mappingInput?: unknown, sourceId?: string, delimiter?: unknown, user?: RequestUser) {
+    const source = sourceId
+      ? (user
+        ? await objectAccessService.accountDataSourceOrNotFound(sourceId, user, 'read')
+        : await DataSource.findByPk(sourceId))
+      : null;
     if (sourceId && (!source || source.sourceType !== DataSourceType.CSV)) {
       throw new CsvDataSourceError('CSV 数据源不存在', 'NOT_FOUND', 404);
     }
@@ -296,10 +303,13 @@ class CsvDataSourceService {
     sourceId: string,
     file: Express.Multer.File,
     input: { fieldMappingConfig?: unknown; expectedSha256?: unknown; delimiter?: unknown },
-    userId?: string,
+    actor?: RequestUser | string,
   ) {
+    const user = typeof actor === 'object' ? actor : undefined;
+    const userId = typeof actor === 'string' ? actor : actor?.userId;
     const parsed = parseCsv(file, input.delimiter);
     const result = await sequelize.transaction(async transaction => {
+      if (user) await objectAccessService.accountDataSourceOrNotFound(sourceId, user, 'sync');
       const source = await DataSource.findByPk(sourceId, { transaction, lock: transaction.LOCK.UPDATE });
       if (!source || source.sourceType !== DataSourceType.CSV) {
         throw new CsvDataSourceError('CSV 数据源不存在', 'NOT_FOUND', 404);

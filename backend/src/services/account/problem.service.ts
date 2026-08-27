@@ -13,6 +13,9 @@ import {
 import auditLogService from '../audit-log.service';
 import { OperationType } from '../../models';
 import { parsePagination, pagination } from '../../utils/pagination';
+import objectAccessService from '../object-access.service';
+
+type RequestUser = NonNullable<Express.Request['user']>;
 
 interface ListQuery {
   page?: number;
@@ -53,11 +56,7 @@ class ProblemService {
     return updates;
   }
 
-  /**
-   * 分页列出问题账户
-   */
-  async listProblems(query: ListQuery) {
-    const { page, pageSize } = parsePagination(query);
+  private buildFilter(query: ListQuery) {
     const { taskId, ruleId, status, severity, search, dateFrom, dateTo } = query;
     const where: any = {};
 
@@ -76,6 +75,22 @@ class ProblemService {
       if (dateFrom) where.firstDetectedAt[Op.gte] = new Date(dateFrom);
       if (dateTo) where.firstDetectedAt[Op.lte] = new Date(dateTo);
     }
+    return where;
+  }
+
+  private async scopedFilter(query: ListQuery, user?: RequestUser, action = 'read') {
+    const filter = this.buildFilter(query);
+    if (!user || typeof user !== 'object' || !user.userId) return filter;
+    const scope = await objectAccessService.accountProblemScope(user, action);
+    return { [Op.and]: [scope, filter] };
+  }
+
+  /**
+   * 分页列出问题账户
+   */
+  async listProblems(query: ListQuery, user?: RequestUser) {
+    const { page, pageSize } = parsePagination(query);
+    const where = await this.scopedFilter(query, user, 'read');
 
     const { count, rows } = await ProblemAccount.findAndCountAll({
       where,
@@ -104,8 +119,10 @@ class ProblemService {
   /**
    * 获取单个问题详情
    */
-  async getProblem(id: string) {
-    const problem = await ProblemAccount.findByPk(id, {
+  async getProblem(id: string, user?: RequestUser) {
+    const where = user ? { id, ...(await objectAccessService.accountProblemScope(user, 'read') as object) } : { id };
+    const problem = await ProblemAccount.findOne({
+      where,
       include: [
         { model: AccountData, as: 'AccountDatum', attributes: ['accountName'], required: false },
         { model: AuditRule, as: 'AuditRule', attributes: ['name'], required: false },
@@ -126,8 +143,11 @@ class ProblemService {
    * 更新问题状态
    * 支持状态流转: PENDING → PROCESSING → RESOLVED / FALSE_POSITIVE / IGNORED
    */
-  async updateStatus(id: string, status: ProblemStatus, userId: string, notes?: string) {
+  async updateStatus(id: string, status: ProblemStatus, actor: RequestUser | string, notes?: string) {
     const next = this.assertStatus(status);
+    const user = typeof actor === 'object' ? actor : undefined;
+    const userId = typeof actor === 'string' ? actor : actor.userId;
+    if (user) await objectAccessService.accountProblemOrNotFound(id, user, 'update');
     const result = await sequelize.transaction(async (transaction) => {
       const problem = await ProblemAccount.findByPk(id, { transaction, lock: Transaction.LOCK.UPDATE });
       if (!problem) throw new Error('问题记录不存在');
@@ -160,7 +180,9 @@ class ProblemService {
   /**
    * 批量更新问题状态
    */
-  async bulkUpdateStatus(data: BulkUpdateInput, userId: string) {
+  async bulkUpdateStatus(data: BulkUpdateInput, actor: RequestUser | string) {
+    const user = typeof actor === 'object' ? actor : undefined;
+    const userId = typeof actor === 'string' ? actor : actor.userId;
     if (!data.ids || data.ids.length === 0) {
       throw new Error('请提供要更新的问题ID列表');
     }
@@ -168,8 +190,9 @@ class ProblemService {
     const status = this.assertStatus(data.status);
     const ids = [...new Set(data.ids)];
     const updatedCount = await sequelize.transaction(async (transaction) => {
+      const scope = user ? await objectAccessService.accountProblemScope(user, 'update') : {};
       const problems = await ProblemAccount.findAll({
-        where: { id: { [Op.in]: ids } },
+        where: { id: { [Op.in]: ids }, ...(scope as object) },
         transaction,
         lock: Transaction.LOCK.UPDATE,
         order: [['id', 'ASC']],
@@ -209,25 +232,8 @@ class ProblemService {
   /**
    * 导出问题数据
    */
-  async exportProblems(query: ListQuery) {
-    const { taskId, ruleId, status, severity, search, dateFrom, dateTo } = query;
-    const where: any = {};
-
-    if (taskId) where.taskId = taskId;
-    if (ruleId) where.ruleId = ruleId;
-    if (status) where.status = status;
-    if (severity) where.severity = severity;
-    if (search) {
-      where[Op.or] = [
-        { accountId: { [Op.iLike]: `%${search}%` } },
-        { problemDescription: { [Op.iLike]: `%${search}%` } },
-      ];
-    }
-    if (dateFrom || dateTo) {
-      where.firstDetectedAt = {};
-      if (dateFrom) where.firstDetectedAt[Op.gte] = new Date(dateFrom);
-      if (dateTo) where.firstDetectedAt[Op.lte] = new Date(dateTo);
-    }
+  async exportProblems(query: ListQuery, user?: RequestUser) {
+    const where = await this.scopedFilter(query, user, 'export');
 
     const problems = await ProblemAccount.findAll({
       where,
@@ -258,9 +264,8 @@ class ProblemService {
   /**
    * 获取问题统计（按状态和严重级别）
    */
-  async getProblemStats(taskId?: string) {
-    const where: any = {};
-    if (taskId) where.taskId = taskId;
+  async getProblemStats(taskId?: string, user?: RequestUser) {
+    const where = await this.scopedFilter({ taskId } as ListQuery, user, 'read');
 
     // 按状态统计
     const statusCounts = await ProblemAccount.findAll({

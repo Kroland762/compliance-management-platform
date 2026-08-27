@@ -24,6 +24,7 @@ import auditLogService from '../audit-log.service';
 import { OperationType } from '../../models';
 import { parsePagination, pagination } from '../../utils/pagination';
 import lookupService from '../lookup.service';
+import objectAccessService from '../object-access.service';
 
 type RequestUser = NonNullable<Express.Request['user']>;
 
@@ -55,10 +56,10 @@ class AuditTaskService {
   /**
    * 分页列出审计任务
    */
-  async listTasks(query: ListQuery) {
+  async listTasks(query: ListQuery, user: RequestUser) {
     const { page, pageSize } = parsePagination(query);
     const { status, scheduleType, search } = query;
-    const where: any = {};
+    const where: any = await objectAccessService.accountTaskScope(user, 'read');
 
     if (status) where.status = status;
     if (scheduleType) where.scheduleType = scheduleType;
@@ -94,9 +95,8 @@ class AuditTaskService {
   /**
    * 获取单个任务
    */
-  async getTask(id: string) {
-    const task = await AccountAuditTask.findByPk(id);
-    if (!task) throw new Error('审计任务不存在');
+  async getTask(id: string, user: RequestUser) {
+    const task = await objectAccessService.accountTaskOrNotFound(id, user, 'read');
 
     try {
       const ds = await DataSource.findByPk(task.sourceId, { attributes: ['name'] });
@@ -175,7 +175,9 @@ class AuditTaskService {
   async updateTask(id: string, data: UpdateTaskInput, actor?: RequestUser | string) {
     const user = typeof actor === 'object' ? actor : undefined;
     const userId = typeof actor === 'string' ? actor : actor?.userId;
-    const task = await AccountAuditTask.findByPk(id);
+    const task = user
+      ? await objectAccessService.accountTaskOrNotFound(id, user, 'update')
+      : await AccountAuditTask.findByPk(id);
     if (!task) throw new Error('审计任务不存在');
 
     const updates: any = {};
@@ -231,8 +233,12 @@ class AuditTaskService {
   /**
    * 删除任务
    */
-  async deleteTask(id: string, userId?: string) {
-    const task = await AccountAuditTask.findByPk(id);
+  async deleteTask(id: string, actor?: RequestUser | string) {
+    const user = typeof actor === 'object' ? actor : undefined;
+    const userId = typeof actor === 'string' ? actor : actor?.userId;
+    const task = user
+      ? await objectAccessService.accountTaskOrNotFound(id, user, 'delete')
+      : await AccountAuditTask.findByPk(id);
     if (!task) throw new Error('审计任务不存在');
 
     // Unregister cron job
@@ -268,8 +274,9 @@ class AuditTaskService {
   /**
    * 执行审计任务（手动触发，triggerType=MANUAL）
    */
-  async executeTask(id: string, userId: string) {
-    return this.executeTaskInternal(id, userId, TriggerType.MANUAL);
+  async executeTask(id: string, user: RequestUser) {
+    await objectAccessService.accountTaskOrNotFound(id, user, 'execute');
+    return this.executeTaskInternal(id, user.userId, TriggerType.MANUAL);
   }
 
   /**
@@ -574,7 +581,8 @@ class AuditTaskService {
   /**
    * 获取任务的执行历史
    */
-  async getExecutionHistory(taskId: string, query?: { page?: number; pageSize?: number }) {
+  async getExecutionHistory(taskId: string, query?: { page?: number; pageSize?: number }, user?: RequestUser) {
+    if (user) await objectAccessService.accountTaskOrNotFound(taskId, user, 'read');
     const { page, pageSize } = parsePagination(query || {});
 
     const { count, rows } = await TaskExecution.findAndCountAll({

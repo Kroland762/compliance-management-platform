@@ -85,7 +85,7 @@ describe('security-sensitive route authorization', () => {
     })).post('/api/account/tasks/task-1/execute');
 
     expect(response.status).toBe(200);
-    expect(auditTaskService.executeTask).toHaveBeenCalledWith('task-1', 'user-1');
+    expect(auditTaskService.executeTask).toHaveBeenCalledWith('task-1', expect.objectContaining({ userId: 'user-1' }));
   });
 
   test('notification mark-as-read requires update permission', async () => {

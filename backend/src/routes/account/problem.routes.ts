@@ -14,7 +14,7 @@ router.use(authorize('problems', 'read'));
  */
 router.get('/', validate({ query: problemListQuery }), async (req: Request, res: Response) => {
   try {
-    const result = await problemService.listProblems(req.query as any);
+    const result = await problemService.listProblems(req.query as any, req.user!);
     res.json({ success: true, data: result });
   } catch (error: any) {
     res.status(500).json({ success: false, error: { code: 'QUERY_FAILED', message: error.message } });
@@ -27,7 +27,7 @@ router.get('/', validate({ query: problemListQuery }), async (req: Request, res:
  */
 router.get('/stats', async (req: Request, res: Response) => {
   try {
-    const result = await problemService.getProblemStats(req.query.taskId as string);
+    const result = await problemService.getProblemStats(req.query.taskId as string, req.user!);
     res.json({ success: true, data: result });
   } catch (error: any) {
     res.status(500).json({ success: false, error: { code: 'QUERY_FAILED', message: error.message } });
@@ -40,7 +40,7 @@ router.get('/stats', async (req: Request, res: Response) => {
  */
 router.get('/:id', async (req: Request, res: Response) => {
   try {
-    const result = await problemService.getProblem(req.params.id);
+    const result = await problemService.getProblem(req.params.id, req.user!);
     res.json({ success: true, data: result });
   } catch (error: any) {
     const status = error.message === '问题记录不存在' ? 404 : 500;
@@ -59,7 +59,7 @@ router.patch('/:id/status', authorize('problems', 'update'), validate({ body: pr
       res.status(400).json({ success: false, error: { code: 'INVALID_INPUT', message: '状态值不能为空' } });
       return;
     }
-    const result = await problemService.updateStatus(req.params.id, status, req.user!.userId, notes);
+    const result = await problemService.updateStatus(req.params.id, status, req.user!, notes);
     res.json({ success: true, data: result });
   } catch (error: any) {
     const status = error.message === '问题记录不存在' ? 404 : 400;
@@ -82,7 +82,7 @@ router.post('/bulk-status', authorize('problems', 'update'), validate({ body: pr
       res.status(400).json({ success: false, error: { code: 'INVALID_INPUT', message: '状态值不能为空' } });
       return;
     }
-    const result = await problemService.bulkUpdateStatus({ ids, status, notes }, req.user!.userId);
+    const result = await problemService.bulkUpdateStatus({ ids, status, notes }, req.user!);
     res.json({ success: true, data: result });
   } catch (error: any) {
     res.status(400).json({ success: false, error: { code: 'UPDATE_FAILED', message: error.message } });
@@ -101,7 +101,7 @@ router.get('/export/data', authorize('problems', 'export'), async (req: Request,
       res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: '导出参数校验失败' } });
       return;
     }
-    const result = await problemService.exportProblems(value);
+    const result = await problemService.exportProblems(value, req.user!);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename=problem-accounts-${Date.now()}.csv`);
     res.send(result);

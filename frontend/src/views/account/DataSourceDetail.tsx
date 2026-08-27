@@ -11,6 +11,19 @@ const { Title, Text } = Typography;
 
 const statusColors: Record<string, string> = { ACTIVE: 'green', INACTIVE: 'default' };
 const statusLabels: Record<string, string> = { ACTIVE: '正常', INACTIVE: '停用' };
+const dbTypeLabels: Record<string, string> = {
+  postgres: 'PostgreSQL',
+  mysql: 'MySQL',
+  mssql: 'SQL Server',
+  oracle: 'Oracle',
+  sqlite: 'SQLite',
+};
+
+function dataSourceTypeLabel(ds: DataSource) {
+  if (ds.sourceType === 'CSV') return 'CSV';
+  const dbType = String(ds.connectionConfig?.dbType || 'postgres').toLowerCase();
+  return dbTypeLabels[dbType] || '数据库';
+}
 
 export default function DataSourceDetail() {
   const can = useAuthStore((state) => state.hasPermission);
@@ -109,7 +122,7 @@ export default function DataSourceDetail() {
         <Descriptions bordered column={2} size="small" style={{ marginTop: 8 }}>
           <Descriptions.Item label="名称">{ds.name}</Descriptions.Item>
           <Descriptions.Item label="类型">
-            <Tag color={ds.sourceType === 'CSV' ? 'cyan' : 'blue'}>{ds.sourceType === 'CSV' ? 'CSV' : 'PostgreSQL'}</Tag>
+            <Tag color={ds.sourceType === 'CSV' ? 'cyan' : 'blue'}>{dataSourceTypeLabel(ds)}</Tag>
           </Descriptions.Item>
           <Descriptions.Item label="状态">
             <Tag color={statusColors[ds.status]}>{statusLabels[ds.status] || ds.status}</Tag>

@@ -7,7 +7,6 @@ import { syncOperations, uploadOperations } from '../../services/metrics.service
 import { validate } from '../../middlewares/validate';
 import { dataSourceListQuery } from './validation';
 import { isAllowedCsvFile } from '../../utils/upload';
-import { DataSource } from '../../models/account';
 import auditLogService from '../../services/audit-log.service';
 import { OperationType } from '../../models';
 
@@ -67,7 +66,7 @@ function csvFile(operationType: OperationType) {
  */
 router.get('/', authorize('data_sources', 'read'), validate({ query: dataSourceListQuery }), async (req: Request, res: Response) => {
   try {
-    const result = await dataSourceService.listDataSources(req.query as any);
+    const result = await dataSourceService.listDataSources(req.query as any, req.user!);
     res.json({ success: true, data: result });
   } catch (error: any) {
     res.status(500).json({ success: false, error: { code: 'QUERY_FAILED', message: error.message } });
@@ -80,7 +79,7 @@ router.get('/', authorize('data_sources', 'read'), validate({ query: dataSourceL
  */
 router.get('/:id', authorize('data_sources', 'read'), async (req: Request, res: Response) => {
   try {
-    const result = await dataSourceService.getDataSource(req.params.id);
+    const result = await dataSourceService.getDataSource(req.params.id, req.user!);
     res.json({ success: true, data: result });
   } catch (error: any) {
     const status = error.message === '数据源不存在' ? 404 : 500;
@@ -136,7 +135,7 @@ router.post('/upload', authorize('data_sources', 'create'), csvFile(OperationTyp
 router.post('/:id/csv/preview', authorize('data_sources', 'sync'), csvFile(OperationType.UPDATE), async (req: Request, res: Response) => {
   try {
     if (!req.file) throw new CsvDataSourceError('请上传 CSV 文件', 'NO_FILE');
-    const result = await csvDataSourceService.preview(req.file, req.body.fieldMappingConfig, req.params.id, req.body.delimiter);
+    const result = await csvDataSourceService.preview(req.file, req.body.fieldMappingConfig, req.params.id, req.body.delimiter, req.user!);
     uploadOperations.inc({ outcome: 'success' });
     res.json({ success: true, data: result });
   } catch (error: any) {
@@ -151,13 +150,13 @@ router.post('/:id/upload', authorize('data_sources', 'sync'), csvFile(OperationT
   try {
     if (!req.file) throw new CsvDataSourceError('请上传 CSV 文件', 'NO_FILE');
     if (req.body.fieldMappingConfig !== undefined) {
-      const source = await DataSource.findByPk(req.params.id, { attributes: ['fieldMappingConfig'] });
+      const source = await dataSourceService.getDataSource(req.params.id, req.user!);
       const incoming = csvDataSourceService.parseMapping(req.body.fieldMappingConfig);
       const changed = JSON.stringify(incoming) !== JSON.stringify(source?.fieldMappingConfig || {});
       const mayUpdate = req.user!.permissions?.data_sources?.includes('update');
       if (changed && !mayUpdate) throw new CsvDataSourceError('修改字段映射需要 data_sources.update 权限', 'FORBIDDEN', 403);
     }
-    const result = await csvDataSourceService.reimport(req.params.id, req.file, req.body, req.user!.userId);
+    const result = await csvDataSourceService.reimport(req.params.id, req.file, req.body, req.user!);
     uploadOperations.inc({ outcome: 'success' });
     res.json({ success: true, data: result });
   } catch (error: any) {
@@ -186,7 +185,7 @@ router.post('/preview-fields', authorize('data_sources', 'create'), async (req: 
  */
 router.put('/:id', authorize('data_sources', 'update'), async (req: Request, res: Response) => {
   try {
-    const result = await dataSourceService.updateDataSource(req.params.id, req.body, req.user!.userId);
+    const result = await dataSourceService.updateDataSource(req.params.id, req.body, req.user!);
     res.json({ success: true, data: result });
   } catch (error: any) {
     const status = error.message === '数据源不存在' ? 404 : 400;
@@ -200,7 +199,7 @@ router.put('/:id', authorize('data_sources', 'update'), async (req: Request, res
  */
 router.patch('/:id/toggle', authorize('data_sources', 'update'), async (req: Request, res: Response) => {
   try {
-    const result = await dataSourceService.toggleDataSource(req.params.id, req.user!.userId);
+    const result = await dataSourceService.toggleDataSource(req.params.id, req.user!);
     res.json({ success: true, data: result });
   } catch (error: any) {
     const status = error.message === '数据源不存在' ? 404 : 400;
@@ -214,7 +213,7 @@ router.patch('/:id/toggle', authorize('data_sources', 'update'), async (req: Req
  */
 router.delete('/:id', authorize('data_sources', 'delete'), async (req: Request, res: Response) => {
   try {
-    await dataSourceService.deleteDataSource(req.params.id, req.user!.userId);
+    await dataSourceService.deleteDataSource(req.params.id, req.user!);
     res.json({ success: true, message: '数据源已删除' });
   } catch (error: any) {
     const status = error.message === '数据源不存在' ? 404 : 400;
@@ -228,7 +227,7 @@ router.delete('/:id', authorize('data_sources', 'delete'), async (req: Request, 
  */
 router.post('/:id/test-connection', authorize('data_sources', 'update'), async (req: Request, res: Response) => {
   try {
-    const result = await dataSourceService.testConnection(req.params.id);
+    const result = await dataSourceService.testConnection(req.params.id, req.user!);
     res.json({ success: true, data: result });
   } catch (error: any) {
     res.status(400).json({ success: false, error: { code: 'TEST_FAILED', message: error.message } });
@@ -241,7 +240,7 @@ router.post('/:id/test-connection', authorize('data_sources', 'update'), async (
  */
 router.get('/:id/preview', authorize('data_sources', 'read'), async (req: Request, res: Response) => {
   try {
-    const result = await dataSourceService.previewData(req.params.id);
+    const result = await dataSourceService.previewData(req.params.id, req.user!);
     res.json({ success: true, data: result });
   } catch (error: any) {
     res.status(400).json({ success: false, error: { code: 'PREVIEW_FAILED', message: error.message } });
@@ -255,7 +254,7 @@ router.get('/:id/preview', authorize('data_sources', 'read'), async (req: Reques
 router.post('/:id/sync', authorize('data_sources', 'sync'), async (req: Request, res: Response) => {
   try {
     const force = req.query.force === 'true';
-    const result = await dataSourceService.syncData(req.params.id, req.user!.userId, force);
+    const result = await dataSourceService.syncData(req.params.id, req.user!, force);
     syncOperations.inc({ outcome: 'success' });
     res.json({ success: true, data: result });
   } catch (error: any) {
@@ -270,7 +269,7 @@ router.post('/:id/sync', authorize('data_sources', 'sync'), async (req: Request,
  */
 router.get('/:id/account-changes', authorize('data_sources', 'read'), async (req: Request, res: Response) => {
   try {
-    const result = await dataSourceService.getAccountChangeStats(req.params.id);
+    const result = await dataSourceService.getAccountChangeStats(req.params.id, req.user!);
     res.json({ success: true, data: result });
   } catch (error: any) {
     res.status(400).json({ success: false, error: { code: 'STATS_FAILED', message: error.message } });
