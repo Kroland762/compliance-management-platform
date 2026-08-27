@@ -14,6 +14,7 @@ import {
 import { decrypt } from '../utils/crypto';
 import type { PermissionMatrix } from '../models/Role';
 import { inspectEvidenceFile, serializeEvidence, validateEvidence } from './evidence-security.service';
+import { resolveLegacyEvidencePath } from './evidence-preview.service';
 import { fileStorage } from './file-storage.service';
 import { AppError } from '../utils/http';
 import auditLogService from './audit-log.service';
@@ -237,10 +238,16 @@ class QuestionnaireService {
     const task = await AuditTask.findByPk(item.taskId, { attributes: ['createdBy'] });
     if (!task) return null;
     const legacyPath = item.historicalEvidencePath;
+    let target: string;
+    try {
+      target = resolveLegacyEvidencePath(legacyPath);
+    } catch {
+      return null;
+    }
     const originalFilename = path.basename(legacyPath);
     let fileSize = 0;
     try {
-      fileSize = fs.statSync(path.resolve(legacyPath)).size;
+      fileSize = fs.statSync(target).size;
     } catch {
       // Preserve metadata even when the legacy file is currently unavailable.
     }

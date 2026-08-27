@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import { config } from '../src/config';
 import questionnaireService from '../src/services/questionnaire.service';
 import { AuditTask, EvidenceFile, EvidenceType, QuestionItem } from '../src/models';
 
+const originalLegacyDir = config.upload.legacyEvidenceDir;
+
 describe('questionnaire historical evidence integration', () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    config.upload.legacyEvidenceDir = originalLegacyDir;
+  });
 
   test('returns current and historical evidence in separate response fields', async () => {
     vi.spyOn(QuestionItem, 'findAll').mockResolvedValue([{
@@ -26,6 +32,7 @@ describe('questionnaire historical evidence integration', () => {
   });
 
   test('migrates legacy history paths idempotently with the task creator as uploader', async () => {
+    config.upload.legacyEvidenceDir = '/missing';
     const item = { id: 'question-1', taskId: 'task-1', historicalEvidencePath: '/missing/legacy.pdf' };
     vi.spyOn(QuestionItem, 'findAll').mockResolvedValue([item]);
     vi.spyOn(EvidenceFile, 'findOne').mockResolvedValue(null);
@@ -44,4 +51,3 @@ describe('questionnaire historical evidence integration', () => {
     }));
   });
 });
-

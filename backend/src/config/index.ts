@@ -57,6 +57,7 @@ export const config = {
   upload: {
     dir: process.env.UPLOAD_DIR || 'uploads',
     maxFileSize: resolveIntegerEnv('MAX_FILE_SIZE', 52_428_800, { min: 1_024, max: 1_073_741_824 }),
+    legacyEvidenceDir: process.env.LEGACY_EVIDENCE_DIR || '',
   },
   storage: {
     driver: process.env.FILE_STORAGE_DRIVER || 'local',
