@@ -53,11 +53,21 @@ import {
   ProductDossierQuestionnaire,
   ProductDossierAnswer,
   ProductPlatformPermission,
+  ProductDataCatalogItem,
   ProductDataItem,
   ProductProcessingActivity,
   ProductPermissionDataItem,
   ProductProcessingDataItem,
+  ProductThirdPartyService,
+  ProductThirdPartyAssessment,
+  ProductThirdPartyAssessmentAnswer,
 } from '../../models';
+import {
+  APP_COMPLIANCE_QUESTIONS,
+  BASELINE_COMPLIANCE_QUESTIONS,
+  PERSONAL_DATA_CATALOG_ITEMS,
+  SYSTEM_SEED_USER_ID,
+} from '../product-compliance-template-seed';
 import {
   AccountAuditTask,
   AccountData,
@@ -127,10 +137,14 @@ const tenantModels = [
   ProductDossierQuestionnaire,
   ProductDossierAnswer,
   ProductPlatformPermission,
+  ProductDataCatalogItem,
   ProductDataItem,
   ProductProcessingActivity,
   ProductPermissionDataItem,
   ProductProcessingDataItem,
+  ProductThirdPartyService,
+  ProductThirdPartyAssessment,
+  ProductThirdPartyAssessmentAnswer,
 ];
 
 const migrations: Migration[] = [
@@ -1894,6 +1908,185 @@ const migrations: Migration[] = [
         'account_data_sources_name_trgm_idx', 'account_audit_rules_name_trgm_idx', 'product_types_name_trgm_idx',
         'product_questionnaire_templates_name_trgm_idx',
       ]) await sequelize.query(`DROP INDEX CONCURRENTLY IF EXISTS ${quoted}."${index}"`);
+    },
+  },
+  {
+    id: '025_tenant_product_compliance_app_sdk_templates',
+    scope: 'tenant',
+    description: 'Embed APP and SDK compliance dossier templates as system-managed data',
+    checksumSource: 'tenant:v1:product-compliance-app-sdk-template-catalog-third-party-export-fields',
+    up: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      const q = (sql: string, replacements?: Record<string, unknown>) =>
+        sequelize.query(sql, { transaction, replacements });
+
+      await runWithTenantContext({ schema: schemaName, tenantId: null }, async () => {
+        for (const model of [
+          ProductDataCatalogItem,
+          ProductThirdPartyService,
+          ProductThirdPartyAssessment,
+          ProductThirdPartyAssessmentAnswer,
+        ]) await (model as any).schema(schemaName).sync({ transaction } as any);
+      });
+
+      await q(`ALTER TABLE ${quoted}.product_platform_permissions
+        ADD COLUMN IF NOT EXISTS "operatingSystem" varchar(80)`);
+      await q(`ALTER TABLE ${quoted}.product_data_items
+        ADD COLUMN IF NOT EXISTS "catalogItemId" uuid,
+        ADD COLUMN IF NOT EXISTS purpose text,
+        ADD COLUMN IF NOT EXISTS necessity varchar(40),
+        ADD COLUMN IF NOT EXISTS "processingMethod" varchar(160),
+        ADD COLUMN IF NOT EXISTS "operatingSystems" jsonb NOT NULL DEFAULT '[]'::jsonb`);
+      await q(`DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.table_constraints
+            WHERE table_schema = '${schemaName.replace(/'/g, "''")}'
+              AND table_name = 'product_data_items'
+              AND constraint_name = 'product_data_items_catalog_fk'
+          ) THEN
+            ALTER TABLE ${quoted}.product_data_items
+              ADD CONSTRAINT product_data_items_catalog_fk
+              FOREIGN KEY ("catalogItemId") REFERENCES ${quoted}.product_data_catalog_items(id)
+              ON DELETE RESTRICT;
+          END IF;
+        END $$`);
+      await q(`ALTER TABLE ${quoted}.product_processing_activities
+        ADD COLUMN IF NOT EXISTS "dataSource" text,
+        ADD COLUMN IF NOT EXISTS "writesToLog" boolean,
+        ADD COLUMN IF NOT EXISTS "dataScale" text,
+        ADD COLUMN IF NOT EXISTS "transferPath" text,
+        ADD COLUMN IF NOT EXISTS "transferEncryption" text,
+        ADD COLUMN IF NOT EXISTS "thirdPartyProcessor" text,
+        ADD COLUMN IF NOT EXISTS "thirdPartyProcessingAgreement" boolean,
+        ADD COLUMN IF NOT EXISTS stored boolean,
+        ADD COLUMN IF NOT EXISTS "storageSystem" text,
+        ADD COLUMN IF NOT EXISTS "storageLocation" text,
+        ADD COLUMN IF NOT EXISTS "storageEncryption" text,
+        ADD COLUMN IF NOT EXISTS "accessControl" text,
+        ADD COLUMN IF NOT EXISTS anonymization text,
+        ADD COLUMN IF NOT EXISTS "systemLogging" text,
+        ADD COLUMN IF NOT EXISTS "bulkExportAllowed" boolean,
+        ADD COLUMN IF NOT EXISTS "deletionMechanism" text,
+        ADD COLUMN IF NOT EXISTS "retentionBasis" text`);
+
+      for (const type of [
+        { code: 'APP', name: 'APP', description: '移动应用产品合规档案' },
+        { code: 'SDK', name: 'SDK', description: 'SDK 产品合规档案' },
+      ]) {
+        await q(`INSERT INTO ${quoted}.product_types
+          (id, code, name, description, status, "createdBy", "createdAt", "updatedAt")
+          VALUES (gen_random_uuid(), :code, :name, :description, 'active', :createdBy, now(), now())
+          ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description,
+          status = 'active', "updatedAt" = now()`, { ...type, createdBy: SYSTEM_SEED_USER_ID });
+      }
+
+      const upsertTemplate = async (input: { seriesKey: string; name: string; description: string; version: string }, questions: typeof BASELINE_COMPLIANCE_QUESTIONS) => {
+        await q(`INSERT INTO ${quoted}.product_questionnaire_templates
+          (id, "seriesKey", name, description, version, status, "createdBy", "publishedAt", "createdAt", "updatedAt")
+          VALUES (gen_random_uuid(), :seriesKey, :name, :description, :version, 'active', :createdBy, now(), now(), now())
+          ON CONFLICT ("seriesKey", version) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description,
+          status = 'active', "publishedAt" = COALESCE(${quoted}.product_questionnaire_templates."publishedAt", now()), "updatedAt" = now()`,
+        { ...input, createdBy: SYSTEM_SEED_USER_ID });
+        const [template] = await sequelize.query<{ id: string }>(
+          `SELECT id FROM ${quoted}.product_questionnaire_templates WHERE "seriesKey" = :seriesKey AND version = :version`,
+          { replacements: { seriesKey: input.seriesKey, version: input.version }, type: QueryTypes.SELECT, transaction },
+        );
+        if (!template) throw new Error(`无法创建产品合规问卷模板 ${input.seriesKey}`);
+        for (const [index, question] of questions.entries()) {
+          await q(`INSERT INTO ${quoted}.product_questions
+            (id, "templateId", "stableKey", title, description, "questionType", required, options, "sortOrder")
+            VALUES (gen_random_uuid(), :templateId, :stableKey, :title, :description, :questionType, :required, CAST(:options AS jsonb), :sortOrder)
+            ON CONFLICT ("templateId", "stableKey") DO UPDATE SET title = EXCLUDED.title,
+            description = EXCLUDED.description, "questionType" = EXCLUDED."questionType",
+            required = EXCLUDED.required, options = EXCLUDED.options, "sortOrder" = EXCLUDED."sortOrder"`,
+          {
+            templateId: template.id,
+            stableKey: question.stableKey,
+            title: question.title,
+            description: question.description,
+            questionType: question.questionType,
+            required: question.required,
+            options: JSON.stringify(question.options),
+            sortOrder: index,
+          });
+        }
+      };
+      await upsertTemplate({
+        seriesKey: 'app-sdk-compliance-baseline',
+        name: 'APP/SDK 合规问卷 - 基础问题',
+        description: '由 APP/SDK 合规档案模板内置的公共基础问题',
+        version: '1.0',
+      }, BASELINE_COMPLIANCE_QUESTIONS);
+      await upsertTemplate({
+        seriesKey: 'app-compliance-checklist',
+        name: 'APP 合规问卷',
+        description: '由 APP 合规档案模板内置的移动应用专项问题',
+        version: '1.0',
+      }, APP_COMPLIANCE_QUESTIONS);
+
+      const [baselineTemplate] = await sequelize.query<{ id: string }>(
+        `SELECT id FROM ${quoted}.product_questionnaire_templates WHERE "seriesKey" = 'app-sdk-compliance-baseline' AND version = '1.0'`,
+        { type: QueryTypes.SELECT, transaction },
+      );
+      const [appTemplate] = await sequelize.query<{ id: string }>(
+        `SELECT id FROM ${quoted}.product_questionnaire_templates WHERE "seriesKey" = 'app-compliance-checklist' AND version = '1.0'`,
+        { type: QueryTypes.SELECT, transaction },
+      );
+      const [appType] = await sequelize.query<{ id: string }>(
+        `SELECT id FROM ${quoted}.product_types WHERE code = 'APP'`,
+        { type: QueryTypes.SELECT, transaction },
+      );
+      const [sdkType] = await sequelize.query<{ id: string }>(
+        `SELECT id FROM ${quoted}.product_types WHERE code = 'SDK'`,
+        { type: QueryTypes.SELECT, transaction },
+      );
+      for (const [productTypeId, templateId] of [
+        [appType?.id, baselineTemplate?.id],
+        [appType?.id, appTemplate?.id],
+        [sdkType?.id, baselineTemplate?.id],
+      ]) {
+        if (!productTypeId || !templateId) throw new Error('APP/SDK 产品合规模板规则初始化失败');
+        await q(`INSERT INTO ${quoted}.product_type_questionnaire_rules
+          (id, "productTypeId", "templateId", required, active, "createdBy", "createdAt")
+          VALUES (gen_random_uuid(), :productTypeId, :templateId, true, true, :createdBy, now())
+          ON CONFLICT ("productTypeId", "templateId") DO UPDATE SET required = true, active = true`,
+        { productTypeId, templateId, createdBy: SYSTEM_SEED_USER_ID });
+      }
+
+      for (const [index, item] of PERSONAL_DATA_CATALOG_ITEMS.entries()) {
+        await q(`INSERT INTO ${quoted}.product_data_catalog_items
+          (id, "stableKey", "dataSubject", category, name, sensitive, required, status, "sortOrder", "createdBy", "createdAt", "updatedAt")
+          VALUES (gen_random_uuid(), :stableKey, :dataSubject, :category, :name, :sensitive, :required, 'active', :sortOrder, :createdBy, now(), now())
+          ON CONFLICT ("stableKey") DO UPDATE SET "dataSubject" = EXCLUDED."dataSubject",
+          category = EXCLUDED.category, name = EXCLUDED.name, sensitive = EXCLUDED.sensitive,
+          required = EXCLUDED.required, status = 'active', "sortOrder" = EXCLUDED."sortOrder", "updatedAt" = now()`,
+        { ...item, sortOrder: index, createdBy: SYSTEM_SEED_USER_ID });
+      }
+    },
+    down: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      const [{ count }] = await sequelize.query<{ count: number }>(
+        `SELECT count(*)::int AS count FROM ${quoted}.products`,
+        { type: QueryTypes.SELECT, transaction },
+      );
+      if (Number(count) > 0) throw new Error('已存在产品合规业务数据，不能安全回滚 APP/SDK 档案模板迁移');
+      for (const [table, constraint] of [
+        ['product_data_items', 'product_data_items_catalog_fk'],
+      ]) await sequelize.query(`ALTER TABLE ${quoted}.${table} DROP CONSTRAINT IF EXISTS ${constraint}`, { transaction });
+      for (const table of [
+        'product_third_party_assessment_answers',
+        'product_third_party_assessments',
+        'product_third_party_services',
+        'product_data_catalog_items',
+      ]) await sequelize.query(`DROP TABLE IF EXISTS ${quoted}.${table}`, { transaction });
+      for (const [table, columns] of [
+        ['product_platform_permissions', ['operatingSystem']],
+        ['product_data_items', ['catalogItemId', 'purpose', 'necessity', 'processingMethod', 'operatingSystems']],
+        ['product_processing_activities', ['dataSource', 'writesToLog', 'dataScale', 'transferPath', 'transferEncryption', 'thirdPartyProcessor', 'thirdPartyProcessingAgreement', 'stored', 'storageSystem', 'storageLocation', 'storageEncryption', 'accessControl', 'anonymization', 'systemLogging', 'bulkExportAllowed', 'deletionMechanism', 'retentionBasis']],
+      ] as const) {
+        for (const column of columns) await sequelize.query(`ALTER TABLE ${quoted}.${table} DROP COLUMN IF EXISTS "${column}"`, { transaction });
+      }
     },
   },
 ];

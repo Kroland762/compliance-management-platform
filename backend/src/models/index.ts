@@ -51,10 +51,14 @@ export {
   ProductDossierQuestionnaire,
   ProductDossierAnswer,
   ProductPlatformPermission,
+  ProductDataCatalogItem,
   ProductDataItem,
   ProductProcessingActivity,
   ProductPermissionDataItem,
   ProductProcessingDataItem,
+  ProductThirdPartyService,
+  ProductThirdPartyAssessment,
+  ProductThirdPartyAssessmentAnswer,
 } from './ProductCompliance';
 export type {
   ProductRecordStatus,

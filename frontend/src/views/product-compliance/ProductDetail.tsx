@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Alert, Button, Card, DatePicker, Descriptions, Form, Input, message, Modal, Select, Space, Steps, Table, Tag, Typography } from 'antd';
+import { Alert, Breadcrumb, Button, Card, ConfigProvider, DatePicker, Descriptions, Empty, Form, Input, message, Modal, Result, Select, Space, Spin, Steps, Table, Tag, Typography } from 'antd';
 import { ArrowLeftOutlined, PlusOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -9,17 +9,23 @@ import { getApiErrorMessage } from '../../utils/error';
 import { platformOptions, StatusTag } from './labels';
 import { LookupSelect } from '../../components/lookups';
 
+const accessibleTextTheme = { token: { colorTextSecondary: '#636366', colorTextTertiary: '#636366', colorTextDescription: '#636366', colorTextPlaceholder: '#636366' } };
+
 export default function ProductDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const can = useAuthStore((state) => state.hasPermission);
   const [product, setProduct] = useState<any>();
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState(0);
   const [form] = Form.useForm();
   const load = async () => {
+    setLoading(true); setLoadError('');
     try { const response: any = await apiClient.get(`/product-compliance/products/${id}`); setProduct(response.data); }
-    catch (error) { message.error(getApiErrorMessage(error, '加载产品详情失败')); }
+    catch (error) { setProduct(undefined); setLoadError(getApiErrorMessage(error, '加载产品详情失败')); }
+    finally { setLoading(false); }
   };
   useEffect(() => { load(); }, [id]);
 
@@ -34,12 +40,19 @@ export default function ProductDetail() {
       navigate(`/product-compliance/dossiers/${response.data.dossier.id}`);
     } catch (error: any) { if (!error?.errorFields) message.error(getApiErrorMessage(error, '创建产品版本失败')); }
   };
-  if (!product) return null;
-  return <div>
-    <Space style={{ marginBottom: 16 }}><Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/product-compliance/products')}>返回</Button></Space>
+  const openVersionModal = () => { form.setFieldsValue({ productTypeId: product.defaultProductTypeId, complianceChanged: false }); setOpen(true); };
+  const breadcrumb = <Breadcrumb style={{ marginBottom: 16 }} items={[
+    { title: <a onClick={() => navigate('/product-compliance/products')}>产品台账</a> },
+    { title: product?.name || '产品详情' },
+  ]} />;
+  if (loading && !product) return <ConfigProvider theme={accessibleTextTheme}><div>{breadcrumb}<Card><div style={{ padding: 48, textAlign: 'center' }}><Space direction="vertical"><Spin /><Typography.Text type="secondary">正在加载产品详情...</Typography.Text></Space></div></Card></div></ConfigProvider>;
+  if (loadError || !product) return <ConfigProvider theme={accessibleTextTheme}><div>{breadcrumb}<Card><Result status="error" title="无法加载产品详情" subTitle={loadError || '产品不存在或已无法访问'} extra={<Space><Button onClick={() => navigate('/product-compliance/products')}>返回产品台账</Button><Button type="primary" onClick={load}>重试</Button></Space>} /></Card></div></ConfigProvider>;
+  return <ConfigProvider theme={accessibleTextTheme}><div>
+    {breadcrumb}
+    <Space style={{ marginBottom: 16 }}><Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/product-compliance/products')}>返回产品台账</Button></Space>
     <Space style={{ width: '100%', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
       <div><Typography.Title level={3} style={{ margin: 0 }}>{product.name}</Typography.Title><Typography.Text type="secondary">{product.code}</Typography.Text></div>
-      {product.status === 'active' && can('products', 'update') ? <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.setFieldsValue({ productTypeId: product.defaultProductTypeId, complianceChanged: false }); setOpen(true); }}>创建产品版本</Button> : null}
+      {product.status === 'active' && can('products', 'update') ? <Button type="primary" icon={<PlusOutlined />} onClick={openVersionModal}>创建产品版本</Button> : null}
     </Space>
     <Card style={{ marginBottom: 20 }}><Descriptions column={2} items={[
       { key: 'type', label: '默认产品类型', children: product.defaultProductType?.name },
@@ -47,7 +60,7 @@ export default function ProductDetail() {
       { key: 'description', label: '产品说明', children: product.description || '—', span: 2 },
     ]} /></Card>
     <Typography.Title level={4}>版本时间线</Typography.Title>
-    <Table rowKey="id" dataSource={product.versions || []} pagination={false} columns={[
+    <Table rowKey="id" dataSource={product.versions || []} pagination={false} locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚未创建产品版本。创建首个版本后即可填写合规档案。">{product.status === 'active' && can('products', 'update') ? <Button type="primary" icon={<PlusOutlined />} onClick={openVersionModal}>创建首个版本</Button> : null}</Empty> }} columns={[
       { title: '版本', dataIndex: 'version', width: 130 },
       { title: '适用平台', dataIndex: 'platforms', render: (values: string[]) => values?.map((value) => <Tag key={value}>{value}</Tag>) },
       { title: '产品类型', render: (_: any, row: any) => row.productType?.name || '—', width: 140 },
@@ -74,5 +87,5 @@ export default function ProductDetail() {
         {step === 2 ? <Alert type="info" showIcon message="系统将按当前产品类型规则重新匹配问卷" description="若存在上一版已确认档案，将复制权限、信息类型、ROPA，并按稳定题目标识继承答案。合规结论不会直接继承，新档案仍需重新提交复核。" /> : null}
       </Form>
     </Modal>
-  </div>;
+  </div></ConfigProvider>;
 }

@@ -1,9 +1,12 @@
+import ExcelJS from 'exceljs';
 import { Op, type Transaction } from 'sequelize';
 import sequelize from '../config/database';
+import { THIRD_PARTY_ASSESSMENT_ITEMS } from '../config/product-compliance-template-seed';
 import {
   OperationType,
   Product,
   ProductComplianceDossier,
+  ProductDataCatalogItem,
   ProductDataItem,
   ProductDossierAnswer,
   ProductDossierQuestionnaire,
@@ -13,6 +16,9 @@ import {
   ProductProcessingDataItem,
   ProductQuestion,
   ProductQuestionnaireTemplate,
+  ProductThirdPartyAssessment,
+  ProductThirdPartyAssessmentAnswer,
+  ProductThirdPartyService,
   ProductType,
   ProductTypeQuestionnaireRule,
   ProductVersion,
@@ -61,9 +67,33 @@ function cleanStrings(value: unknown): string[] {
   return [...new Set(value.map((item) => String(item || '').trim()).filter(Boolean))];
 }
 
+function optionalText(value: unknown, max = 4000): string | null {
+  const result = String(value || '').trim();
+  if (!result) return null;
+  return result.length > max ? result.slice(0, max) : result;
+}
+
+function optionalBoolean(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null;
+}
+
 function answerPresent(response: unknown): boolean {
   if (response === null || response === undefined || response === '') return false;
   return !Array.isArray(response) || response.length > 0;
+}
+
+function displayValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'boolean') return value ? '是' : '否';
+  if (Array.isArray(value)) return value.map(displayValue).filter(Boolean).join('；');
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+function styleExportSheet(sheet: ExcelJS.Worksheet): void {
+  sheet.getRow(1).font = { bold: true };
+  sheet.views = [{ state: 'frozen', ySplit: 1 }];
+  if (sheet.columnCount) sheet.autoFilter = { from: 'A1', to: sheet.getRow(1).getCell(sheet.columnCount).address };
 }
 
 class ProductComplianceService {
@@ -229,10 +259,12 @@ class ProductComplianceService {
   }
 
   private async cloneDossierSections(sourceId: string, targetId: string, transaction: Transaction) {
-    const [permissions, dataItems, activities] = await Promise.all([
+    const [permissions, dataItems, activities, thirdPartyServices, thirdPartyAssessments] = await Promise.all([
       ProductPlatformPermission.findAll({ where: { dossierId: sourceId }, transaction }),
       ProductDataItem.findAll({ where: { dossierId: sourceId }, transaction }),
       ProductProcessingActivity.findAll({ where: { dossierId: sourceId }, transaction }),
+      ProductThirdPartyService.findAll({ where: { dossierId: sourceId }, transaction }),
+      ProductThirdPartyAssessment.findAll({ where: { dossierId: sourceId }, include: [{ model: ProductThirdPartyAssessmentAnswer, as: 'answers' }], transaction }),
     ]);
     const dataMap = new Map<string, string>();
     for (const item of dataItems) {
@@ -248,6 +280,23 @@ class ProductComplianceService {
     for (const activity of activities) {
       const copy = await ProductProcessingActivity.create({ ...(activity.toJSON() as any), id: undefined, dossierId: targetId, inheritedFromActivityId: activity.id }, { transaction });
       activityMap.set(activity.id, copy.id);
+    }
+    const serviceMap = new Map<string, string>();
+    for (const service of thirdPartyServices) {
+      const copy = await ProductThirdPartyService.create({ ...(service.toJSON() as any), id: undefined, dossierId: targetId, inheritedFromServiceId: service.id }, { transaction });
+      serviceMap.set(service.id, copy.id);
+    }
+    for (const assessment of thirdPartyAssessments as Array<ProductThirdPartyAssessment & { answers?: ProductThirdPartyAssessmentAnswer[] }>) {
+      const copy = await ProductThirdPartyAssessment.create({
+        ...(assessment.toJSON() as any),
+        id: undefined,
+        dossierId: targetId,
+        serviceId: assessment.serviceId ? serviceMap.get(assessment.serviceId) || null : null,
+        inheritedFromAssessmentId: assessment.id,
+      }, { transaction });
+      for (const answer of (assessment as any).answers || []) {
+        await ProductThirdPartyAssessmentAnswer.create({ ...(answer.toJSON() as any), id: undefined, assessmentId: copy.id }, { transaction });
+      }
     }
     const [permissionLinks, activityLinks] = await Promise.all([
       ProductPermissionDataItem.findAll({ where: { permissionId: { [Op.in]: [...permissionMap.keys()] } }, transaction }),
@@ -347,6 +396,8 @@ class ProductComplianceService {
       { model: ProductPlatformPermission, as: 'platformPermissions', include: [{ model: ProductDataItem, as: 'dataItems', through: { attributes: [] } }] },
       { model: ProductDataItem, as: 'dataItems' },
       { model: ProductProcessingActivity, as: 'processingActivities', include: [{ model: ProductDataItem, as: 'dataItems', through: { attributes: [] } }] },
+      { model: ProductThirdPartyService, as: 'thirdPartyServices' },
+      { model: ProductThirdPartyAssessment, as: 'thirdPartyAssessments', include: [{ model: ProductThirdPartyService, as: 'service' }, { model: ProductThirdPartyAssessmentAnswer, as: 'answers' }] },
     ];
   }
 
@@ -391,16 +442,22 @@ class ProductComplianceService {
     return dossier;
   }
 
-  async saveInventory(id: string, input: { permissionsDeclared: boolean; personalDataDeclared: boolean; permissions: any[]; dataItems: any[]; activities: any[] }, expectedLockVersion: number, user: RequestUser) {
+  async saveInventory(id: string, input: { permissionsDeclared: boolean; personalDataDeclared: boolean; permissions: any[]; dataItems: any[]; activities: any[]; thirdPartyServices?: any[]; thirdPartyAssessments?: any[] }, expectedLockVersion: number, user: RequestUser) {
     const dossier = await sequelize.transaction(async (transaction) => {
       const locked = await this.mutableDossier(id, user, expectedLockVersion, transaction);
       const permissions = Array.isArray(input.permissions) ? input.permissions : [];
       const dataItems = Array.isArray(input.dataItems) ? input.dataItems : [];
       const activities = Array.isArray(input.activities) ? input.activities : [];
+      const thirdPartyServices = Array.isArray(input.thirdPartyServices) ? input.thirdPartyServices : [];
+      const thirdPartyAssessments = Array.isArray(input.thirdPartyAssessments) ? input.thirdPartyAssessments : [];
       if (input.permissionsDeclared === false && permissions.length) throw new AppError(400, 'VALIDATION_ERROR', '声明未申请平台权限时不能保留权限项');
-      if (input.personalDataDeclared === false && (dataItems.length || activities.length)) throw new AppError(400, 'VALIDATION_ERROR', '声明不处理个人数据时不能保留信息类型或ROPA');
+      if (input.personalDataDeclared === false && (dataItems.length || activities.length || thirdPartyServices.length || thirdPartyAssessments.length)) throw new AppError(400, 'VALIDATION_ERROR', '声明不处理个人数据时不能保留信息类型、ROPA或第三方清单');
       await ProductPermissionDataItem.destroy({ where: { permissionId: { [Op.in]: (await ProductPlatformPermission.findAll({ where: { dossierId: id }, attributes: ['id'], transaction })).map((item) => item.id) } }, transaction });
       await ProductProcessingDataItem.destroy({ where: { activityId: { [Op.in]: (await ProductProcessingActivity.findAll({ where: { dossierId: id }, attributes: ['id'], transaction })).map((item) => item.id) } }, transaction });
+      const existingAssessmentIds = (await ProductThirdPartyAssessment.findAll({ where: { dossierId: id }, attributes: ['id'], transaction })).map((item) => item.id);
+      if (existingAssessmentIds.length) await ProductThirdPartyAssessmentAnswer.destroy({ where: { assessmentId: { [Op.in]: existingAssessmentIds } }, transaction });
+      await ProductThirdPartyAssessment.destroy({ where: { dossierId: id }, transaction });
+      await ProductThirdPartyService.destroy({ where: { dossierId: id }, transaction });
       await ProductPlatformPermission.destroy({ where: { dossierId: id }, transaction });
       await ProductProcessingActivity.destroy({ where: { dossierId: id }, transaction });
       await ProductDataItem.destroy({ where: { dossierId: id }, transaction });
@@ -408,13 +465,14 @@ class ProductComplianceService {
       for (const [index, item] of dataItems.entries()) {
         const created = await ProductDataItem.create({
           dossierId: id, name: requiredText(item.name, '信息名称', 160), category: requiredText(item.category, '信息类别', 120), dataSubjectCategories: cleanStrings(item.dataSubjectCategories), source: item.source?.trim() || null,
+          catalogItemId: item.catalogItemId || null, purpose: optionalText(item.purpose), necessity: optionalText(item.necessity, 40), processingMethod: optionalText(item.processingMethod, 160), operatingSystems: cleanStrings(item.operatingSystems),
           sensitive: Boolean(item.sensitive), required: Boolean(item.required), notes: item.notes?.trim() || null,
           inheritedFromDataItemId: item.inheritedFromDataItemId || null, sortOrder: index,
         }, { transaction });
         clientDataMap.set(String(item.clientId || item.id || index), created.id);
       }
       for (const [index, item] of permissions.entries()) {
-        const permission = await ProductPlatformPermission.create({ dossierId: id, platform: requiredText(item.platform, '平台', 50), permissionName: requiredText(item.permissionName, '权限名称', 160), purpose: requiredText(item.purpose, '权限用途', 4000), required: Boolean(item.required), inheritedFromPermissionId: item.inheritedFromPermissionId || null, sortOrder: index }, { transaction });
+        const permission = await ProductPlatformPermission.create({ dossierId: id, platform: requiredText(item.platform, '平台', 50), operatingSystem: optionalText(item.operatingSystem, 80), permissionName: requiredText(item.permissionName, '权限名称', 160), purpose: requiredText(item.purpose, '权限用途', 4000), required: Boolean(item.required), inheritedFromPermissionId: item.inheritedFromPermissionId || null, sortOrder: index }, { transaction });
         const linkedIds = cleanStrings(item.dataItemIds);
         if (linkedIds.some((clientId) => !clientDataMap.has(clientId))) throw new AppError(400, 'VALIDATION_ERROR', '平台权限关联了不存在的信息类型');
         await ProductPermissionDataItem.bulkCreate(linkedIds.map((clientId) => ({ permissionId: permission.id, dataItemId: clientDataMap.get(clientId)! })), { transaction });
@@ -427,14 +485,62 @@ class ProductComplianceService {
         const activity = await ProductProcessingActivity.create({
           dossierId: id, name: requiredText(item.name, '处理活动名称', 200), purpose: requiredText(item.purpose, '处理目的', 4000), legalBasis: requiredText(item.legalBasis, '法律依据', 160), controllerRole: item.controllerRole || 'controller',
           dataSubjectCategories: cleanStrings(item.dataSubjectCategories), recipientCategories: cleanStrings(item.recipientCategories), internationalTransfer: Boolean(item.internationalTransfer), transferCountries, transferSafeguards: item.transferSafeguards?.trim() || null,
-          retentionPeriod: requiredText(item.retentionPeriod, '删除或保存期限', 4000), securityMeasures: requiredText(item.securityMeasures, '安全措施', 4000), responsibleParty: requiredText(item.responsibleParty, '责任主体', 200), inheritedFromActivityId: item.inheritedFromActivityId || null, sortOrder: index,
+          dataSource: optionalText(item.dataSource), writesToLog: optionalBoolean(item.writesToLog), dataScale: optionalText(item.dataScale), transferPath: optionalText(item.transferPath), transferEncryption: optionalText(item.transferEncryption), thirdPartyProcessor: optionalText(item.thirdPartyProcessor),
+          thirdPartyProcessingAgreement: optionalBoolean(item.thirdPartyProcessingAgreement), stored: optionalBoolean(item.stored), storageSystem: optionalText(item.storageSystem), storageLocation: optionalText(item.storageLocation), storageEncryption: optionalText(item.storageEncryption), accessControl: optionalText(item.accessControl),
+          anonymization: optionalText(item.anonymization), systemLogging: optionalText(item.systemLogging), bulkExportAllowed: optionalBoolean(item.bulkExportAllowed),
+          retentionPeriod: requiredText(item.retentionPeriod, '删除或保存期限', 4000), deletionMechanism: optionalText(item.deletionMechanism), retentionBasis: optionalText(item.retentionBasis), securityMeasures: requiredText(item.securityMeasures, '安全措施', 4000), responsibleParty: requiredText(item.responsibleParty, '责任主体', 200), inheritedFromActivityId: item.inheritedFromActivityId || null, sortOrder: index,
         }, { transaction });
         await ProductProcessingDataItem.bulkCreate(linkedIds.map((clientId) => ({ activityId: activity.id, dataItemId: clientDataMap.get(clientId)! })), { transaction });
+      }
+      const clientServiceMap = new Map<string, string>();
+      for (const [index, item] of thirdPartyServices.entries()) {
+        const service = await ProductThirdPartyService.create({
+          dossierId: id,
+          serviceName: requiredText(item.serviceName, '第三方服务名称', 200),
+          purpose: requiredText(item.purpose, '第三方使用目的', 4000),
+          sharedFields: cleanStrings(item.sharedFields),
+          thirdPartyName: optionalText(item.thirdPartyName, 200),
+          securityMethod: optionalText(item.securityMethod),
+          privacyPolicyUrl: optionalText(item.privacyPolicyUrl),
+          assessmentPassed: optionalBoolean(item.assessmentPassed),
+          assessmentRecord: optionalText(item.assessmentRecord),
+          inheritedFromServiceId: item.inheritedFromServiceId || null,
+          sortOrder: index,
+        }, { transaction });
+        clientServiceMap.set(String(item.clientId || item.id || index), service.id);
+      }
+      for (const [index, item] of thirdPartyAssessments.entries()) {
+        const serviceId = item.serviceClientId || item.serviceId;
+        if (serviceId && !clientServiceMap.has(String(serviceId))) throw new AppError(400, 'VALIDATION_ERROR', '第三方安全评审关联了不存在的第三方服务');
+        const assessment = await ProductThirdPartyAssessment.create({
+          dossierId: id,
+          serviceId: serviceId ? clientServiceMap.get(String(serviceId)) || null : null,
+          templateKey: optionalText(item.templateKey, 120) || 'third-party-security-v1',
+          title: requiredText(item.title || '第三方信息安全和隐私合规自检表', '第三方评审标题', 200),
+          inheritedFromAssessmentId: item.inheritedFromAssessmentId || null,
+          sortOrder: index,
+        }, { transaction });
+        const answers = Array.isArray(item.answers) && item.answers.length
+          ? item.answers
+          : THIRD_PARTY_ASSESSMENT_ITEMS.map((answer) => ({ ...answer, item: answer.title, answer: null, explanation: null, evidence: null }));
+        for (const [answerIndex, answer] of answers.entries()) {
+          await ProductThirdPartyAssessmentAnswer.create({
+            assessmentId: assessment.id,
+            stableKey: requiredText(answer.stableKey || `third_party_${answerIndex + 1}`, '第三方评审题目标识', 120),
+            section: optionalText(answer.section, 200),
+            sequence: optionalText(answer.sequence, 40),
+            item: requiredText(answer.item || answer.title, '第三方评估项', 4000),
+            answer: optionalText(answer.answer, 40),
+            explanation: optionalText(answer.explanation),
+            evidence: optionalText(answer.evidence),
+            sortOrder: answerIndex,
+          }, { transaction });
+        }
       }
       await locked.update({ permissionsDeclared: input.permissionsDeclared, personalDataDeclared: input.personalDataDeclared, lockVersion: locked.lockVersion + 1 }, { transaction });
       return locked;
     });
-    await this.log(user, 'product_dossier', id, '保存平台权限、信息类型和ROPA');
+    await this.log(user, 'product_dossier', id, '保存平台权限、信息类型、ROPA和第三方清单');
     return dossier;
   }
 
@@ -474,6 +580,8 @@ class ProductComplianceService {
     if (dossier.personalDataDeclared === null) errors.push('请明确是否处理个人数据');
     if (dossier.personalDataDeclared === true && !(dossier as any).dataItems?.length) errors.push('已声明处理个人数据，请至少填写一种信息类型');
     if (dossier.personalDataDeclared === true && !(dossier as any).processingActivities?.length) errors.push('已声明处理个人数据，请至少填写一项ROPA处理活动');
+    if ((dossier as any).thirdPartyServices?.some((service: any) => service.assessmentPassed === null || service.assessmentPassed === undefined)) errors.push('第三方清单需明确是否通过第三方评审');
+    if ((dossier as any).thirdPartyServices?.length && !(dossier as any).thirdPartyAssessments?.length) errors.push('已填写第三方清单，请至少保留一份第三方安全评审记录');
     if (!dossier.proposedConclusion || dossier.proposedConclusion === 'not_assessed') errors.push('请填写拟定合规结论');
     if (errors.length) throw new AppError(400, 'DOSSIER_INCOMPLETE', '档案尚未填写完整', { errors });
     return dossier;
@@ -581,11 +689,223 @@ class ProductComplianceService {
       permissions: (dossier.platformPermissions || []).map((item: any) => ({ id: item.id, inherited: Boolean(item.inheritedFromPermissionId), name: item.permissionName })),
       dataItems: (dossier.dataItems || []).map((item: any) => ({ id: item.id, inherited: Boolean(item.inheritedFromDataItemId), name: item.name })),
       activities: (dossier.processingActivities || []).map((item: any) => ({ id: item.id, inherited: Boolean(item.inheritedFromActivityId), name: item.name })),
+      thirdPartyServices: (dossier.thirdPartyServices || []).map((item: any) => ({ id: item.id, inherited: Boolean(item.inheritedFromServiceId), name: item.serviceName })),
+      thirdPartyAssessments: (dossier.thirdPartyAssessments || []).map((item: any) => ({ id: item.id, inherited: Boolean(item.inheritedFromAssessmentId), name: item.title })),
     };
   }
 
   async listProductTypes(includeRetired = false) {
     return ProductType.findAll({ where: includeRetired ? {} : { status: 'active' }, order: [['status', 'ASC'], ['name', 'ASC']] });
+  }
+
+  async listDataCatalog(includeRetired = false) {
+    return ProductDataCatalogItem.findAll({ where: includeRetired ? {} : { status: 'active' }, order: [['sortOrder', 'ASC'], ['category', 'ASC'], ['name', 'ASC']] });
+  }
+
+  async exportDossier(id: string, user: RequestUser) {
+    const dossier = await this.getDossier(id, user) as any;
+    if (!dossier) throw new AppError(404, 'NOT_FOUND', '产品合规档案不存在');
+    const productTypeCode = dossier.productVersion?.productType?.code || '';
+    const prefix = productTypeCode === 'APP' ? 'APP' : 'SDK';
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = user.username || user.userId;
+    workbook.created = new Date();
+
+    const overview = workbook.addWorksheet('导出信息');
+    overview.addRows([
+      ['产品', dossier.productVersion?.product?.name || ''],
+      ['版本', dossier.productVersion?.version || ''],
+      ['产品类型', dossier.productVersion?.productType?.name || ''],
+      ['档案修订', `R${dossier.revisionNumber}`],
+      ['流程状态', dossier.lifecycleStatus],
+      ['确认结论', dossier.complianceConclusion],
+      ['导出时间', new Date().toISOString()],
+      ['数据来源', '系统产品合规模块只读导出'],
+    ]);
+    overview.getColumn(1).width = 20;
+    overview.getColumn(2).width = 80;
+
+    const questionnaireSheet = workbook.addWorksheet('合规问卷 - 基础问题');
+    questionnaireSheet.columns = [
+      { header: '号', key: 'no', width: 10 },
+      { header: '合规评审问题', key: 'question', width: 60 },
+      { header: '需求方回答反馈 & 说明', key: 'answer', width: 60 },
+      { header: '安全合规填写', key: 'notes', width: 40 },
+    ];
+    const appSheet = productTypeCode === 'APP' ? workbook.addWorksheet('APP合规问卷') : null;
+    if (appSheet) {
+      appSheet.columns = [
+        { header: '领域', key: 'domain', width: 32 },
+        { header: '安全合规要求 Checklist', key: 'question', width: 70 },
+        { header: '请勾选是否满足', key: 'answer', width: 18 },
+        { header: '备注', key: 'notes', width: 42 },
+      ];
+    }
+    for (const assignment of dossier.questionnaires || []) {
+      const snapshot = assignment.templateSnapshot || {};
+      const target = snapshot.seriesKey === 'app-compliance-checklist' && appSheet ? appSheet : questionnaireSheet;
+      for (const answer of assignment.answers || []) {
+        const question = answer.question || {};
+        target.addRow({
+          no: question.stableKey || answer.stableQuestionKey,
+          domain: question.description?.split('\n')[0] || '',
+          question: question.title || '',
+          answer: displayValue(answer.response),
+          notes: question.description || '',
+        });
+      }
+    }
+    styleExportSheet(questionnaireSheet);
+    if (appSheet) styleExportSheet(appSheet);
+
+    const permissionSheet = workbook.addWorksheet(`${prefix}信息收集&权限基本信息`);
+    permissionSheet.columns = [
+      { header: '类型', key: 'kind', width: 14 },
+      { header: '个人信息类型/权限类型', key: 'name', width: 30 },
+      { header: '目的和用途', key: 'purpose', width: 42 },
+      { header: '必要或可选', key: 'necessity', width: 16 },
+      { header: '处理方式', key: 'method', width: 24 },
+      { header: '操作系统', key: 'os', width: 22 },
+    ];
+    for (const item of dossier.dataItems || []) permissionSheet.addRow({
+      kind: '个人信息',
+      name: item.name,
+      purpose: item.purpose || '',
+      necessity: item.necessity || (item.required ? '必要' : '可选'),
+      method: item.processingMethod || '',
+      os: displayValue(item.operatingSystems),
+    });
+    for (const permission of dossier.platformPermissions || []) permissionSheet.addRow({
+      kind: '权限',
+      name: permission.permissionName,
+      purpose: permission.purpose,
+      necessity: permission.required ? '必选' : '可选',
+      method: '',
+      os: permission.operatingSystem || permission.platform,
+    });
+    styleExportSheet(permissionSheet);
+
+    const dataSheet = workbook.addWorksheet('个人信息收集情况');
+    dataSheet.columns = [
+      { header: '是否收集', key: 'collected', width: 12 },
+      { header: '个人信息主体', key: 'subject', width: 24 },
+      { header: '信息分类', key: 'category', width: 24 },
+      { header: '具体信息项', key: 'name', width: 28 },
+      { header: '是否敏感', key: 'sensitive', width: 12 },
+      { header: '用途', key: 'purpose', width: 40 },
+      { header: '备注', key: 'notes', width: 36 },
+    ];
+    for (const item of dossier.dataItems || []) dataSheet.addRow({
+      collected: '是',
+      subject: displayValue(item.dataSubjectCategories),
+      category: item.category,
+      name: item.name,
+      sensitive: item.sensitive ? '是' : '否',
+      purpose: item.purpose || '',
+      notes: item.notes || '',
+    });
+    styleExportSheet(dataSheet);
+
+    const ropaSheet = workbook.addWorksheet('RoPA(数据处理记录)');
+    ropaSheet.columns = [
+      { header: '数据主体', key: 'subjects', width: 24 },
+      { header: '数据类型', key: 'types', width: 30 },
+      { header: '字段', key: 'fields', width: 30 },
+      { header: '属于个人敏感数据', key: 'sensitive', width: 18 },
+      { header: '数据来源/收集方式', key: 'source', width: 32 },
+      { header: '个人数据收集/处理合法依据？', key: 'basis', width: 30 },
+      { header: '个人数据处理角色', key: 'role', width: 24 },
+      { header: '数据收集/处理目的', key: 'purpose', width: 42 },
+      { header: '是否写入日志', key: 'writesToLog', width: 16 },
+      { header: '数据规模', key: 'scale', width: 24 },
+      { header: '数据传输路径', key: 'transferPath', width: 42 },
+      { header: '数据传输加密措施', key: 'transferEncryption', width: 36 },
+      { header: '第三方名称', key: 'thirdParty', width: 24 },
+      { header: '是否签署数据处理协议', key: 'agreement', width: 20 },
+      { header: '数据是否存储', key: 'stored', width: 16 },
+      { header: '数据存储系统/第三方平台等', key: 'storageSystem', width: 32 },
+      { header: '数据存储国家/区域', key: 'storageLocation', width: 24 },
+      { header: '数据存储加密措施', key: 'storageEncryption', width: 32 },
+      { header: '访问控制/权限控制措施', key: 'accessControl', width: 36 },
+      { header: '数据脱敏/匿名化控制措施', key: 'anonymization', width: 36 },
+      { header: '系统是否记录日志？', key: 'logging', width: 24 },
+      { header: '允许批量数据下载/导出？', key: 'bulkExport', width: 24 },
+      { header: '数据留存期限？', key: 'retention', width: 28 },
+      { header: '数据删除机制？', key: 'deletion', width: 28 },
+      { header: '数据留存原因/依据', key: 'retentionBasis', width: 28 },
+    ];
+    for (const activity of dossier.processingActivities || []) ropaSheet.addRow({
+      subjects: displayValue(activity.dataSubjectCategories),
+      types: (activity.dataItems || []).map((item: any) => item.category).join('；'),
+      fields: (activity.dataItems || []).map((item: any) => item.name).join('；'),
+      sensitive: (activity.dataItems || []).some((item: any) => item.sensitive) ? '是' : '否',
+      source: activity.dataSource || '',
+      basis: activity.legalBasis,
+      role: activity.controllerRole,
+      purpose: activity.purpose,
+      writesToLog: displayValue(activity.writesToLog),
+      scale: activity.dataScale || '',
+      transferPath: activity.transferPath || '',
+      transferEncryption: activity.transferEncryption || '',
+      thirdParty: activity.thirdPartyProcessor || '',
+      agreement: displayValue(activity.thirdPartyProcessingAgreement),
+      stored: displayValue(activity.stored),
+      storageSystem: activity.storageSystem || '',
+      storageLocation: activity.storageLocation || '',
+      storageEncryption: activity.storageEncryption || '',
+      accessControl: activity.accessControl || '',
+      anonymization: activity.anonymization || '',
+      logging: activity.systemLogging || '',
+      bulkExport: displayValue(activity.bulkExportAllowed),
+      retention: activity.retentionPeriod,
+      deletion: activity.deletionMechanism || '',
+      retentionBasis: activity.retentionBasis || '',
+    });
+    styleExportSheet(ropaSheet);
+
+    const thirdPartySheet = workbook.addWorksheet('第三方清单');
+    thirdPartySheet.columns = [
+      { header: '服务名称', key: 'serviceName', width: 30 },
+      { header: '使用目的和用途', key: 'purpose', width: 42 },
+      { header: '信息共享字段', key: 'sharedFields', width: 36 },
+      { header: '第三方名称', key: 'thirdPartyName', width: 28 },
+      { header: '安全处理方式', key: 'securityMethod', width: 32 },
+      { header: '第三方隐私政策链接', key: 'privacyPolicyUrl', width: 36 },
+      { header: '是否通过第三方评审', key: 'assessmentPassed', width: 20 },
+      { header: '第三方安全评审记录', key: 'assessmentRecord', width: 36 },
+    ];
+    for (const service of dossier.thirdPartyServices || []) thirdPartySheet.addRow({
+      serviceName: service.serviceName,
+      purpose: service.purpose,
+      sharedFields: displayValue(service.sharedFields),
+      thirdPartyName: service.thirdPartyName || '',
+      securityMethod: service.securityMethod || '',
+      privacyPolicyUrl: service.privacyPolicyUrl || '',
+      assessmentPassed: displayValue(service.assessmentPassed),
+      assessmentRecord: service.assessmentRecord || '',
+    });
+    styleExportSheet(thirdPartySheet);
+
+    const assessmentSheet = workbook.addWorksheet('第三方安全评审模板');
+    assessmentSheet.columns = [
+      { header: '第三方服务', key: 'service', width: 26 },
+      { header: '序号', key: 'sequence', width: 10 },
+      { header: '评估项', key: 'item', width: 72 },
+      { header: '回答（是/否/不适用）', key: 'answer', width: 20 },
+      { header: '补充/解释说明', key: 'explanation', width: 42 },
+      { header: '相关文件/证明材料', key: 'evidence', width: 36 },
+    ];
+    for (const assessment of dossier.thirdPartyAssessments || []) for (const answer of assessment.answers || []) assessmentSheet.addRow({
+      service: assessment.service?.serviceName || '',
+      sequence: answer.sequence || '',
+      item: answer.item,
+      answer: answer.answer || '',
+      explanation: answer.explanation || '',
+      evidence: answer.evidence || '',
+    });
+    styleExportSheet(assessmentSheet);
+
+    return Buffer.from(await workbook.xlsx.writeBuffer());
   }
 
   async createProductType(input: any, user: RequestUser) {

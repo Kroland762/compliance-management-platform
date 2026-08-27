@@ -41,6 +41,12 @@ router.get('/dossiers/:id', authorize('product_dossiers', 'read'), asyncHandler(
 router.get('/dossiers/:id/inheritance-diff', authorize('product_dossiers', 'read'), asyncHandler(async (req, res) => {
   res.json({ success: true, data: await productComplianceService.inheritanceDiff(req.params.id, req.user!) });
 }));
+router.get('/dossiers/:id/export.xlsx', authorize('product_dossiers', 'read'), asyncHandler(async (req, res) => {
+  const buffer = await productComplianceService.exportDossier(req.params.id, req.user!);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="product-compliance-${req.params.id}.xlsx"`);
+  res.send(buffer);
+}));
 router.put('/dossiers/:id/overview', authorize('product_dossiers', 'update'), asyncHandler(async (req, res) => {
   res.json({ success: true, data: await productComplianceService.updateOverview(req.params.id, req.body, parseExpectedLockVersion(req), req.user!) });
 }));
@@ -81,6 +87,9 @@ router.post('/config/product-types/:id/retire', authorize('product_compliance_co
 
 router.get('/config/questionnaires', authorizeAny(['product_compliance_config', 'read'], ['product_dossiers', 'update']), asyncHandler(async (req, res) => {
   res.json({ success: true, data: await productComplianceService.listTemplates(req.query.includeRetired === 'true') });
+}));
+router.get('/config/data-catalog', authorizeAny(['product_compliance_config', 'read'], ['product_dossiers', 'update']), asyncHandler(async (req, res) => {
+  res.json({ success: true, data: await productComplianceService.listDataCatalog(req.query.includeRetired === 'true') });
 }));
 router.post('/config/questionnaires', authorize('product_compliance_config', 'create'), asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, data: await productComplianceService.createTemplate(req.body, req.user!) });

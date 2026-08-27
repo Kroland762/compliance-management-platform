@@ -43,10 +43,14 @@ import {
   ProductDossierQuestionnaire,
   ProductDossierAnswer,
   ProductPlatformPermission,
+  ProductDataCatalogItem,
   ProductDataItem,
   ProductProcessingActivity,
   ProductPermissionDataItem,
   ProductProcessingDataItem,
+  ProductThirdPartyService,
+  ProductThirdPartyAssessment,
+  ProductThirdPartyAssessmentAnswer,
 } from './ProductCompliance';
 
 export function setupAssociations(): void {
@@ -217,8 +221,18 @@ export function setupAssociations(): void {
   ProductPlatformPermission.belongsTo(ProductComplianceDossier, { foreignKey: 'dossierId', as: 'dossier' });
   ProductComplianceDossier.hasMany(ProductDataItem, { foreignKey: 'dossierId', as: 'dataItems', onDelete: 'CASCADE' });
   ProductDataItem.belongsTo(ProductComplianceDossier, { foreignKey: 'dossierId', as: 'dossier' });
+  ProductDataCatalogItem.hasMany(ProductDataItem, { foreignKey: 'catalogItemId', as: 'dossierItems', onDelete: 'RESTRICT' });
+  ProductDataItem.belongsTo(ProductDataCatalogItem, { foreignKey: 'catalogItemId', as: 'catalogItem' });
   ProductComplianceDossier.hasMany(ProductProcessingActivity, { foreignKey: 'dossierId', as: 'processingActivities', onDelete: 'CASCADE' });
   ProductProcessingActivity.belongsTo(ProductComplianceDossier, { foreignKey: 'dossierId', as: 'dossier' });
+  ProductComplianceDossier.hasMany(ProductThirdPartyService, { foreignKey: 'dossierId', as: 'thirdPartyServices', onDelete: 'CASCADE' });
+  ProductThirdPartyService.belongsTo(ProductComplianceDossier, { foreignKey: 'dossierId', as: 'dossier' });
+  ProductComplianceDossier.hasMany(ProductThirdPartyAssessment, { foreignKey: 'dossierId', as: 'thirdPartyAssessments', onDelete: 'CASCADE' });
+  ProductThirdPartyAssessment.belongsTo(ProductComplianceDossier, { foreignKey: 'dossierId', as: 'dossier' });
+  ProductThirdPartyService.hasMany(ProductThirdPartyAssessment, { foreignKey: 'serviceId', as: 'assessments', onDelete: 'SET NULL' });
+  ProductThirdPartyAssessment.belongsTo(ProductThirdPartyService, { foreignKey: 'serviceId', as: 'service' });
+  ProductThirdPartyAssessment.hasMany(ProductThirdPartyAssessmentAnswer, { foreignKey: 'assessmentId', as: 'answers', onDelete: 'CASCADE' });
+  ProductThirdPartyAssessmentAnswer.belongsTo(ProductThirdPartyAssessment, { foreignKey: 'assessmentId', as: 'assessment' });
   ProductPlatformPermission.belongsToMany(ProductDataItem, { through: ProductPermissionDataItem, foreignKey: 'permissionId', otherKey: 'dataItemId', as: 'dataItems' });
   ProductDataItem.belongsToMany(ProductPlatformPermission, { through: ProductPermissionDataItem, foreignKey: 'dataItemId', otherKey: 'permissionId', as: 'platformPermissions' });
   ProductProcessingActivity.belongsToMany(ProductDataItem, { through: ProductProcessingDataItem, foreignKey: 'activityId', otherKey: 'dataItemId', as: 'dataItems' });

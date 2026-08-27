@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import sequelize from '../src/config/database';
 import {
+  APP_COMPLIANCE_QUESTIONS,
+  BASELINE_COMPLIANCE_QUESTIONS,
+  PERSONAL_DATA_CATALOG_ITEMS,
+  THIRD_PARTY_ASSESSMENT_ITEMS,
+} from '../src/config/product-compliance-template-seed';
+import {
   Department,
   Product,
   ProductComplianceDossier,
@@ -29,6 +35,15 @@ describe('product compliance service', () => {
     expect(PERMISSION_DEFINITIONS.products).toEqual(['create', 'read', 'update', 'archive']);
     expect(PERMISSION_DEFINITIONS.product_dossiers).toContain('confirm');
     expect(PERMISSION_DEFINITIONS.product_compliance_config).toContain('retire');
+  });
+
+  test('embeds APP and SDK dossier template source data as system seed constants', () => {
+    expect(BASELINE_COMPLIANCE_QUESTIONS).toHaveLength(10);
+    expect(APP_COMPLIANCE_QUESTIONS).toHaveLength(27);
+    expect(PERSONAL_DATA_CATALOG_ITEMS).toHaveLength(150);
+    expect(THIRD_PARTY_ASSESSMENT_ITEMS.length).toBeGreaterThan(50);
+    expect(APP_COMPLIANCE_QUESTIONS[0].stableKey).toMatch(/^app_check_/);
+    expect(PERSONAL_DATA_CATALOG_ITEMS[0]).toEqual(expect.objectContaining({ name: '姓名', category: '基本个人信息' }));
   });
 
   test('creates a normalized product only with an active type and valid tenant owners', async () => {
