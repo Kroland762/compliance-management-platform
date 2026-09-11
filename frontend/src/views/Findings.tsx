@@ -5,6 +5,7 @@ import { getApiErrorMessage } from '../utils/error';
 import { useAuthStore } from '../store/auth';
 import { RISK_LEVEL } from '../constants/status';
 import { DepartmentSelect, PersonnelSelect } from '../components/lookups';
+import { useNavigate } from 'react-router-dom';
 
 const statusMap: Record<string, { text: string; color: string }> = {
   open: { text: '待处置', color: 'orange' }, remediating: { text: '整改中', color: 'blue' },
@@ -13,6 +14,7 @@ const statusMap: Record<string, { text: string; color: string }> = {
 };
 
 export default function Findings({ taskId }: { taskId?: string }) {
+  const navigate = useNavigate();
   const can = useAuthStore((state) => state.hasPermission);
   const [items, setItems] = useState<any[]>([]);
   const [selected, setSelected] = useState<React.Key[]>([]);
@@ -42,13 +44,13 @@ export default function Findings({ taskId }: { taskId?: string }) {
   };
   const escalate = async (values: any) => {
     try {
-      await apiClient.post('/findings/escalate', {
+      const response: any = await apiClient.post('/findings/escalate', {
         findingIds: selected,
         title: values.title, description: values.description, riskLevel: values.riskLevel,
         treatmentStrategy: values.treatmentStrategy, ownerDepartmentId: values.ownerDepartmentId,
         ownerUserId: values.ownerUserId, dueDate: values.dueDate?.format('YYYY-MM-DD'),
       }, { headers: { 'Idempotency-Key': crypto.randomUUID() } });
-      message.success('不符合项已升级为风险');
+      message.success({ content: <span>不符合项已升级为风险，<Button type="link" size="small" onClick={() => navigate(`/risks/${response.data.id}`)}>查看风险</Button></span>, duration: 6 });
       setSelected([]);
       setRiskOpen(false);
       await load();

@@ -335,11 +335,19 @@ class ObjectAccessService {
       return {
         [Op.or]: [
           { ownerUserId: user.userId },
+          { createdBy: user.userId },
+          { reviewerUserId: user.userId },
           { taskId: { [Op.in]: tasks.map((task: any) => task.id) } },
         ],
       };
     }
-    return { ownerUserId: user.userId };
+    return {
+      [Op.or]: [
+        { ownerUserId: user.userId },
+        { createdBy: user.userId },
+        { reviewerUserId: user.userId },
+      ],
+    };
   }
 
   async accessibleRiskIds(user: RequestUser, action = 'read'): Promise<string[] | null> {

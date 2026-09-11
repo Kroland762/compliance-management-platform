@@ -125,12 +125,12 @@ class ReportingService {
         raw: true,
       }) : [],
       can('risks', 'read') ? RiskRecord.findAll({
-        where: { ...activeRiskWhere, confirmedAt: { [Op.gte]: sixMonthsAgo } },
+        where: { ...activeRiskWhere, identifiedAt: { [Op.gte]: sixMonthsAgo } },
         attributes: [
-          [RiskRecord.sequelize!.fn('to_char', RiskRecord.sequelize!.fn('date_trunc', 'month', RiskRecord.sequelize!.col('confirmedAt')), 'YYYY-MM'), 'month'],
+          [RiskRecord.sequelize!.fn('to_char', RiskRecord.sequelize!.fn('date_trunc', 'month', RiskRecord.sequelize!.col('identifiedAt')), 'YYYY-MM'), 'month'],
           [RiskRecord.sequelize!.fn('COUNT', RiskRecord.sequelize!.col('id')), 'count'],
         ],
-        group: [RiskRecord.sequelize!.fn('date_trunc', 'month', RiskRecord.sequelize!.col('confirmedAt'))],
+        group: [RiskRecord.sequelize!.fn('date_trunc', 'month', RiskRecord.sequelize!.col('identifiedAt'))],
         raw: true,
       }) : [],
       can('risks', 'read') ? RiskRecord.findAll({

@@ -7,8 +7,11 @@ import {
   QuestionItem,
   RemediationAction,
   RemediationActionStatus,
+  RiskLifecycleStatus,
+  RiskRecord,
   VerificationStatus,
 } from '../models';
+import objectAccessService from './object-access.service';
 
 type RequestUser = NonNullable<Express.Request['user']>;
 
@@ -22,7 +25,7 @@ class WorkItemService {
     const auditorTaskIds = auditorAssignments.map((item: any) => item.taskId);
     const reviewTaskWhere = { taskId: { [Op.in]: auditorTaskIds } };
 
-    const [fill, review, remediate, candidateActions] = await Promise.all([
+    const [fill, review, remediate, candidateActions, riskConfirmationCandidates] = await Promise.all([
       QuestionItem.findAll({
         where: {
           assignedTo: user.userId,
@@ -68,7 +71,7 @@ class WorkItemService {
             association: 'riskLinks',
             where: { verificationStatus: VerificationStatus.PENDING },
             required: false,
-            include: [{ association: 'risk', attributes: ['id', 'code', 'title', 'taskId'] }],
+            include: [{ association: 'risk', attributes: ['id', 'code', 'title', 'taskId', 'reviewerUserId', 'creationMode'] }],
           },
           {
             association: 'findingLinks',
@@ -79,18 +82,29 @@ class WorkItemService {
         ],
         order: [['submittedAt', 'ASC']],
       }),
+      RiskRecord.findAll({
+        where: {
+          status: RiskLifecycleStatus.PENDING_CONFIRMATION,
+          ...(await objectAccessService.riskScope(user, 'confirm') as object),
+        },
+        order: [['identifiedAt', 'ASC']],
+      }),
     ]);
 
-    const visibleVerificationActions: RemediationAction[] = [];
+    const confirmAll = user.isGlobalAdmin || user.permissionScopes?.risks?.confirm === 'all';
+    const riskConfirm = riskConfirmationCandidates.filter((risk) => confirmAll
+      || (risk.taskId === null ? risk.reviewerUserId === user.userId : auditorTaskIds.includes(risk.taskId)));
+
+    const visibleVerificationActions: Record<string, unknown>[] = [];
     for (const action of candidateActions) {
       if (action.ownerUserId === user.userId) continue;
       const json: any = action.toJSON();
-      const riskLinks = (json.riskLinks || []).filter((link: any) => auditorTaskIds.includes(link.risk?.taskId));
+      const riskLinks = (json.riskLinks || []).filter((link: any) =>
+        (link.risk?.taskId && auditorTaskIds.includes(link.risk.taskId))
+        || (!link.risk?.taskId && link.risk?.reviewerUserId === user.userId));
       const findingLinks = (json.findingLinks || []).filter((link: any) => auditorTaskIds.includes(link.finding?.taskId));
       if (riskLinks.length || findingLinks.length) {
-        action.setDataValue('riskLinks' as any, riskLinks);
-        action.setDataValue('findingLinks' as any, findingLinks);
-        visibleVerificationActions.push(action);
+        visibleVerificationActions.push({ ...json, riskLinks, findingLinks });
       }
     }
 
@@ -122,11 +136,13 @@ class WorkItemService {
       review: review.map(withSnapshot),
       remediate,
       verify: visibleVerificationActions,
+      riskConfirm,
       counts: {
         fill: fill.length,
         review: review.length,
         remediate: remediate.length,
         verify: visibleVerificationActions.length,
+        riskConfirm: riskConfirm.length,
       },
     };
   }

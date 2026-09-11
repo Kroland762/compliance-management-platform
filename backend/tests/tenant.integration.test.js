@@ -472,7 +472,11 @@ describeIntegration('tenant identity, membership, roles and organization governa
         });
       }
 
-      await migrateUp([schema]);
+      try {
+        await migrateUp([schema]);
+      } catch (error) {
+        throw new Error([error.message, error.parent?.message, error.parent?.detail, error.sql].filter(Boolean).join(' | '));
+      }
       const rows = await sequelize.query(`
         SELECT member."userId", role."roleId", department."departmentId", department."isPrimary"
         FROM ${quote}.tenant_members member

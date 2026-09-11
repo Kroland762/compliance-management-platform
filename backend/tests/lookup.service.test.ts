@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { Op } from 'sequelize';
-import { Department, DepartmentMember, TenantMember, User } from '../src/models';
+import { Department, DepartmentMember, TenantMember, User, MemberRole, Role, RiskRecord } from '../src/models';
+import riskReviewerEligibility, { canReviewIndependentRisk } from '../src/services/risk-reviewer-eligibility.service';
 import { AuditRule, DataSource, DataSourceStatus } from '../src/models/account';
 import lookupService from '../src/services/lookup.service';
 import objectAccessService from '../src/services/object-access.service';
@@ -19,6 +20,53 @@ const risk: any = { id: '22222222-2222-4222-8222-222222222222', name: '风险管
 
 describe('lookup service contract', () => {
   afterEach(() => vi.restoreAllMocks());
+
+  test('risk lookup searches and sorts by title rather than nonexistent name', async () => {
+    vi.spyOn(objectAccessService, 'riskScope').mockResolvedValue({} as any);
+    const find = vi.spyOn(RiskRecord, 'findAndCountAll').mockResolvedValue({ rows: [], count: 0 } as any);
+    await lookupService.list('risks', { purpose: 'remediation-risk', q: '账号' }, {
+      ...user, permissions: { remediation_actions: ['create'] },
+    });
+    expect(find.mock.calls[0][0]).toMatchObject({ order: [['title', 'ASC'], ['id', 'ASC']] });
+    expect((find.mock.calls[0][0] as any).where.title[Op.iLike]).toBe('%账号%');
+  });
+
+  test.each([
+    { risks: ['confirm'] },
+    { risks: ['read', 'verify'], remediation_actions: ['read'] },
+    { risks: ['read', 'confirm', 'verify'] },
+    { risks: ['read', 'confirm'], remediation_actions: ['read'] },
+  ])('excludes partial reviewer permissions %j', (permissions) => {
+    expect(canReviewIndependentRisk(permissions)).toBe(false);
+  });
+
+  test('merges separate role permissions and accepts either verification permission', async () => {
+    vi.spyOn(MemberRole, 'findAll').mockResolvedValue([
+      { memberId: 'eligible', roleId: 'reader' }, { memberId: 'eligible', roleId: 'confirmer' },
+      { memberId: 'partial', roleId: 'reader' },
+    ] as any);
+    vi.spyOn(Role, 'findAll').mockResolvedValue([
+      { id: 'reader', permissions: { risks: ['read'], remediation_actions: ['read', 'verify'] } },
+      { id: 'confirmer', permissions: { risks: ['confirm'] } },
+    ] as any);
+    expect(await riskReviewerEligibility.eligibleMemberIds()).toEqual(['eligible']);
+    expect(canReviewIndependentRisk({ risks: ['read', 'confirm', 'verify'], remediation_actions: ['read'] })).toBe(true);
+  });
+
+  test('reviewer lookup uses the shared complete eligibility set', async () => {
+    vi.spyOn(riskReviewerEligibility, 'eligibleMemberIds').mockResolvedValue(['eligible']);
+    const find = vi.spyOn(TenantMember, 'findAndCountAll').mockResolvedValue({ rows: [], count: 0 } as any);
+    await lookupService.list('personnel', { purpose: 'risk-reviewer' }, {
+      ...user, permissions: { risks: ['create'] }, permissionScopes: { risks: { create: 'all' } },
+    });
+    expect((find.mock.calls[0][0] as any).where.id[Op.in]).toEqual(['eligible']);
+  });
+
+  test('validation rejects a reviewer whose effective roles were revoked', async () => {
+    vi.spyOn(TenantMember, 'findOne').mockResolvedValue({ id: 'member', userId: 'reviewer', status: 'active' } as any);
+    vi.spyOn(MemberRole, 'findAll').mockResolvedValue([]);
+    await expect(riskReviewerEligibility.assertEligible('reviewer')).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
 
   test('department lookup searches and returns human-readable names only', async () => {
     const findAndCount = vi.spyOn(Department, 'findAndCountAll').mockResolvedValue({ count: 1, rows: [risk] } as any);

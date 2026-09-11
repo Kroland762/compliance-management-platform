@@ -2089,6 +2089,132 @@ const migrations: Migration[] = [
       }
     },
   },
+  {
+    id: '026_tenant_independent_risks',
+    scope: 'tenant',
+    description: '支持独立风险、发现来源、创建人与独立审核人',
+    checksumSource: '026-v1-independent-risks',
+    up: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      const escaped = schemaName.replace(/'/g, "''");
+      const q = (sql: string, replacements?: Record<string, unknown>) =>
+        sequelize.query(sql, { transaction, replacements });
+
+      await q(`ALTER TABLE ${quoted}.risk_records
+        ALTER COLUMN "taskId" DROP NOT NULL,
+        ADD COLUMN IF NOT EXISTS "creationMode" varchar(24),
+        ADD COLUMN IF NOT EXISTS "discoverySource" varchar(32),
+        ADD COLUMN IF NOT EXISTS "discoverySourceDetail" text,
+        ADD COLUMN IF NOT EXISTS "sourceReference" varchar(300),
+        ADD COLUMN IF NOT EXISTS "createdBy" uuid,
+        ADD COLUMN IF NOT EXISTS "reviewerUserId" uuid`);
+      await q(`UPDATE ${quoted}.risk_records risk SET
+        "creationMode" = CASE
+          WHEN EXISTS (SELECT 1 FROM ${quoted}.risk_finding_links link WHERE link."riskId" = risk.id)
+            THEN 'finding_escalation'
+          WHEN EXISTS (SELECT 1 FROM ${quoted}.risk_sources source WHERE source."riskId" = risk.id)
+            THEN 'evaluation'
+          ELSE 'import'
+        END,
+        "discoverySource" = 'compliance_assessment',
+        "createdBy" = COALESCE(
+          (SELECT link."createdBy" FROM ${quoted}.risk_finding_links link
+            WHERE link."riskId" = risk.id ORDER BY link."createdAt" ASC NULLS LAST LIMIT 1),
+          (SELECT source."createdBy" FROM ${quoted}.risk_sources source
+            WHERE source."riskId" = risk.id ORDER BY source."createdAt" ASC NULLS LAST LIMIT 1),
+          risk."ownerUserId"
+        )
+      WHERE risk."creationMode" IS NULL OR risk."discoverySource" IS NULL OR risk."createdBy" IS NULL`);
+      const [invalid] = await sequelize.query<{ count: number }>(
+        `SELECT count(*)::int AS count FROM ${quoted}.risk_records
+         WHERE "creationMode" IS NULL OR "discoverySource" IS NULL OR "createdBy" IS NULL`,
+        { type: QueryTypes.SELECT, transaction },
+      );
+      if (Number(invalid?.count || 0) > 0) throw new Error('风险来源历史数据回填不完整，迁移已停止');
+
+      await q(`ALTER TABLE ${quoted}.risk_records
+        ALTER COLUMN "creationMode" SET NOT NULL,
+        ALTER COLUMN "discoverySource" SET NOT NULL,
+        ALTER COLUMN "createdBy" SET NOT NULL`);
+      await q(`DO $$ DECLARE constraint_name text;
+        BEGIN
+          FOR constraint_name IN
+            SELECT con.conname
+            FROM pg_constraint con
+            JOIN pg_class rel ON rel.oid = con.conrelid
+            JOIN pg_namespace ns ON ns.oid = rel.relnamespace
+            JOIN unnest(con.conkey) AS key(attnum) ON true
+            JOIN pg_attribute att ON att.attrelid = rel.oid AND att.attnum = key.attnum
+            WHERE ns.nspname = '${escaped}' AND rel.relname = 'risk_records'
+              AND con.contype = 'f' AND att.attname = 'taskId'
+          LOOP
+            EXECUTE format('ALTER TABLE %I.risk_records DROP CONSTRAINT %I', '${escaped}', constraint_name);
+          END LOOP;
+        END $$`);
+      for (const constraint of [
+        'risk_records_origin_consistency_check',
+        'risk_records_discovery_source_check',
+        'risk_records_creation_mode_check',
+        'risk_records_reviewer_fk',
+        'risk_records_creator_fk',
+      ]) await q(`ALTER TABLE ${quoted}.risk_records DROP CONSTRAINT IF EXISTS ${constraint}`);
+      await q(`ALTER TABLE ${quoted}.risk_records
+        ADD CONSTRAINT risk_records_task_fk FOREIGN KEY ("taskId")
+          REFERENCES ${quoted}.audit_tasks(id) ON DELETE RESTRICT,
+        ADD CONSTRAINT risk_records_creator_fk FOREIGN KEY ("createdBy")
+          REFERENCES public.users(id) ON DELETE RESTRICT,
+        ADD CONSTRAINT risk_records_reviewer_fk FOREIGN KEY ("reviewerUserId")
+          REFERENCES public.users(id) ON DELETE RESTRICT,
+        ADD CONSTRAINT risk_records_creation_mode_check CHECK
+          ("creationMode" IN ('manual','evaluation','finding_escalation','import')),
+        ADD CONSTRAINT risk_records_discovery_source_check CHECK
+          ("discoverySource" IN ('daily_operations','compliance_assessment','internal_audit','security_incident','complaint_feedback','regulatory_change','third_party','other')),
+        ADD CONSTRAINT risk_records_origin_consistency_check CHECK (
+          ("creationMode" = 'manual' AND "taskId" IS NULL
+            AND "discoverySource" <> 'compliance_assessment'
+            AND "reviewerUserId" IS NOT NULL
+            AND btrim(COALESCE("discoverySourceDetail", '')) <> '')
+          OR ("creationMode" IN ('evaluation','finding_escalation') AND "taskId" IS NOT NULL
+            AND "discoverySource" = 'compliance_assessment')
+          OR "creationMode" = 'import'
+        )`);
+      await q(`CREATE INDEX IF NOT EXISTS risk_records_creation_mode_status_idx
+        ON ${quoted}.risk_records ("creationMode", status)`);
+      await q(`CREATE INDEX IF NOT EXISTS risk_records_discovery_source_status_idx
+        ON ${quoted}.risk_records ("discoverySource", status)`);
+      await q(`CREATE INDEX IF NOT EXISTS risk_records_reviewer_status_idx
+        ON ${quoted}.risk_records ("reviewerUserId", status)`);
+    },
+    down: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      const [{ count }] = await sequelize.query<{ count: number }>(
+        `SELECT count(*)::int AS count FROM ${quoted}.risk_records
+         WHERE "taskId" IS NULL OR "creationMode" = 'manual' OR "discoverySource" <> 'compliance_assessment'`,
+        { type: QueryTypes.SELECT, transaction },
+      );
+      if (Number(count) > 0) throw new Error('已存在独立风险，不能安全回滚独立风险迁移');
+      for (const index of [
+        'risk_records_creation_mode_status_idx',
+        'risk_records_discovery_source_status_idx',
+        'risk_records_reviewer_status_idx',
+      ]) await sequelize.query(`DROP INDEX IF EXISTS ${quoted}.${index}`, { transaction });
+      for (const constraint of [
+        'risk_records_origin_consistency_check',
+        'risk_records_discovery_source_check',
+        'risk_records_creation_mode_check',
+        'risk_records_reviewer_fk',
+        'risk_records_creator_fk',
+        'risk_records_task_fk',
+      ]) await sequelize.query(`ALTER TABLE ${quoted}.risk_records DROP CONSTRAINT IF EXISTS ${constraint}`, { transaction });
+      await sequelize.query(`ALTER TABLE ${quoted}.risk_records
+        ALTER COLUMN "taskId" SET NOT NULL,
+        ADD CONSTRAINT risk_records_task_fk FOREIGN KEY ("taskId")
+          REFERENCES ${quoted}.audit_tasks(id) ON DELETE CASCADE`, { transaction });
+      for (const column of [
+        'reviewerUserId', 'createdBy', 'sourceReference', 'discoverySourceDetail', 'discoverySource', 'creationMode',
+      ]) await sequelize.query(`ALTER TABLE ${quoted}.risk_records DROP COLUMN IF EXISTS "${column}"`, { transaction });
+    },
+  },
 ];
 
 export function migrationChecksum(migration: Migration): string {

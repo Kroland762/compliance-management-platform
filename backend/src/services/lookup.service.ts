@@ -21,6 +21,7 @@ import {
 } from '../models';
 import { AppError } from '../utils/http';
 import objectAccessService from './object-access.service';
+import riskReviewerEligibility from './risk-reviewer-eligibility.service';
 
 type RequestUser = NonNullable<Express.Request['user']>;
 
@@ -41,6 +42,9 @@ const PURPOSES: Record<string, PurposeRule> = {
   'finding-remediation-owner': { kinds: ['departments', 'personnel'], checks: [['findings', 'remediate']] },
   'finding-escalation-owner': { kinds: ['departments', 'personnel'], checks: [['findings', 'escalate']] },
   'risk-owner': { kinds: ['departments', 'personnel'], checks: [['risks', 'create'], ['risks', 'update']] },
+  'risk-filter': { kinds: ['departments'], checks: [['risks', 'read']] },
+  'risk-reviewer': { kinds: ['personnel'], checks: [['risks', 'create'], ['risks', 'assign']] },
+  'risk-assets': { kinds: ['assets'], checks: [['risks', 'create'], ['risks', 'update']] },
   'remediation-owner': { kinds: ['departments', 'personnel'], checks: [['remediation_actions', 'create'], ['remediation_actions', 'update']] },
   'qualification-owner': { kinds: ['departments', 'personnel'], checks: [['qualifications', 'create'], ['qualifications', 'update']] },
   'product-owner': { kinds: ['departments', 'personnel', 'product-types'], checks: [['products', 'create'], ['products', 'update']] },
@@ -142,6 +146,10 @@ class LookupService {
   private async validateContext(input: ReturnType<typeof parseQuery>, user: RequestUser): Promise<void> {
     if (!input.contextId) return;
     if (input.purpose === 'asset-owner') { await objectAccessService.assetOrNotFound(input.contextId, user, 'update'); return; }
+    if (input.purpose === 'risk-reviewer' || input.purpose === 'risk-assets') {
+      await objectAccessService.riskOrNotFound(input.contextId, user, input.purpose === 'risk-reviewer' ? 'assign' : 'update');
+      return;
+    }
     if (input.purpose === 'finding-remediation-owner') { await objectAccessService.findingOrNotFound(input.contextId, user); return; }
     if (input.purpose === 'qualification-owner') { await objectAccessService.qualificationOrNotFound(input.contextId, user, 'update'); return; }
     if (input.purpose === 'product-owner') { await objectAccessService.productOrNotFound(input.contextId, user, 'update'); return; }
@@ -271,7 +279,7 @@ class LookupService {
     return [...ids];
   }
 
-  private async personnel(input: ReturnType<typeof parseQuery>, user: RequestUser, auditorsOnly = false) {
+  private async personnel(input: ReturnType<typeof parseQuery>, user: RequestUser, auditorsOnly = false, riskReviewersOnly = false) {
     let allowedMemberIds = await this.allowedMemberIds(user, input.rule, input.contextId);
     let assignedAuditorUserIds: string[] | null = null;
     if (auditorsOnly) {
@@ -286,6 +294,10 @@ class LookupService {
         const assigned = await AssessmentAuditor.findAll({ where: { taskId: input.contextId }, attributes: ['auditorUserId'] });
         assignedAuditorUserIds = assigned.map((item) => item.auditorUserId);
       }
+    }
+    if (riskReviewersOnly) {
+      // 审核人是风险的独立控制角色，创建人的风险数据范围不应把候选池缩成自己。
+      allowedMemberIds = await riskReviewerEligibility.eligibleMemberIds();
     }
     const matchingUsers = input.q
       ? await User.findAll({ where: { username: { [Op.iLike]: input.pattern } }, attributes: ['id'] })
@@ -338,7 +350,7 @@ class LookupService {
   }
 
   private async simpleModel(input: ReturnType<typeof parseQuery>, user: RequestUser) {
-    const common = { order: [['name', 'ASC'], ['id', 'ASC']] as any, limit: input.pageSize, offset: (input.page - 1) * input.pageSize };
+    const common = { limit: input.pageSize, offset: (input.page - 1) * input.pageSize };
     let model: any;
     let base: any = {};
     let selectedBase: any = {};
@@ -346,8 +358,22 @@ class LookupService {
     let meta: (row: any) => Record<string, unknown> | undefined = () => undefined;
     let disabled: (row: any) => boolean = () => false;
     if (input.kind === 'roles') model = Role;
-    if (input.kind === 'assets') { selectedBase = await objectAccessService.assetScope(user, 'read'); model = Asset; base = { status: 'active', ...selectedBase }; meta = (row) => ({ code: row.code }); disabled = (row) => row.status !== 'active'; }
-    if (input.kind === 'risks') { selectedBase = await objectAccessService.riskScope(user, 'read'); model = RiskRecord; field = 'title'; base = { status: { [Op.notIn]: [RiskLifecycleStatus.CLOSED, RiskLifecycleStatus.CANCELLED] }, ...selectedBase }; meta = (row) => ({ code: row.code }); disabled = (row) => [RiskLifecycleStatus.CLOSED, RiskLifecycleStatus.CANCELLED].includes(row.status); }
+    if (input.kind === 'assets') {
+      selectedBase = input.purpose === 'risk-assets' ? {} : await objectAccessService.assetScope(user, 'read');
+      model = Asset;
+      base = { status: 'active', ...selectedBase };
+      meta = (row) => ({ code: row.code });
+      disabled = (row) => row.status !== 'active';
+    }
+    if (input.kind === 'risks') {
+      selectedBase = await objectAccessService.riskScope(user, 'read');
+      model = RiskRecord;
+      field = 'title';
+      const linkable = [RiskLifecycleStatus.OPEN, RiskLifecycleStatus.REMEDIATING, RiskLifecycleStatus.PENDING_VERIFICATION, RiskLifecycleStatus.ACCEPTED];
+      base = { status: { [Op.in]: linkable }, ...selectedBase };
+      meta = (row) => ({ code: row.code });
+      disabled = (row) => !linkable.includes(row.status);
+    }
     if (input.kind === 'assessment-templates') { model = QuestionnaireTemplate; meta = (row) => ({ version: row.version }); }
     if (input.kind === 'product-questionnaires') { model = ProductQuestionnaireTemplate; base = { status: 'active' }; meta = (row) => ({ version: row.version }); disabled = (row) => row.status !== 'active'; }
     if (input.kind === 'product-types') { model = ProductType; base = { status: 'active' }; disabled = (row) => row.status !== 'active'; }
@@ -377,7 +403,7 @@ class LookupService {
       selectedIds = selectedIds.filter((id) => linkedIds.has(id));
     }
     const where = { ...base, ...(input.q ? { [field]: { [Op.iLike]: input.pattern } } : {}) };
-    const { count, rows } = await model.findAndCountAll({ where, ...common });
+    const { count, rows } = await model.findAndCountAll({ where, ...common, order: [[field, 'ASC'], ['id', 'ASC']] });
     const selectedRows = selectedIds.length ? await model.findAll({ where: { ...selectedBase, id: { [Op.in]: selectedIds } } }) : [];
     const map = (row: any): LookupOption => ({
       value: row.id,
@@ -393,7 +419,7 @@ class LookupService {
     this.winningCheck(user, input.rule.checks, input.contextId);
     await this.validateContext(input, user);
     if (input.kind === 'departments') return this.departments(input, user);
-    if (input.kind === 'personnel') return this.personnel(input, user);
+    if (input.kind === 'personnel') return this.personnel(input, user, false, input.purpose === 'risk-reviewer');
     if (input.kind === 'auditors') return this.personnel(input, user, true);
     return this.simpleModel(input, user);
   }

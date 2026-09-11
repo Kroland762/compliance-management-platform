@@ -147,7 +147,7 @@ export default function AssessmentProjectDetail() {
         { key: 'units', label: '评估表', children: <Card><Typography.Paragraph>在同一张评估表中逐行填写；每个控制项默认关联项目全部资产，也可在提交前调整或拆分。</Typography.Paragraph><Button type="primary" onClick={() => navigate(`/assessments/${id}/workbench`)}>进入评估表</Button></Card> },
         { key: 'findings', label: `不符合项 ${task.progress?.findings || 0}`, children: can('findings', 'read') ? <Findings taskId={id} /> : <Typography.Text type="secondary">无查看权限</Typography.Text> },
         { key: 'governance', label: '风险与整改', children: <Space direction="vertical" style={{ width: '100%' }} size={18}>
-          <Typography.Title level={5}>风险</Typography.Title><Table rowKey="id" dataSource={risks} locale={{ emptyText: '暂无风险' }} columns={[{ title: '编号', dataIndex: 'code' }, { title: '风险', dataIndex: 'title' }, { title: '状态', dataIndex: 'status' }]} />
+          <Typography.Title level={5}>风险</Typography.Title><Table rowKey="id" dataSource={risks} locale={{ emptyText: '暂无风险' }} columns={[{ title: '编号', dataIndex: 'code', render: (value: string, risk: any) => <Link to={`/risks/${risk.id}`}>{value}</Link> }, { title: '风险', dataIndex: 'title' }, { title: '状态', dataIndex: 'status' }]} />
           <Typography.Title level={5}>整改行动</Typography.Title><Table rowKey="id" dataSource={actions} locale={{ emptyText: '暂无整改行动' }} columns={[{ title: '编号', dataIndex: 'code' }, { title: '整改行动', dataIndex: 'title' }, { title: '状态', dataIndex: 'status' }]} />
         </Space> },
         { key: 'logs', label: '操作记录', children: can('audit_logs', 'read') ? <Table rowKey="id" dataSource={logs} locale={{ emptyText: '暂无操作记录' }} columns={[

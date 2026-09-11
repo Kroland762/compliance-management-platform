@@ -77,3 +77,13 @@ export const VERIFICATION_STATUS: Record<string, string> = {
 export const TREATMENT_STRATEGY: Record<string, string> = {
   mitigate: '降低', accept: '接受', avoid: '规避', transfer: '转移',
 };
+
+export const RISK_DISCOVERY_SOURCE: Record<string, string> = {
+  daily_operations: '日常运维', compliance_assessment: '合规评估', internal_audit: '内部审计',
+  security_incident: '安全事件', complaint_feedback: '投诉反馈', regulatory_change: '监管变化',
+  third_party: '第三方', other: '其他',
+};
+
+export const RISK_CREATION_MODE: Record<string, string> = {
+  manual: '人工创建', evaluation: '评估发现', finding_escalation: '不符合项升级', import: '导入',
+};

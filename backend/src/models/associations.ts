@@ -127,8 +127,12 @@ export function setupAssociations(): void {
   EvidenceFile.belongsTo(User, { foreignKey: 'uploadedBy', as: 'uploader' });
 
   // AuditTask 1:N RiskRecord
-  AuditTask.hasMany(RiskRecord, { foreignKey: 'taskId', as: 'riskRecords', onDelete: 'CASCADE' });
+  AuditTask.hasMany(RiskRecord, { foreignKey: 'taskId', as: 'riskRecords', onDelete: 'RESTRICT' });
   RiskRecord.belongsTo(AuditTask, { foreignKey: 'taskId', as: 'task' });
+  User.hasMany(RiskRecord, { foreignKey: 'createdBy', as: 'createdRisks' });
+  RiskRecord.belongsTo(User, { foreignKey: 'createdBy', as: 'creator' });
+  User.hasMany(RiskRecord, { foreignKey: 'reviewerUserId', as: 'reviewRisks' });
+  RiskRecord.belongsTo(User, { foreignKey: 'reviewerUserId', as: 'reviewer' });
 
   RiskRecord.hasMany(RiskSource, { foreignKey: 'riskId', as: 'sources', onDelete: 'RESTRICT' });
   RiskSource.belongsTo(RiskRecord, { foreignKey: 'riskId', as: 'risk' });
@@ -221,8 +225,10 @@ export function setupAssociations(): void {
   ProductPlatformPermission.belongsTo(ProductComplianceDossier, { foreignKey: 'dossierId', as: 'dossier' });
   ProductComplianceDossier.hasMany(ProductDataItem, { foreignKey: 'dossierId', as: 'dataItems', onDelete: 'CASCADE' });
   ProductDataItem.belongsTo(ProductComplianceDossier, { foreignKey: 'dossierId', as: 'dossier' });
-  ProductDataCatalogItem.hasMany(ProductDataItem, { foreignKey: 'catalogItemId', as: 'dossierItems', onDelete: 'RESTRICT' });
-  ProductDataItem.belongsTo(ProductDataCatalogItem, { foreignKey: 'catalogItemId', as: 'catalogItem' });
+  // The FK is installed explicitly by migration 025. Disabling sync constraints here keeps
+  // historical migration 019 reproducible when it creates product_data_items before 025.
+  ProductDataCatalogItem.hasMany(ProductDataItem, { foreignKey: 'catalogItemId', as: 'dossierItems', constraints: false });
+  ProductDataItem.belongsTo(ProductDataCatalogItem, { foreignKey: 'catalogItemId', as: 'catalogItem', constraints: false });
   ProductComplianceDossier.hasMany(ProductProcessingActivity, { foreignKey: 'dossierId', as: 'processingActivities', onDelete: 'CASCADE' });
   ProductProcessingActivity.belongsTo(ProductComplianceDossier, { foreignKey: 'dossierId', as: 'dossier' });
   ProductComplianceDossier.hasMany(ProductThirdPartyService, { foreignKey: 'dossierId', as: 'thirdPartyServices', onDelete: 'CASCADE' });

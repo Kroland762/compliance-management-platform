@@ -88,4 +88,21 @@ describe('AssessmentWizard', () => {
     expect(await screen.findByText('项目列表页')).toBeInTheDocument();
     await waitFor(() => expect(apiClient.post).not.toHaveBeenCalled());
   });
+
+  it('retains the selected template and its row count after the template field unmounts', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.selectOptions(screen.getByLabelText('输入标准名称检索'), 'assessment-templates-1');
+    await waitFor(() => expect(apiClient.get).toHaveBeenCalledWith('/templates/assessment-templates-1'));
+    await user.click(screen.getByRole('button', { name: '下一步' }));
+    await user.type(screen.getByLabelText('评估名称'), '年度隐私评估');
+    await user.selectOptions(screen.getByLabelText('归属部门'), 'department-1');
+    await user.selectOptions(screen.getByLabelText('默认责任人'), 'person-1');
+    await user.selectOptions(screen.getByLabelText('审计员池'), 'auditor-1');
+    await user.click(screen.getByRole('button', { name: '下一步' }));
+    await user.selectOptions(await screen.findByLabelText('输入资产名称检索'), 'assets-1');
+    await user.click(screen.getByRole('button', { name: '下一步' }));
+    expect(await screen.findByText(/将生成 1 个评估行，每行默认关联所选 1 个资产/)).toBeInTheDocument();
+    expect(apiClient.post).toHaveBeenCalledWith('/tasks', expect.objectContaining({ assessmentType: 'GDPR 模板' }));
+  });
 });

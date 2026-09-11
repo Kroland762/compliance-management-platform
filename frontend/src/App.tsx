@@ -18,6 +18,7 @@ const AuditLogViewer = lazy(() => import('./views/admin/AuditLogViewer'));
 const TenantManagement = lazy(() => import('./views/admin/TenantManagement'));
 const ReviewTaskList = lazy(() => import('./views/auditor/ReviewTaskList'));
 const RiskDetail = lazy(() => import('./views/RiskDetail'));
+const RiskForm = lazy(() => import('./views/RiskForm'));
 const AssetLedger = lazy(() => import('./views/AssetLedger'));
 const AssessmentWizard = lazy(() => import('./views/AssessmentWizard'));
 const EvaluationWorkbench = lazy(() => import('./views/EvaluationWorkbench'));
@@ -91,6 +92,8 @@ function App() {
           <Route path="findings" element={<PrivateRoute permission={['findings', 'read']}><Findings /></PrivateRoute>} />
           <Route path="governance" element={<RiskAndRemediation />} />
           <Route path="risks" element={<Navigate to="/governance" replace />} />
+          <Route path="risks/new" element={<PrivateRoute permission={['risks', 'create']}><RiskForm /></PrivateRoute>} />
+          <Route path="risks/:id/edit" element={<PrivateRoute permission={['risks', 'update']}><RiskForm /></PrivateRoute>} />
           <Route path="risks/:id" element={<PrivateRoute permission={['risks', 'read']}><RiskDetail /></PrivateRoute>} />
           <Route path="assets" element={<PrivateRoute permission={['assets', 'read']}><AssetLedger /></PrivateRoute>} />
           <Route path="remediation-actions" element={<Navigate to="/governance?tab=remediation" replace />} />

@@ -2,6 +2,7 @@ import { Op, QueryTypes } from 'sequelize';
 import sequelize from '../config/database';
 import { getTenantStore } from '../middlewares/tenant';
 import {
+  AssessmentAuditor,
   Department,
   EvidenceFile,
   EvidenceScanStatus,
@@ -83,7 +84,12 @@ class RemediationService {
     const risks = await RiskRecord.findAll({
       where: {
         id: { [Op.in]: riskIds },
-        status: { [Op.notIn]: [RiskLifecycleStatus.CLOSED, RiskLifecycleStatus.CANCELLED] },
+        status: { [Op.in]: [
+          RiskLifecycleStatus.OPEN,
+          RiskLifecycleStatus.REMEDIATING,
+          RiskLifecycleStatus.PENDING_VERIFICATION,
+          RiskLifecycleStatus.ACCEPTED,
+        ] },
       },
       transaction,
       ...(transaction ? { lock: transaction.LOCK.UPDATE } : {}),
@@ -133,14 +139,18 @@ class RemediationService {
 
   async detail(id: string, user: RequestUser) {
     const action = await objectAccessService.remediationOrNotFound(id, user);
-    const [riskLinks, findingLinks, evidenceFiles] = await Promise.all([
+    const [riskLinks, findingLinks, evidenceFiles, ownerDepartment, owner] = await Promise.all([
       RiskActionLink.findAll({ where: { actionId: id }, include: [{ association: 'risk' }] }),
       FindingActionLink.findAll({ where: { actionId: id }, include: [{ association: 'finding' }] }),
       EvidenceFile.findAll({ where: { remediationActionId: id, status: 'active' } }),
+      Department.findByPk(action.ownerDepartmentId, { attributes: ['id', 'name'] }),
+      TenantMember.findOne({ where: { userId: action.ownerUserId }, attributes: ['userId', 'displayName'] }),
     ]);
     const visibleRiskIds = await objectAccessService.accessibleRiskIds(user);
     return {
       ...action.toJSON(),
+      ownerDepartment: ownerDepartment ? { id: ownerDepartment.id, name: ownerDepartment.name } : null,
+      owner: owner ? { id: owner.userId, displayName: owner.displayName } : null,
       riskLinks: riskLinks.filter((link) =>
         visibleRiskIds === null || visibleRiskIds.includes(link.riskId)),
       findingLinks,
@@ -176,25 +186,23 @@ class RemediationService {
         { status: RiskLifecycleStatus.REMEDIATING },
         { where: { id: { [Op.in]: risks.map((risk) => risk.id) }, status: RiskLifecycleStatus.OPEN }, transaction },
       );
+      await notificationService.create({
+        userId: input.ownerUserId,
+        taskId: risks.find((risk) => risk.taskId)?.taskId || null,
+        type: NotificationType.REMEDIATION_ASSIGNED,
+        title: '新的整改行动已分配',
+        content: `${created.code} ${created.title}`,
+      }, transaction);
+      await auditLogService.log({
+        userId: user.userId,
+        operationType: OperationType.CREATE,
+        resourceType: 'remediation_action',
+        resourceId: created.id,
+        operationDetails: `创建整改行动 ${created.code}，关联 ${input.riskLinks.length} 个风险`,
+        success: true,
+        departmentId: created.ownerDepartmentId,
+      }, transaction);
       return created;
-    });
-    const firstLink = input.riskLinks[0];
-    const firstRisk = await RiskRecord.findByPk(firstLink.riskId);
-    await notificationService.create({
-      userId: input.ownerUserId,
-      taskId: firstRisk!.taskId,
-      type: NotificationType.REMEDIATION_ASSIGNED,
-      title: '新的整改行动已分配',
-      content: `${action.code} ${action.title}`,
-    });
-    await auditLogService.log({
-      userId: user.userId,
-      operationType: OperationType.CREATE,
-      resourceType: 'remediation_action',
-      resourceId: action.id,
-      operationDetails: `创建整改行动 ${action.code}，关联 ${input.riskLinks.length} 个风险`,
-      success: true,
-      departmentId: action.ownerDepartmentId,
     });
     return this.detail(action.id, user);
   }
@@ -445,27 +453,35 @@ class RemediationService {
         success: true,
         departmentId: locked.ownerDepartmentId,
       }, transaction);
+      const linkedRisks = links.length ? await RiskRecord.findAll({
+        where: { id: { [Op.in]: links.map((link) => link.riskId) } },
+        transaction,
+      }) : [];
+      const taskIds = [...new Set(linkedRisks.map((risk) => risk.taskId).filter(Boolean))] as string[];
+      const auditors = taskIds.length ? await AssessmentAuditor.findAll({
+        where: { taskId: { [Op.in]: taskIds } }, transaction,
+      }) : [];
+      const recipients = new Map<string, string | null>();
+      linkedRisks.forEach((risk) => {
+        if (risk.taskId === null && risk.reviewerUserId) recipients.set(risk.reviewerUserId, null);
+      });
+      auditors.forEach((auditor) => recipients.set(auditor.auditorUserId, auditor.taskId));
+      if (!recipients.size && findingLinks.length) {
+        const findings = await Finding.findAll({ where: { id: { [Op.in]: findingLinks.map((link) => link.findingId) } }, transaction });
+        findings.forEach((finding) => recipients.set(finding.createdBy, finding.taskId));
+      }
+      for (const [recipient, taskId] of recipients) await notificationService.create({
+        userId: recipient,
+        taskId,
+        type: NotificationType.REMEDIATION_SUBMITTED,
+        title: '整改行动待复核',
+        content: `${locked.code} ${locked.title}`,
+      }, transaction);
         return { resourceId: locked.id };
       },
     );
     const action = await RemediationAction.findByPk(result.value.resourceId);
     if (!action) throw new AppError(500, 'INTERNAL_ERROR', '整改提交结果不存在');
-    if (!result.replayed) {
-      const firstLink = await RiskActionLink.findOne({ where: { actionId: id } });
-      const firstRisk = firstLink ? await RiskRecord.findByPk(firstLink.riskId) : null;
-      const firstFindingLink = firstRisk ? null : await FindingActionLink.findOne({ where: { actionId: id } });
-      const firstFinding = firstFindingLink ? await Finding.findByPk(firstFindingLink.findingId) : null;
-      const taskId = firstRisk?.taskId || firstFinding?.taskId;
-      if (taskId) {
-        await notificationService.create({
-          userId: firstRisk?.ownerUserId || firstFinding!.createdBy,
-          taskId,
-          type: NotificationType.REMEDIATION_SUBMITTED,
-          title: '整改行动待复核',
-          content: `${action.code} ${action.title}`,
-        });
-      }
-    }
     return this.detail(id, user);
   }
 
@@ -499,6 +515,19 @@ class RemediationService {
       });
       if (!lockedAction || !link || !risk) {
         throw new AppError(404, 'NOT_FOUND', '风险整改关联不存在');
+      }
+      const verifyAll = user.isGlobalAdmin || user.permissionScopes?.risks?.verify === 'all';
+      if (!verifyAll) {
+        if (risk.taskId === null && risk.reviewerUserId !== user.userId) {
+          throw new AppError(404, 'NOT_FOUND', '风险整改关联不存在');
+        }
+        if (risk.taskId !== null) {
+          const isAuditor = await AssessmentAuditor.count({
+            where: { taskId: risk.taskId, auditorUserId: user.userId },
+            transaction,
+          });
+          if (!isAuditor) throw new AppError(404, 'NOT_FOUND', '风险整改关联不存在');
+        }
       }
       if (lockedAction.ownerUserId === user.userId) {
         throw new AppError(403, 'SELF_REVIEW_FORBIDDEN', '整改负责人不能验证自己的整改');

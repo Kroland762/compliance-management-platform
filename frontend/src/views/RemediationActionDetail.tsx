@@ -163,8 +163,8 @@ export default function RemediationActionDetail() {
       <Card style={{ marginBottom: 18 }}>
         <Descriptions column={3}>
           <Descriptions.Item label="状态"><Tag color={REMEDIATION_STATUS[action.status]?.color}>{REMEDIATION_STATUS[action.status]?.text || action.status}</Tag></Descriptions.Item>
-          <Descriptions.Item label="责任部门">{action.ownerDepartmentId}</Descriptions.Item>
-          <Descriptions.Item label="负责人">{action.ownerUserId}</Descriptions.Item>
+          <Descriptions.Item label="责任部门">{action.ownerDepartment?.name || '—'}</Descriptions.Item>
+          <Descriptions.Item label="负责人">{action.owner?.displayName || '—'}</Descriptions.Item>
           <Descriptions.Item label="开始日期">{action.startDate || '—'}</Descriptions.Item>
           <Descriptions.Item label="期限">{action.dueDate}</Descriptions.Item>
           <Descriptions.Item label="证据">{action.evidenceFiles?.length || 0} 份</Descriptions.Item>
@@ -221,7 +221,7 @@ export default function RemediationActionDetail() {
         <List dataSource={action.riskLinks || []} renderItem={(link: any) => (
           <List.Item actions={[
             <Link key="risk" to={`/risks/${link.riskId}`}>查看风险</Link>,
-            can('remediation_actions', 'verify') && action.status === 'pending_verification'
+            (can('risks', 'verify') || can('remediation_actions', 'verify')) && action.status === 'pending_verification'
               ? <Button key="verify" type="link" onClick={() => setVerifying(link)}>验证</Button>
               : null,
           ]}>

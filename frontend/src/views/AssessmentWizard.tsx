@@ -13,7 +13,9 @@ export default function AssessmentWizard() {
   const [template, setTemplate] = useState<any>();
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
   const [form] = Form.useForm();
-  const templateId = Form.useWatch('templateId', form);
+  // The template field unmounts after step one, but its saved selection is still
+  // needed for the draft and preview throughout the wizard.
+  const templateId = Form.useWatch('templateId', { form, preserve: true });
 
   useEffect(() => {
     if (!templateId) {

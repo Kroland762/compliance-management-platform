@@ -3,6 +3,7 @@ import { Alert, Button, Empty, message, Space, Spin, Table, Tabs, Tag, Typograph
 import { useNavigate } from 'react-router-dom';
 import apiClient from '../api/client';
 import { getApiErrorMessage } from '../utils/error';
+import { RISK_DISCOVERY_SOURCE } from '../constants/status';
 
 const statusText: Record<string, string> = {
   pending: '待填写', in_progress: '填写中', returned: '已退回', submitted: '待复核',
@@ -11,7 +12,7 @@ const statusText: Record<string, string> = {
 
 export default function WorkItems() {
   const navigate = useNavigate();
-  const [data, setData] = useState<any>({ fill: [], review: [], remediate: [], verify: [], counts: {} });
+  const [data, setData] = useState<any>({ fill: [], review: [], remediate: [], verify: [], riskConfirm: [], counts: {} });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -20,7 +21,7 @@ export default function WorkItems() {
     setError('');
     try {
       const response: any = await apiClient.get('/work-items');
-      setData(response.data || { fill: [], review: [], remediate: [], verify: [], counts: {} });
+      setData(response.data || { fill: [], review: [], remediate: [], verify: [], riskConfirm: [], counts: {} });
     } catch (loadError) {
       setError(getApiErrorMessage(loadError, '待办加载失败，请稍后重试'));
     } finally { setLoading(false); }
@@ -45,7 +46,7 @@ export default function WorkItems() {
     { title: '状态', dataIndex: 'workflowStatus', width: 100, render: (value: string) => <Tag>{statusText[value] || value}</Tag> },
   ];
   const empty = <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无待办" />;
-  const hasLoadedData = ['fill', 'review', 'remediate', 'verify'].some((key) => data[key]?.length);
+  const hasLoadedData = ['fill', 'review', 'remediate', 'verify', 'riskConfirm'].some((key) => data[key]?.length);
 
   return (
     <div>
@@ -55,6 +56,14 @@ export default function WorkItems() {
         action={<Button onClick={() => void load()}>重试</Button>} />}
       {loading && !hasLoadedData ? <div style={{ padding: 64, textAlign: 'center' }}><Spin /><div style={{ marginTop: 10 }}>正在加载待办</div></div> : !error || hasLoadedData ? (
       <Tabs style={{ marginTop: 20 }} items={[
+        {
+          key: 'riskConfirm', label: `待确认风险 ${data.counts?.riskConfirm || 0}`,
+          children: data.riskConfirm?.length ? <Table rowKey="id" loading={loading} dataSource={data.riskConfirm} columns={[
+            { title: '编号', dataIndex: 'code', width: 190 }, { title: '风险', dataIndex: 'title' },
+            { title: '发现来源', dataIndex: 'discoverySource', width: 140, render: (value: string) => RISK_DISCOVERY_SOURCE[value] || value },
+            { title: '操作', width: 100, render: (_: any, item: any) => <Button type="primary" size="small" onClick={() => navigate(`/risks/${item.id}`)}>去确认</Button> },
+          ]} /> : empty,
+        },
         {
           key: 'fill', label: `待填写 ${data.counts?.fill || 0}`,
           children: data.fill?.length ? <Table rowKey="id" loading={loading} dataSource={data.fill} columns={[

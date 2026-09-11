@@ -79,6 +79,24 @@ export enum RiskLevel {
   LOW = 'low',
 }
 
+export enum RiskCreationMode {
+  MANUAL = 'manual',
+  EVALUATION = 'evaluation',
+  FINDING_ESCALATION = 'finding_escalation',
+  IMPORT = 'import',
+}
+
+export enum RiskDiscoverySource {
+  DAILY_OPERATIONS = 'daily_operations',
+  COMPLIANCE_ASSESSMENT = 'compliance_assessment',
+  INTERNAL_AUDIT = 'internal_audit',
+  SECURITY_INCIDENT = 'security_incident',
+  COMPLAINT_FEEDBACK = 'complaint_feedback',
+  REGULATORY_CHANGE = 'regulatory_change',
+  THIRD_PARTY = 'third_party',
+  OTHER = 'other',
+}
+
 export enum EvaluationWorkflowStatus {
   PENDING = 'pending',
   IN_PROGRESS = 'in_progress',
@@ -134,6 +152,7 @@ export enum NotificationType {
   TASK_RETURNED = 'task_returned',
   TASK_SUBMITTED = 'task_submitted',
   RISK_ASSIGNED = 'risk_assigned',
+  RISK_PENDING_CONFIRMATION = 'risk_pending_confirmation',
   RISK_REVIEW_DUE = 'risk_review_due',
   REMEDIATION_ASSIGNED = 'remediation_assigned',
   REMEDIATION_SUBMITTED = 'remediation_submitted',

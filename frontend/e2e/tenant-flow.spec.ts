@@ -1,7 +1,9 @@
 import { expect, request, test } from '@playwright/test';
 
+const apiBase = process.env.E2E_API_BASE_URL || 'http://127.0.0.1:3001';
+
 async function tenantApiAuth(page: any, tenantSlug: string) {
-  const loginResponse = await page.request.post('http://127.0.0.1:3001/api/auth/login', {
+  const loginResponse = await page.request.post(`${apiBase}/api/auth/login`, {
     data: {
       username: process.env.E2E_ADMIN_USERNAME || 'admin',
       password: process.env.E2E_ADMIN_PASSWORD || 'Admin1234',
@@ -15,7 +17,7 @@ async function tenantApiAuth(page: any, tenantSlug: string) {
     || (payload.user?.tenantId ? (payload.contexts || []).find((item: any) => item.id === payload.user.tenantId) : null);
   expect(selectedTenant?.id).toBeTruthy();
   if (payload.user?.tenantId !== selectedTenant.id) {
-    const contextResponse = await page.request.post('http://127.0.0.1:3001/api/auth/context', {
+    const contextResponse = await page.request.post(`${apiBase}/api/auth/context`, {
       headers: { Authorization: `Bearer ${token}` },
       data: { tenantId: selectedTenant.id },
     });
@@ -27,7 +29,8 @@ async function tenantApiAuth(page: any, tenantSlug: string) {
   return { token, selectedTenant };
 }
 
-test('global administrator selects a tenant and completes core control flow', async ({ page }) => {
+test('global administrator selects a tenant and completes core control flow', async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
   const mutationTenantSlug = process.env.E2E_MUTATION_TENANT_SLUG;
   test.skip(
     !mutationTenantSlug,
@@ -53,17 +56,17 @@ test('global administrator selects a tenant and completes core control flow', as
   };
 
   const suffix = Date.now();
-  const roleResponse = await page.request.get('http://127.0.0.1:3001/api/roles', { headers });
+  const roleResponse = await page.request.get(`${apiBase}/api/roles`, { headers });
   expect(roleResponse.ok()).toBeTruthy();
   const roles = (await roleResponse.json()).data.items;
   const userRole = roles.find((role: any) => role.name === '普通用户') || roles[0];
-  const departmentsResponse = await page.request.get('http://127.0.0.1:3001/api/lookup/options/departments?purpose=user-membership&pageSize=50', { headers });
+  const departmentsResponse = await page.request.get(`${apiBase}/api/lookup/options/departments?purpose=user-membership&pageSize=50`, { headers });
   expect(departmentsResponse.ok()).toBeTruthy();
   const departments = (await departmentsResponse.json()).data.items;
   const rootDepartment = departments[0];
   expect(rootDepartment).toBeTruthy();
 
-  const userResponse = await page.request.post('http://127.0.0.1:3001/api/members', {
+  const userResponse = await page.request.post(`${apiBase}/api/members`, {
     headers,
     data: {
       username: `e2e_user_${suffix}`,
@@ -79,7 +82,7 @@ test('global administrator selects a tenant and completes core control flow', as
   const temporaryPassword = memberPayload.temporaryPassword;
 
   const qualificationName = `E2E资质-${suffix}`;
-  const qualificationResponse = await page.request.post('http://127.0.0.1:3001/api/qualifications', {
+  const qualificationResponse = await page.request.post(`${apiBase}/api/qualifications`, {
     headers,
     data: {
       name: qualificationName,
@@ -92,7 +95,7 @@ test('global administrator selects a tenant and completes core control flow', as
   await page.goto('/qualifications');
   await expect(page.getByText(qualificationName)).toBeVisible();
 
-  const templateResponse = await page.request.post('http://127.0.0.1:3001/api/templates/import', {
+  const templateResponse = await page.request.post(`${apiBase}/api/templates/import`, {
     headers,
     multipart: {
       name: `E2E模板-${suffix}`,
@@ -111,7 +114,7 @@ test('global administrator selects a tenant and completes core control flow', as
   expect(templateResponse.status()).toBe(201);
   const templateId = (await templateResponse.json()).data.templateId;
 
-  const taskResponse = await page.request.post('http://127.0.0.1:3001/api/tasks', {
+  const taskResponse = await page.request.post(`${apiBase}/api/tasks`, {
     headers,
     data: {
       templateId,
@@ -122,13 +125,13 @@ test('global administrator selects a tenant and completes core control flow', as
   });
   expect(taskResponse.status()).toBe(201);
   const taskId = (await taskResponse.json()).data.id;
-  const auditorsResponse = await page.request.get('http://127.0.0.1:3001/api/lookup/options/auditors?purpose=assessment-owner&pageSize=50', { headers });
+  const auditorsResponse = await page.request.get(`${apiBase}/api/lookup/options/auditors?purpose=assessment-owner&pageSize=50`, { headers });
   expect(auditorsResponse.ok()).toBeTruthy();
   const availableAuditors = (await auditorsResponse.json()).data.items;
   expect(availableAuditors.length).toBeGreaterThan(0);
   const assignedAuditor = availableAuditors[0];
   expect(assignedAuditor).toBeTruthy();
-  expect((await page.request.put(`http://127.0.0.1:3001/api/tasks/${taskId}/auditors`, {
+  expect((await page.request.put(`${apiBase}/api/tasks/${taskId}/auditors`, {
     headers,
     data: { auditorUserIds: [assignedAuditor.value] },
   })).ok()).toBeTruthy();
@@ -140,7 +143,7 @@ test('global administrator selects a tenant and completes core control flow', as
   ];
   const createdAssets = [];
   for (const assetSpec of assetSpecs) {
-    const assetResponse = await page.request.post('http://127.0.0.1:3001/api/assets', {
+    const assetResponse = await page.request.post(`${apiBase}/api/assets`, {
       headers,
       data: {
         ...assetSpec,
@@ -153,11 +156,11 @@ test('global administrator selects a tenant and completes core control flow', as
     createdAssets.push((await assetResponse.json()).data);
   }
   const templateDetailResponse = await page.request.get(
-    `http://127.0.0.1:3001/api/templates/${templateId}`,
+    `${apiBase}/api/templates/${templateId}`,
     { headers },
   );
   const controlPoints = (await templateDetailResponse.json()).data.templateQuestions;
-  expect((await page.request.put(`http://127.0.0.1:3001/api/tasks/${taskId}/assets`, {
+  expect((await page.request.put(`${apiBase}/api/tasks/${taskId}/assets`, {
     headers,
     data: { assetIds: createdAssets.map((asset: any) => asset.id) },
   })).ok()).toBeTruthy();
@@ -172,49 +175,49 @@ test('global administrator selects a tenant and completes core control flow', as
     assignedTo: userId,
     responsibleDepartmentId: rootDepartment.value,
   }));
-  expect((await page.request.put(`http://127.0.0.1:3001/api/tasks/${taskId}/control-asset-matrix`, {
+  expect((await page.request.put(`${apiBase}/api/tasks/${taskId}/control-asset-matrix`, {
     headers,
     data: { items: matrixItems },
   })).ok()).toBeTruthy();
   const publishResponse = await page.request.post(
-    `http://127.0.0.1:3001/api/tasks/${taskId}/publish`,
+    `${apiBase}/api/tasks/${taskId}/publish`,
     { headers },
   );
   expect(publishResponse.ok()).toBeTruthy();
   expect((await publishResponse.json()).data.total).toBe(4);
   const evaluationsResponse = await page.request.get(
-    `http://127.0.0.1:3001/api/tasks/${taskId}/evaluations?pageSize=100`,
+    `${apiBase}/api/tasks/${taskId}/evaluations?pageSize=100`,
     { headers },
   );
   const evaluations = (await evaluationsResponse.json()).data.items;
   expect(evaluations).toHaveLength(4);
 
   const missingPrecondition = await page.request.put(
-    `http://127.0.0.1:3001/api/evaluations/${evaluations[0].id}/answer`,
+    `${apiBase}/api/evaluations/${evaluations[0].id}/answer`,
     { headers, data: { currentStatusDescription: '缺少版本号的写入不得成功' } },
   );
   expect(missingPrecondition.status()).toBe(428);
   for (const legacyWrite of [
-    page.request.put(`http://127.0.0.1:3001/api/questions/${evaluations[0].id}/answer`, {
+    page.request.put(`${apiBase}/api/questions/${evaluations[0].id}/answer`, {
       headers,
       data: { currentStatusDescription: '旧入口不得写入', lockVersion: evaluations[0].lockVersion },
     }),
-    page.request.put(`http://127.0.0.1:3001/api/review/questions/${evaluations[0].id}`, {
+    page.request.put(`${apiBase}/api/review/questions/${evaluations[0].id}`, {
       headers,
       data: { complianceStatus: 'compliant' },
     }),
-    page.request.put(`http://127.0.0.1:3001/api/tasks/${taskId}/configure`, {
+    page.request.put(`${apiBase}/api/tasks/${taskId}/configure`, {
       headers,
       data: { questionAssignments: [] },
     }),
-    page.request.post(`http://127.0.0.1:3001/api/tasks/${taskId}/submit`, { headers }),
+    page.request.post(`${apiBase}/api/tasks/${taskId}/submit`, { headers }),
   ]) {
     expect((await legacyWrite).status()).toBe(410);
   }
 
   // Keep the member's refresh-token cookie isolated from the administrator's
   // browser context so the final rendered administrator workflow remains valid.
-  const memberRequest = await request.newContext({ baseURL: 'http://127.0.0.1:3001' });
+  const memberRequest = await request.newContext({ baseURL: `${apiBase}` });
   const userLoginResponse = await memberRequest.post('/api/auth/login', {
     data: {
       username: `e2e_user_${suffix}`,
@@ -247,7 +250,7 @@ test('global administrator selects a tenant and completes core control flow', as
   const answeredEvaluations = [];
   for (const evaluation of evaluations) {
     const answerResponse = await page.request.put(
-      `http://127.0.0.1:3001/api/evaluations/${evaluation.id}/answer`,
+      `${apiBase}/api/evaluations/${evaluation.id}/answer`,
       {
         headers: userHeaders,
         data: {
@@ -260,7 +263,7 @@ test('global administrator selects a tenant and completes core control flow', as
     answeredEvaluations.push((await answerResponse.json()).data);
   }
 
-  const evidenceResponse = await page.request.post(`http://127.0.0.1:3001/api/evaluations/${evaluations[0].id}/evidence`, {
+  const evidenceResponse = await page.request.post(`${apiBase}/api/evaluations/${evaluations[0].id}/evidence`, {
     headers: userHeaders,
     multipart: {
       file: {
@@ -273,14 +276,14 @@ test('global administrator selects a tenant and completes core control flow', as
   expect(evidenceResponse.status()).toBe(201);
   const evidenceId = (await evidenceResponse.json()).data.id;
 
-  const downloadResponse = await page.request.get(`http://127.0.0.1:3001/api/evidence/${evidenceId}/download`, {
+  const downloadResponse = await page.request.get(`${apiBase}/api/evidence/${evidenceId}/download`, {
     headers: userHeaders,
   });
   expect(downloadResponse.ok()).toBeTruthy();
   expect(downloadResponse.headers()['content-type']).toContain('application/pdf');
 
   const previewResponse = await page.request.get(
-    `http://127.0.0.1:3001/api/evidence/${evidenceId}/content`,
+    `${apiBase}/api/evidence/${evidenceId}/content`,
     { headers: userHeaders },
   );
   expect(previewResponse.ok()).toBeTruthy();
@@ -289,7 +292,7 @@ test('global administrator selects a tenant and completes core control flow', as
   const submittedEvaluations = [];
   for (const evaluation of answeredEvaluations) {
     const submitResponse = await page.request.post(
-      `http://127.0.0.1:3001/api/evaluations/${evaluation.id}/submit`,
+      `${apiBase}/api/evaluations/${evaluation.id}/submit`,
       {
         headers: { ...userHeaders, 'If-Match': `"${evaluation.lockVersion}"` },
       },
@@ -300,7 +303,7 @@ test('global administrator selects a tenant and completes core control flow', as
     submittedEvaluations.push(submitted);
   }
 
-  const reviewDataResponse = await page.request.get(`http://127.0.0.1:3001/api/review/tasks/${taskId}`, { headers });
+  const reviewDataResponse = await page.request.get(`${apiBase}/api/review/tasks/${taskId}`, { headers });
   expect(reviewDataResponse.ok()).toBeTruthy();
   const reviewEvaluation = (await reviewDataResponse.json()).data
     .find((item: any) => item.id === evaluations[0].id);
@@ -311,13 +314,13 @@ test('global administrator selects a tenant and completes core control flow', as
   const reviewedEvaluations = [];
   for (const evaluation of submittedEvaluations) {
     const claimResponse = await page.request.post(
-      `http://127.0.0.1:3001/api/evaluations/${evaluation.id}/review-claim`,
+      `${apiBase}/api/evaluations/${evaluation.id}/review-claim`,
       { headers },
     );
     expect(claimResponse.ok()).toBeTruthy();
     const claimed = (await claimResponse.json()).data;
     const reviewResponse = await page.request.post(
-      `http://127.0.0.1:3001/api/evaluations/${evaluation.id}/review`,
+      `${apiBase}/api/evaluations/${evaluation.id}/review`,
       {
         headers: { ...headers, 'If-Match': `"${claimed.lockVersion}"` },
         data: {
@@ -335,7 +338,7 @@ test('global administrator selects a tenant and completes core control flow', as
     reviewedEvaluations.push((await reviewResponse.json()).data);
   }
 
-  const firstRiskResponse = await page.request.post('http://127.0.0.1:3001/api/risks', {
+  const firstRiskResponse = await page.request.post(`${apiBase}/api/risks`, {
     headers: { ...headers, 'Idempotency-Key': `e2e-risk-first-${suffix}` },
     data: {
       taskId,
@@ -352,11 +355,29 @@ test('global administrator selects a tenant and completes core control flow', as
     },
   });
   expect(firstRiskResponse.status()).toBe(201);
-  const risk = (await firstRiskResponse.json()).data;
+  let risk = (await firstRiskResponse.json()).data;
   expect(risk.sources).toHaveLength(3);
   expect(risk.affectedAssets).toHaveLength(3);
 
-  const secondRiskResponse = await page.request.post('http://127.0.0.1:3001/api/risks', {
+  await page.goto(`/risks/${risk.id}/edit`);
+  await expect(page.getByRole('heading', { name: '编辑风险' })).toBeVisible();
+  await expect(page.getByLabel('来源说明', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '分配审核人', exact: true })).toHaveCount(0);
+  await page.getByLabel('描述', { exact: true }).fill('评估来源保持只读，更新风险资料后继续原有整改闭环。');
+  const riskEditPromise = page.waitForResponse((response) =>
+    response.url().endsWith(`/api/risks/${risk.id}`) && response.request().method() === 'PATCH');
+  await page.getByRole('button', { name: '保存修改', exact: true }).click();
+  const riskEditResponse = await riskEditPromise;
+  expect(riskEditResponse.ok(), await riskEditResponse.text()).toBeTruthy();
+  for (const forbiddenField of ['discoverySource', 'discoverySourceDetail', 'sourceReference', 'reviewerUserId']) {
+    expect(riskEditResponse.request().postDataJSON()).not.toHaveProperty(forbiddenField);
+  }
+  risk = (await riskEditResponse.json()).data;
+  await expect(page).toHaveURL(new RegExp(`/risks/${risk.id}$`));
+  await expect(page.getByRole('heading', { name: new RegExp(risk.title) })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('evaluation-risk-edited.png'), fullPage: true });
+
+  const secondRiskResponse = await page.request.post(`${apiBase}/api/risks`, {
     headers: { ...headers, 'Idempotency-Key': `e2e-risk-second-${suffix}` },
     data: {
       taskId,
@@ -374,18 +395,18 @@ test('global administrator selects a tenant and completes core control flow', as
   const secondRisk = (await secondRiskResponse.json()).data;
 
   const completeReviewResponse = await page.request.post(
-    `http://127.0.0.1:3001/api/tasks/${taskId}/complete-review`,
+    `${apiBase}/api/tasks/${taskId}/complete-review`,
     { headers },
   );
   expect(completeReviewResponse.ok()).toBeTruthy();
   expect((await completeReviewResponse.json()).data.status).toBe('pending_closure');
 
   expect((await page.request.post(
-    `http://127.0.0.1:3001/api/risks/${risk.id}/confirm`,
+    `${apiBase}/api/risks/${risk.id}/confirm`,
     { headers: { ...headers, 'If-Match': `"${risk.lockVersion}"` } },
   )).ok()).toBeTruthy();
   expect((await page.request.post(
-    `http://127.0.0.1:3001/api/risks/${secondRisk.id}/confirm`,
+    `${apiBase}/api/risks/${secondRisk.id}/confirm`,
     { headers: { ...headers, 'If-Match': `"${secondRisk.lockVersion}"` } },
   )).ok()).toBeTruthy();
 
@@ -393,7 +414,7 @@ test('global administrator selects a tenant and completes core control flow', as
     actionIndex: number,
     riskLinks: Array<{ riskId: string; contributionDescription: string }>,
   ) => {
-    const createActionResponse = await page.request.post('http://127.0.0.1:3001/api/remediation-actions', {
+    const createActionResponse = await page.request.post(`${apiBase}/api/remediation-actions`, {
       headers,
       data: {
         title: `E2E整改行动${actionIndex}-${suffix}`,
@@ -411,7 +432,7 @@ test('global administrator selects a tenant and completes core control flow', as
     expect(createActionResponse.status()).toBe(201);
     let remediationAction = (await createActionResponse.json()).data;
     const updateActionResponse = await page.request.put(
-      `http://127.0.0.1:3001/api/remediation-actions/${remediationAction.id}`,
+      `${apiBase}/api/remediation-actions/${remediationAction.id}`,
       {
         headers: { ...userHeaders, 'If-Match': `"${remediationAction.lockVersion}"` },
         data: { progressNote: `第${actionIndex}项整改已完成并验证` },
@@ -420,7 +441,7 @@ test('global administrator selects a tenant and completes core control flow', as
     expect(updateActionResponse.ok()).toBeTruthy();
     remediationAction = (await updateActionResponse.json()).data;
     const remediationEvidence = await page.request.post(
-      `http://127.0.0.1:3001/api/remediation-actions/${remediationAction.id}/evidence`,
+      `${apiBase}/api/remediation-actions/${remediationAction.id}/evidence`,
       {
         headers: userHeaders,
         multipart: {
@@ -434,7 +455,7 @@ test('global administrator selects a tenant and completes core control flow', as
     );
     expect(remediationEvidence.status()).toBe(201);
     const submittedResponse = await page.request.post(
-      `http://127.0.0.1:3001/api/remediation-actions/${remediationAction.id}/submit`,
+      `${apiBase}/api/remediation-actions/${remediationAction.id}/submit`,
       {
         headers: {
           ...userHeaders,
@@ -452,7 +473,7 @@ test('global administrator selects a tenant and completes core control flow', as
     { riskId: secondRisk.id, contributionDescription: '补齐组织权限复核机制' },
   ]);
   const rejectedResponse = await page.request.post(
-    `http://127.0.0.1:3001/api/risks/${risk.id}/actions/${sharedAction.id}/verify`,
+    `${apiBase}/api/risks/${risk.id}/actions/${sharedAction.id}/verify`,
     {
       headers: { ...headers, 'If-Match': `"${sharedAction.lockVersion}"` },
       data: { decision: 'rejected', comment: '证据不足，请补充验证记录' },
@@ -461,7 +482,7 @@ test('global administrator selects a tenant and completes core control flow', as
   expect(rejectedResponse.ok()).toBeTruthy();
   sharedAction = (await rejectedResponse.json()).data;
   const fixedResponse = await page.request.put(
-    `http://127.0.0.1:3001/api/remediation-actions/${sharedAction.id}`,
+    `${apiBase}/api/remediation-actions/${sharedAction.id}`,
     {
       headers: { ...userHeaders, 'If-Match': `"${sharedAction.lockVersion}"` },
       data: { progressNote: '已按驳回意见补充完整验证记录' },
@@ -469,7 +490,7 @@ test('global administrator selects a tenant and completes core control flow', as
   );
   sharedAction = (await fixedResponse.json()).data;
   const resubmitResponse = await page.request.post(
-    `http://127.0.0.1:3001/api/remediation-actions/${sharedAction.id}/submit`,
+    `${apiBase}/api/remediation-actions/${sharedAction.id}/submit`,
     {
       headers: {
         ...userHeaders,
@@ -483,7 +504,7 @@ test('global administrator selects a tenant and completes core control flow', as
 
   for (const linkedRisk of [risk, secondRisk]) {
     const approveResponse = await page.request.post(
-      `http://127.0.0.1:3001/api/risks/${linkedRisk.id}/actions/${sharedAction.id}/verify`,
+      `${apiBase}/api/risks/${linkedRisk.id}/actions/${sharedAction.id}/verify`,
       {
         headers: { ...headers, 'If-Match': `"${sharedAction.lockVersion}"` },
         data: { decision: 'approved', comment: '补充后复核通过' },
@@ -497,7 +518,7 @@ test('global administrator selects a tenant and completes core control flow', as
     { riskId: risk.id, contributionDescription: '补充账号季度复核自动提醒' },
   ]);
   const secondActionApprove = await page.request.post(
-    `http://127.0.0.1:3001/api/risks/${risk.id}/actions/${secondAction.id}/verify`,
+    `${apiBase}/api/risks/${risk.id}/actions/${secondAction.id}/verify`,
     {
       headers: { ...headers, 'If-Match': `"${secondAction.lockVersion}"` },
       data: { decision: 'approved', comment: '第二项必要行动通过' },
@@ -507,11 +528,11 @@ test('global administrator selects a tenant and completes core control flow', as
   secondAction = (await secondActionApprove.json()).data;
 
   const closableRisk = (await (await page.request.get(
-    `http://127.0.0.1:3001/api/risks/${risk.id}`,
+    `${apiBase}/api/risks/${risk.id}`,
     { headers },
   )).json()).data;
   const closeRiskResponse = await page.request.post(
-    `http://127.0.0.1:3001/api/risks/${risk.id}/close`,
+    `${apiBase}/api/risks/${risk.id}/close`,
     {
       headers: { ...headers, 'If-Match': `"${closableRisk.lockVersion}"` },
       data: { comment: '全部必要行动已通过' },
@@ -521,11 +542,11 @@ test('global administrator selects a tenant and completes core control flow', as
   expect((await closeRiskResponse.json()).data.status).toBe('closed');
 
   const closableSecondRisk = (await (await page.request.get(
-    `http://127.0.0.1:3001/api/risks/${secondRisk.id}`,
+    `${apiBase}/api/risks/${secondRisk.id}`,
     { headers },
   )).json()).data;
   const closeSecondRiskResponse = await page.request.post(
-    `http://127.0.0.1:3001/api/risks/${secondRisk.id}/close`,
+    `${apiBase}/api/risks/${secondRisk.id}/close`,
     {
       headers: { ...headers, 'If-Match': `"${closableSecondRisk.lockVersion}"` },
       data: { comment: '共享必要行动已通过' },
@@ -534,21 +555,21 @@ test('global administrator selects a tenant and completes core control flow', as
   expect(closeSecondRiskResponse.ok()).toBeTruthy();
 
   const riskExportResponse = await page.request.get(
-    'http://127.0.0.1:3001/api/export/risks',
+    `${apiBase}/api/export/risks`,
     { headers: { ...headers, 'Idempotency-Key': `e2e-export-${suffix}` } },
   );
   expect(riskExportResponse.ok()).toBeTruthy();
   expect(riskExportResponse.headers()['content-type']).toContain('spreadsheetml');
 
   const accountCsvResponse = await page.request.get(
-    'http://127.0.0.1:3001/api/account/problems/export/data',
+    `${apiBase}/api/account/problems/export/data`,
     { headers },
   );
   expect(accountCsvResponse.ok()).toBeTruthy();
   expect(accountCsvResponse.headers()['content-type']).toContain('text/csv');
 
   const auditResponse = await page.request.get(
-    'http://127.0.0.1:3001/api/audit-logs?page=1&pageSize=100',
+    `${apiBase}/api/audit-logs?page=1&pageSize=100`,
     { headers },
   );
   expect(auditResponse.ok()).toBeTruthy();

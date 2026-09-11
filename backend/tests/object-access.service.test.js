@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import { Op } from 'sequelize';
 import objectAccessService from '../src/services/object-access.service';
-import { AssessmentAuditor, AuditTask, EvaluationHistoryLink, QuestionItem } from '../src/models';
+import { AssessmentAuditor, AuditTask, EvaluationHistoryLink, QuestionItem, RiskRecord } from '../src/models';
 
 const actor = (overrides = {}) => ({
   userId: 'user-1',
@@ -65,5 +66,53 @@ describe('object access service', () => {
     await expect(objectAccessService.questionOrHistorySourceNotFound('source-1', actor()))
       .resolves.toMatchObject({ id: 'source-1' });
     expect(access).toHaveBeenNthCalledWith(2, 'current-1', expect.any(Object), 'read');
+  });
+
+  test('assigned risk scope includes creator, owner and independent reviewer', async () => {
+    mockNoAuditorAssignments();
+    vi.spyOn(QuestionItem, 'findAll').mockResolvedValue([]);
+    vi.spyOn(AuditTask, 'findAll').mockResolvedValue([]);
+    const find = vi.spyOn(RiskRecord, 'findOne').mockResolvedValue({ id: 'risk-1' });
+    const riskActor = actor({
+      permissions: { risks: ['read'] },
+      permissionScopes: { risks: { read: 'assigned' } },
+    });
+
+    await objectAccessService.riskOrNotFound('risk-1', riskActor);
+
+    const clauses = find.mock.calls[0][0].where[Op.or];
+    expect(clauses).toEqual(expect.arrayContaining([
+      { ownerUserId: riskActor.userId },
+      { createdBy: riskActor.userId },
+      { reviewerUserId: riskActor.userId },
+    ]));
+  });
+
+  test('risk scopes preserve all, department and self boundaries', async () => {
+    await expect(objectAccessService.riskScope(actor({
+      permissions: { risks: ['read'] },
+      permissionScopes: { risks: { read: 'all' } },
+    }))).resolves.toEqual({});
+
+    const departmentScope = await objectAccessService.riskScope(actor({
+      permissions: { risks: ['read'] }, departmentIds: ['dept-1', 'dept-2'],
+      permissionScopes: { risks: { read: 'department' } },
+    }));
+    expect(departmentScope.ownerDepartmentId[Op.in]).toEqual(['dept-1', 'dept-2']);
+
+    const riskActor = actor({ permissions: { risks: ['read'] }, permissionScopes: { risks: { read: 'self' } } });
+    const selfScope = await objectAccessService.riskScope(riskActor);
+    expect(selfScope[Op.or]).toEqual([
+      { ownerUserId: riskActor.userId },
+      { createdBy: riskActor.userId },
+      { reviewerUserId: riskActor.userId },
+    ]);
+  });
+
+  test('an unrelated user receives not-found semantics for a risk', async () => {
+    vi.spyOn(RiskRecord, 'findOne').mockResolvedValue(null);
+    const riskActor = actor({ permissions: { risks: ['read'] }, permissionScopes: { risks: { read: 'self' } } });
+    await expect(objectAccessService.riskOrNotFound('risk-hidden', riskActor))
+      .rejects.toMatchObject({ code: 'NOT_FOUND', statusCode: 404 });
   });
 });

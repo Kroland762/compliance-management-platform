@@ -375,9 +375,9 @@ export default function MainLayout() {
                         }}>
                         <div style={{ width: '100%' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                            <Tag color={item.notificationType === 'task_assigned' ? 'blue' : item.notificationType === 'task_returned' ? 'red' : 'green'}
+                            <Tag color={item.notificationType.includes('rejected') || item.notificationType === 'task_returned' ? 'red' : item.notificationType.includes('pending') || item.notificationType.includes('submitted') ? 'orange' : item.notificationType.includes('assigned') ? 'blue' : 'green'}
                               style={{ fontSize: 11, lineHeight: '18px' }}>
-                              {item.notificationType === 'task_assigned' ? '分配' : item.notificationType === 'task_returned' ? '退回' : '提交'}
+                              {{ task_assigned: '任务分配', task_returned: '退回', task_submitted: '任务提交', risk_assigned: '风险分配', risk_pending_confirmation: '风险待确认', risk_review_due: '复查到期', remediation_assigned: '整改分配', remediation_submitted: '整改待验证', remediation_approved: '验证通过', remediation_rejected: '验证驳回' }[item.notificationType as string] || '通知'}
                             </Tag>
                             <Text strong style={{ fontSize: 13 }}>{item.title}</Text>
                             {!item.isRead && (
