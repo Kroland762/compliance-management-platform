@@ -1,5 +1,5 @@
 import { Op } from 'sequelize';
-import { DepartmentMember, MemberRole, Role, TenantMember, TenantMemberStatus } from '../models';
+import { Department, DepartmentMember, MemberRole, Role, TenantMember, TenantMemberStatus } from '../models';
 import type { DataScope, PermissionMatrix, PermissionScopeMatrix } from '../models';
 import { AppError } from '../utils/http';
 
@@ -19,6 +19,7 @@ export interface ResolvedMemberContext {
   permissionScopes: PermissionScopeMatrix;
   departmentIds: string[];
   primaryDepartmentId: string;
+  primaryDepartmentName: string;
 }
 
 class MemberContextService {
@@ -58,9 +59,14 @@ class MemberContextService {
       }
     }
 
-    const departments = await DepartmentMember.findAll({ where: { memberId: member.id } });
+    const departments = await DepartmentMember.findAll({
+      where: { memberId: member.id },
+      include: [{ model: Department, as: 'department', attributes: ['id', 'name'], required: true }],
+    });
     const primary = departments.find((assignment) => assignment.isPrimary);
     if (!primary) throw new AppError(403, 'PRIMARY_DEPARTMENT_REQUIRED', '成员未配置主部门');
+    const primaryDepartment = (primary as DepartmentMember & { department?: Department }).department;
+    if (!primaryDepartment) throw new AppError(403, 'PRIMARY_DEPARTMENT_REQUIRED', '成员主部门不存在');
 
     return {
       member,
@@ -70,6 +76,7 @@ class MemberContextService {
       permissionScopes,
       departmentIds: departments.map((assignment) => assignment.departmentId),
       primaryDepartmentId: primary.departmentId,
+      primaryDepartmentName: primaryDepartment.name,
     };
   }
 

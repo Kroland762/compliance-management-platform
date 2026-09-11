@@ -115,7 +115,7 @@ async function main(): Promise<void> {
         assignedTo: user.id,
         reviewerId: user.id,
         departmentId: department.id,
-        status: TaskStatus.COMPLETED,
+        status: TaskStatus.PENDING_CLOSURE,
         publishedAt: new Date(),
       });
       const schema = tenant.schemaName.replace(/"/g, '""');
@@ -159,7 +159,7 @@ async function main(): Promise<void> {
         assignedTo: user.id,
         reviewerId: user.id,
         departmentId: department.id,
-        status: TaskStatus.CONFIGURING,
+        status: TaskStatus.PREPARING,
       });
       const publishAssets = assets.slice(0, 100);
       await AssessmentAsset.bulkCreate(publishAssets.map((asset) => ({

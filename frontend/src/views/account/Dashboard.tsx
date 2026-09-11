@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Typography, Row, Col, Card, Progress } from 'antd';
+import { Typography, Row, Col, Card, Alert, Button, Empty } from 'antd';
 import {
   DatabaseOutlined,
   UserOutlined,
@@ -11,10 +11,8 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { dashboardApi, type DashboardOverview, type DashboardTrend, type DashboardDistribution, type DashboardRanking } from '../../api/account';
-import { getApiErrorMessage } from '../../utils/error';
-import { message } from 'antd';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 const StatCard = ({
   icon, label, value, color, onClick,
@@ -62,7 +60,7 @@ const StatCard = ({
       {icon}
     </div>
     <div style={{ minWidth: 0 }}>
-      <div style={{ fontSize: 13, color: '#8E8E93', marginBottom: 2, whiteSpace: 'nowrap' }}>{label}</div>
+      <div style={{ fontSize: 13, color: '#636366', marginBottom: 2, whiteSpace: 'nowrap' }}>{label}</div>
       <div style={{ fontSize: 28, fontWeight: 600, color: '#1D1D1F', letterSpacing: '-0.02em', lineHeight: 1 }}>
         {value}
       </div>
@@ -77,25 +75,30 @@ export default function AccountDashboard() {
   const [distribution, setDistribution] = useState<DashboardDistribution[]>([]);
   const [ranking, setRanking] = useState<DashboardRanking[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [reloadKey, setReloadKey] = useState(0);
+  const retry = () => setReloadKey((value) => value + 1);
 
   useEffect(() => {
     let cancelled = false;
     const fetchData = async () => {
-      try {
-        const [overviewRes, trendsRes, distRes, rankRes] = await Promise.allSettled([
-          dashboardApi.overview(),
-          dashboardApi.trends({ period: '30d' }),
-          dashboardApi.distribution(),
-          dashboardApi.ranking({ top: 10 }),
-        ]);
-        if (cancelled) return;
-        if (overviewRes.status === 'fulfilled') {
+      setLoading(true);
+      setErrors({});
+      const [overviewRes, trendsRes, distRes, rankRes] = await Promise.allSettled([
+        dashboardApi.overview(),
+        dashboardApi.trends({ days: 30 }),
+        dashboardApi.distribution(),
+        dashboardApi.ranking({ limit: 10 }),
+      ]);
+      if (cancelled) return;
+      const nextErrors: Record<string, string> = {};
+      if (overviewRes.status === 'fulfilled') {
           setOverview((overviewRes.value as any).data);
-        }
-        if (trendsRes.status === 'fulfilled') {
+      } else nextErrors.overview = '概览加载失败';
+      if (trendsRes.status === 'fulfilled') {
           setTrends((trendsRes.value as any).data || []);
-        }
-        if (distRes.status === 'fulfilled') {
+      } else nextErrors.trends = '趋势加载失败';
+      if (distRes.status === 'fulfilled') {
           const rawDist = (distRes.value as any).data || {};
           // API 返回 { HIGH: N, MEDIUM: N, LOW: N }，转数组
           const distArray = Object.entries(rawDist).map(([key, value]) => ({
@@ -104,8 +107,8 @@ export default function AccountDashboard() {
             color: key === 'HIGH' ? '#FF3B30' : key === 'MEDIUM' ? '#FF9500' : '#34C759',
           }));
           setDistribution(distArray);
-        }
-        if (rankRes.status === 'fulfilled') {
+      } else nextErrors.distribution = '风险分布加载失败';
+      if (rankRes.status === 'fulfilled') {
           const rawRank = (rankRes.value as any).data || [];
           // API 返回 [{ taskName, sourceName, problemCount }]，映射为图表字段
           const rankArray = rawRank.map((r: any) => ({
@@ -113,19 +116,35 @@ export default function AccountDashboard() {
             count: r.problemCount || 0,
           }));
           setRanking(rankArray);
-        }
-      } catch {
-        message.error('获取概览数据失败');
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      } else nextErrors.ranking = '排行加载失败';
+      setErrors(nextErrors);
+      setLoading(false);
     };
     fetchData();
     return () => { cancelled = true; };
-  }, []);
+  }, [reloadKey]);
+
+  const hasDistributionData = distribution.some((item) => item.value > 0);
+  const hasRankingData = ranking.some((item) => item.count > 0);
+  const hasTrendData = trends.some((item) => item.count > 0);
+  const failedSectionCount = Object.keys(errors).length;
+
+  const chartEmptyState = (description: string, error?: string) => (
+    <div style={{ height: 260, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={error || description}>
+        {error && <Button size="small" onClick={retry}>重试</Button>}
+      </Empty>
+    </div>
+  );
 
   return (
     <div>
+      {Object.keys(errors).length > 0 && (
+        <Alert type="error" showIcon style={{ marginBottom: 16 }}
+          message={failedSectionCount === 4 ? '账户审计数据加载失败' : '部分账户审计数据加载失败'}
+          description={Object.values(errors).join('、')}
+          action={<Button size="small" onClick={retry}>重试</Button>} />
+      )}
       {/* Stat Cards */}
       <div style={{
         display: 'grid',
@@ -171,10 +190,10 @@ export default function AccountDashboard() {
             }}
             title={<Text strong style={{ fontSize: 15 }}>风险等级分布</Text>}
           >
-            {distribution.length === 0 ? (
-              <div style={{ height: 260, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#AEAEB2' }}>
-                暂无数据
-              </div>
+            {errors.distribution ? (
+              chartEmptyState('当前没有风险问题', errors.distribution)
+            ) : !hasDistributionData ? (
+              chartEmptyState('当前没有风险问题')
             ) : (
               <ResponsiveContainer width="100%" height={260}>
                 <PieChart>
@@ -212,15 +231,15 @@ export default function AccountDashboard() {
             }}
             title={<Text strong style={{ fontSize: 15 }}>数据源问题排行</Text>}
           >
-            {ranking.length === 0 ? (
-              <div style={{ height: 260, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#AEAEB2' }}>
-                暂无数据
-              </div>
+            {errors.ranking ? (
+              chartEmptyState('当前没有可排行的问题数据', errors.ranking)
+            ) : !hasRankingData ? (
+              chartEmptyState('当前没有可排行的问题数据')
             ) : (
               <ResponsiveContainer width="100%" height={260}>
                 <BarChart data={ranking} layout="vertical" margin={{ left: 20, right: 20 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
-                  <XAxis type="number" tick={{ fontSize: 11, fill: '#8E8E93' }} />
+                  <XAxis type="number" tick={{ fontSize: 11, fill: '#636366' }} />
                   <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 11, fill: '#636366' }} />
                   <Tooltip
                     formatter={(value: any) => [value, '问题数']}
@@ -253,16 +272,22 @@ export default function AccountDashboard() {
               </div>
             }
           >
-            {trends.length === 0 ? (
-              <div style={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#AEAEB2' }}>
-                暂无数据
+            {errors.trends ? (
+              <div style={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={errors.trends}>
+                  <Button size="small" onClick={retry}>重试</Button>
+                </Empty>
+              </div>
+            ) : !hasTrendData ? (
+              <div style={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="近 30 天暂无新增问题" />
               </div>
             ) : (
               <ResponsiveContainer width="100%" height={200}>
                 <BarChart data={trends}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
-                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#8E8E93' }} />
-                  <YAxis tick={{ fontSize: 11, fill: '#8E8E93' }} />
+                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#636366' }} />
+                  <YAxis tick={{ fontSize: 11, fill: '#636366' }} />
                   <Tooltip
                     formatter={(value: any) => [value, '问题数']}
                     contentStyle={{ borderRadius: 10, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}

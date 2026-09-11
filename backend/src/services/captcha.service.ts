@@ -1,18 +1,23 @@
+import { randomUUID } from 'crypto';
 import svgCaptcha from 'svg-captcha';
+import { AppError } from '../utils/http';
 
 interface CaptchaEntry {
   code: string;
   expiresAt: number;
 }
 
-class CaptchaService {
+export class CaptchaService {
   private store = new Map<string, CaptchaEntry>();
-  private readonly TTL = 5 * 60 * 1000; // 5 分钟有效期
+  private readonly ttl: number;
+  private readonly maxEntries: number;
 
   // 定期清理过期验证码
   private cleanupTimer: ReturnType<typeof setInterval>;
 
-  constructor() {
+  constructor(maxEntries = 5_000, ttl = 5 * 60 * 1000) {
+    this.maxEntries = maxEntries;
+    this.ttl = ttl;
     this.cleanupTimer = setInterval(() => this.cleanup(), 60_000);
     this.cleanupTimer.unref();
   }
@@ -21,6 +26,10 @@ class CaptchaService {
    * 生成图形验证码
    */
   generate(): { captchaId: string; svg: string } {
+    this.cleanup();
+    if (this.store.size >= this.maxEntries) {
+      throw new AppError(429, 'CAPTCHA_CAPACITY_REACHED', '验证码服务繁忙，请稍后再试');
+    }
     const captcha = svgCaptcha.create({
       size: 4,
       noise: 3,
@@ -32,10 +41,10 @@ class CaptchaService {
       fontSize: 42,
     });
 
-    const captchaId = `cap_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+    const captchaId = `cap_${randomUUID()}`;
     this.store.set(captchaId, {
       code: captcha.text.toLowerCase(),
-      expiresAt: Date.now() + this.TTL,
+      expiresAt: Date.now() + this.ttl,
     });
 
     return { captchaId, svg: captcha.data };

@@ -21,6 +21,30 @@ router.post('/', authorize('risks', 'create'), asyncHandler(async (req: Request,
   res.status(201).json({ success: true, data: risk });
 }));
 
+router.post('/from-findings', authorize('findings', 'escalate'), asyncHandler(async (req: Request, res: Response) => {
+  const risk = await riskDomainService.createFromFindings(req.body, req.user!, req.header('Idempotency-Key'));
+  res.status(201).json({ success: true, data: risk });
+}));
+
+router.patch('/:id', authorize('risks', 'update'), asyncHandler(async (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: await riskDomainService.update(req.params.id, req.body, req.user!, parseExpectedLockVersion(req)),
+  });
+}));
+
+router.put('/:id/reviewer', authorize('risks', 'assign'), asyncHandler(async (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: await riskDomainService.assignReviewer(
+      req.params.id,
+      req.body.reviewerUserId,
+      req.user!,
+      parseExpectedLockVersion(req),
+    ),
+  });
+}));
+
 router.put('/:id/sources', authorize('risks', 'update'), asyncHandler(async (req: Request, res: Response) => {
   res.json({
     success: true,

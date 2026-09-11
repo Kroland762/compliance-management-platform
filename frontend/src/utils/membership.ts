@@ -17,6 +17,16 @@ export function buildDepartmentAssignments(
   }));
 }
 
+export function resolvePrimaryDepartmentId(
+  departmentIds: string[],
+  primaryDepartmentId?: string,
+): string | undefined {
+  const uniqueIds = Array.from(new Set(departmentIds));
+  if (uniqueIds.length === 1) return uniqueIds[0];
+  if (!primaryDepartmentId || !uniqueIds.includes(primaryDepartmentId)) return undefined;
+  return primaryDepartmentId;
+}
+
 export function buildPermissionConfiguration(
   resources: string[],
   values: Record<string, unknown>,

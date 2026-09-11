@@ -18,6 +18,7 @@ import cronSchedulerService from './account/cronScheduler.service';
 import assessmentScopeService from './assessment-scope.service';
 import auditLogService from './audit-log.service';
 import notificationService from './notification.service';
+import objectAccessService from './object-access.service';
 import taskService from './task.service';
 
 type RequestUser = NonNullable<Express.Request['user']>;
@@ -40,7 +41,7 @@ interface PlanInput {
 }
 
 class AssessmentPlanService {
-  private async validate(input: PlanInput) {
+  private async validate(input: PlanInput, user: RequestUser) {
     if (!input.name?.trim() || !cron.validate(input.cronExpression)) {
       throw new AppError(400, 'VALIDATION_ERROR', '计划名称或 Cron 表达式无效');
     }
@@ -52,7 +53,13 @@ class AssessmentPlanService {
     const [template, department, assets, controls] = await Promise.all([
       QuestionnaireTemplate.findByPk(input.templateId),
       Department.findOne({ where: { id: input.defaultDepartmentId, status: 'active' } }),
-      Asset.findAll({ where: { id: { [Op.in]: assetIds }, status: 'active' } }),
+      Asset.findAll({
+        where: {
+          id: { [Op.in]: assetIds },
+          status: 'active',
+          ...(await objectAccessService.assetScope(user, 'read') as object),
+        },
+      }),
       QuestionTemplate.findAll({ where: { id: { [Op.in]: controlIds }, templateId: input.templateId } }),
     ]);
     if (!template || !department || assets.length !== assetIds.length || controls.length !== controlIds.length) {
@@ -63,9 +70,9 @@ class AssessmentPlanService {
     }
   }
 
-  async list(query: Record<string, unknown>) {
+  async list(query: Record<string, unknown>, user: RequestUser) {
     const { page, pageSize } = parsePagination(query as any);
-    const where: any = {};
+    const where: any = await objectAccessService.assessmentPlanScope(user, 'read');
     if (query.enabled !== undefined) where.enabled = query.enabled === 'true';
     const { rows, count } = await AssessmentPlan.findAndCountAll({
       where,
@@ -76,8 +83,9 @@ class AssessmentPlanService {
     return { items: rows, pagination: pagination(page, pageSize, count) };
   }
 
-  async detail(id: string) {
-    const plan = await AssessmentPlan.findByPk(id, {
+  async detail(id: string, user: RequestUser) {
+    const plan = await AssessmentPlan.findOne({
+      where: { id, ...(await objectAccessService.assessmentPlanScope(user, 'read') as object) },
       include: [{ association: 'executions', limit: 20, order: [['triggerTime', 'DESC']] }],
     });
     if (!plan) throw new AppError(404, 'NOT_FOUND', '周期评估计划不存在');
@@ -85,7 +93,7 @@ class AssessmentPlanService {
   }
 
   async create(input: PlanInput, user: RequestUser) {
-    await this.validate(input);
+    await this.validate(input, user);
     const plan = await AssessmentPlan.create({
       ...input,
       name: input.name.trim(),
@@ -107,10 +115,9 @@ class AssessmentPlanService {
   }
 
   async update(id: string, input: Partial<PlanInput>, user: RequestUser) {
-    const plan = await AssessmentPlan.findByPk(id);
-    if (!plan) throw new AppError(404, 'NOT_FOUND', '周期评估计划不存在');
+    const plan = await objectAccessService.assessmentPlanOrNotFound(id, user, 'update');
     const merged = { ...plan.toJSON(), ...input } as PlanInput;
-    await this.validate(merged);
+    await this.validate(merged, user);
     await plan.update({
       ...input,
       ...(input.name !== undefined ? { name: input.name.trim() } : {}),
@@ -122,6 +129,7 @@ class AssessmentPlanService {
   }
 
   async trigger(id: string, user: RequestUser) {
+    await objectAccessService.assessmentPlanOrNotFound(id, user, 'execute');
     const key = `manual:${id}:${crypto.randomUUID()}`;
     return this.executeScheduled(id, key, `manual:${user.userId}`);
   }

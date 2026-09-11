@@ -27,6 +27,7 @@ declare global {
         mustChangePassword: boolean;
         isGlobalAdmin: boolean;
         tokenKind: 'identity' | 'control' | 'tenant';
+        sessionId: string;
       };
     }
   }
@@ -82,7 +83,7 @@ export function authenticate(req: Request, _res: Response, next: NextFunction): 
  * 权限中间件工厂 - 基于 RBAC 权限矩阵
  */
 export function authorize(resource: PermissionResource, action: PermissionAction) {
-  return (req: Request, res: Response, next: NextFunction): void => {
+  return (req: Request, _res: Response, next: NextFunction): void => {
     if (!req.user) {
       next(new AppError(401, 'UNAUTHORIZED', '未认证'));
       return;
@@ -137,7 +138,7 @@ export function superAdminOnly(req: Request, _res: Response, next: NextFunction)
  * 多权限 OR 检查: authorizeAny([resource, action], [resource2, action2], ...)
  */
 export function authorizeAny(...checks: Array<[PermissionResource, PermissionAction]>) {
-  return (req: Request, res: Response, next: NextFunction): void => {
+  return (req: Request, _res: Response, next: NextFunction): void => {
     if (!req.user) {
       next(new AppError(401, 'UNAUTHORIZED', '未认证'));
       return;

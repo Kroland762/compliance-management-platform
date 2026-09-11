@@ -16,15 +16,27 @@ export enum AssessmentType {
 }
 
 export enum TaskStatus {
-  DRAFT = 'draft',
-  CONFIGURING = 'configuring',
-  ASSIGNED = 'assigned',
+  PREPARING = 'preparing',
+  READY = 'ready',
   IN_PROGRESS = 'in_progress',
-  SUBMITTED = 'submitted',
-  UNDER_REVIEW = 'under_review',
-  COMPLETED = 'completed',
-  RETURNED = 'returned',
+  PENDING_REVIEW = 'pending_review',
+  PENDING_CLOSURE = 'pending_closure',
+  CLOSED = 'closed',
   CANCELLED = 'cancelled',
+}
+
+export enum FindingStatus {
+  OPEN = 'open',
+  REMEDIATING = 'remediating',
+  ESCALATED = 'escalated',
+  RESOLVED = 'resolved',
+  CANCELLED = 'cancelled',
+}
+
+export enum FindingDisposition {
+  PENDING = 'pending',
+  DIRECT_REMEDIATION = 'direct_remediation',
+  RISK = 'risk',
 }
 
 /** @deprecated vNext uses EvaluationWorkflowStatus. */
@@ -65,6 +77,24 @@ export enum RiskLevel {
   HIGH = 'high',
   MEDIUM = 'medium',
   LOW = 'low',
+}
+
+export enum RiskCreationMode {
+  MANUAL = 'manual',
+  EVALUATION = 'evaluation',
+  FINDING_ESCALATION = 'finding_escalation',
+  IMPORT = 'import',
+}
+
+export enum RiskDiscoverySource {
+  DAILY_OPERATIONS = 'daily_operations',
+  COMPLIANCE_ASSESSMENT = 'compliance_assessment',
+  INTERNAL_AUDIT = 'internal_audit',
+  SECURITY_INCIDENT = 'security_incident',
+  COMPLAINT_FEEDBACK = 'complaint_feedback',
+  REGULATORY_CHANGE = 'regulatory_change',
+  THIRD_PARTY = 'third_party',
+  OTHER = 'other',
 }
 
 export enum EvaluationWorkflowStatus {
@@ -117,26 +147,12 @@ export enum AssessmentPlanExecutionStatus {
   REQUIRES_ATTENTION = 'requires_attention',
 }
 
-/** @deprecated vNext uses RemediationActionStatus. */
-export enum RemediationStatus {
-  REMEDIATED = 'remediated',
-  IN_PROGRESS = 'in_progress',
-  NOT_REMEDIATED = 'not_remediated',
-}
-
-/** @deprecated vNext uses TreatmentStrategy and RiskLifecycleStatus. */
-export enum RiskStatus {
-  RISK_ACCEPTANCE = 'risk_acceptance',
-  RISK_TRANSFER = 'risk_transfer',
-  RISK_REDUCTION = 'risk_reduction',
-  RISK_ELIMINATION = 'risk_elimination',
-}
-
 export enum NotificationType {
   TASK_ASSIGNED = 'task_assigned',
   TASK_RETURNED = 'task_returned',
   TASK_SUBMITTED = 'task_submitted',
   RISK_ASSIGNED = 'risk_assigned',
+  RISK_PENDING_CONFIRMATION = 'risk_pending_confirmation',
   RISK_REVIEW_DUE = 'risk_review_due',
   REMEDIATION_ASSIGNED = 'remediation_assigned',
   REMEDIATION_SUBMITTED = 'remediation_submitted',

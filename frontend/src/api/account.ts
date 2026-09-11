@@ -5,7 +5,7 @@ import apiClient from './client';
 export interface DataSource {
   id: string;
   name: string;
-  sourceType: 'DATABASE';
+  sourceType: 'DATABASE' | 'CSV';
   mappingStatus: string;
   taskCount?: number;
   totalAccounts: number;
@@ -14,12 +14,44 @@ export interface DataSource {
   createdAt: string;
   updatedAt: string;
   connectionConfig?: Record<string, any> | null;
+  csvConfig?: {
+    originalName?: string;
+    size?: number;
+    sha256?: string;
+    encoding?: 'UTF-8' | 'GB18030';
+    delimiter?: string;
+    headers?: string[];
+    rowCount?: number;
+    importedAt?: string;
+    needsReupload?: boolean;
+  } | null;
   fieldMappingConfig?: Record<string, any>;
+}
+
+export interface CsvPreview {
+  file: { originalName: string; size: number; sha256: string; encoding: string; delimiter: string };
+  headers: string[];
+  headerFingerprint: string;
+  rowCount: number;
+  sampleRows: Array<Record<string, any>>;
+  rawSampleRows: Array<Record<string, string>>;
+  savedMapping: Record<string, any>;
+  compatibility: {
+    status: 'UNMAPPED' | 'MAPPING_REQUIRED' | 'COMPATIBLE';
+    missingSourceFields: string[];
+    newSourceFields: string[];
+  };
+  warnings: {
+    blankAccountRows: number[];
+    duplicateAccountIds: string[];
+    duplicateAccountCount: number;
+  };
+  changeSummary: { newCount: number; reducedCount: number; existingCount: number };
 }
 
 export interface DataSourceConfig {
   // DATABASE
-  dbType?: string;
+  dbType?: 'postgres' | 'mysql' | 'mssql' | 'oracle' | 'sqlite' | string;
   host?: string;
   port?: number;
   database?: string;
@@ -58,7 +90,7 @@ export interface AccountChanges {
 }
 
 export const dataSourceApi = {
-  list: (params?: { keyword?: string; type?: string; status?: string }) =>
+  list: (params?: { search?: string; sourceType?: 'DATABASE' | 'CSV'; status?: 'ACTIVE' | 'INACTIVE'; page?: number; pageSize?: number }) =>
     apiClient.get('/account/data-sources', { params }),
 
   get: (id: string) =>
@@ -87,7 +119,33 @@ export const dataSourceApi = {
 
   accountChanges: (id: string, params?: { period?: string }) =>
     apiClient.get(`/account/data-sources/${id}/account-changes`, { params }),
+
+  previewCsv: (file: File, options?: { sourceId?: string; fieldMappingConfig?: Record<string, any>; delimiter?: string }) => {
+    const formData = csvFormData(file, options);
+    const url = options?.sourceId
+      ? `/account/data-sources/${options.sourceId}/csv/preview`
+      : '/account/data-sources/csv/preview';
+    return apiClient.post(url, formData, csvRequestConfig);
+  },
+
+  uploadCsv: (file: File, data: { name: string; fieldMappingConfig: Record<string, any>; expectedSha256: string; delimiter?: string }) =>
+    apiClient.post('/account/data-sources/upload', csvFormData(file, data), csvRequestConfig),
+
+  reuploadCsv: (id: string, file: File, data: { fieldMappingConfig?: Record<string, any>; expectedSha256: string; delimiter?: string }) =>
+    apiClient.post(`/account/data-sources/${id}/upload`, csvFormData(file, data), csvRequestConfig),
 };
+
+const csvRequestConfig = { headers: { 'Content-Type': 'multipart/form-data' } };
+
+function csvFormData(file: File, values?: Record<string, any>) {
+  const formData = new FormData();
+  formData.append('file', file);
+  Object.entries(values || {}).forEach(([key, value]) => {
+    if (key === 'sourceId' || value === undefined || value === null || value === '') return;
+    formData.append(key, key === 'fieldMappingConfig' ? JSON.stringify(value) : String(value));
+  });
+  return formData;
+}
 
 // ==================== Rules ====================
 
@@ -115,7 +173,7 @@ export interface RuleCondition {
 }
 
 export const ruleApi = {
-  list: (params?: { type?: string; severity?: string; isActive?: boolean | string }) =>
+  list: (params?: { search?: string; ruleType?: 'BUILTIN' | 'CUSTOM'; severity?: 'LOW' | 'MEDIUM' | 'HIGH'; isActive?: boolean; page?: number; pageSize?: number }) =>
     apiClient.get('/account/rules', { params }),
 
   get: (id: string) =>
@@ -146,8 +204,8 @@ export interface Task {
   sourceId: string;
   ruleCount: number;
   scheduleType: 'MANUAL' | 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'CRON';
-  cronExpression?: string;
-  status: 'idle' | 'running' | 'completed' | 'failed';
+  scheduleConfig?: { expression?: string; hour?: number; minute?: number; dayOfWeek?: number; dayOfMonth?: number } | null;
+  status: 'ACTIVE' | 'INACTIVE';
   lastExecTime: string | null;
   problemsFound: number;
   createdAt: string;
@@ -160,8 +218,8 @@ export interface TaskExecution {
   taskId: string;
   startTime: string;
   endTime: string | null;
-  status: 'pending' | 'running' | 'completed' | 'failed';
-  phase: string;
+  status: 'RUNNING' | 'SUCCESS' | 'FAILED';
+  currentPhase: 'SYNCING' | 'MAPPING' | 'MATCHING' | 'SAVING' | null;
   phaseProgress: number;
   accountsProcessed: number;
   problemsFound: number;
@@ -169,7 +227,7 @@ export interface TaskExecution {
 }
 
 export const taskApi = {
-  list: (params?: { status?: string; keyword?: string }) =>
+  list: (params?: { status?: 'ACTIVE' | 'INACTIVE'; scheduleType?: Task['scheduleType']; search?: string; page?: number; pageSize?: number }) =>
     apiClient.get('/account/tasks', { params }),
 
   get: (id: string) =>
@@ -200,10 +258,10 @@ export interface Problem {
   ruleName: string;
   ruleId: string;
   problemDescription: string;
-  severity: 'high' | 'medium' | 'low';
-  status: 'open' | 'acknowledged' | 'resolved' | 'false_positive';
+  severity: 'HIGH' | 'MEDIUM' | 'LOW';
+  status: 'PENDING' | 'PROCESSING' | 'RESOLVED' | 'AUTO_RESOLVED' | 'FALSE_POSITIVE' | 'IGNORED';
   firstDetectedAt: string;
-  lastDetectedAt: string;
+  lastSeenAt: string | null;
   resolvedAt: string | null;
   resolutionNotes: string | null;
   statusHistory?: StatusHistory[];
@@ -213,9 +271,10 @@ export interface StatusHistory {
   id: string;
   fromStatus: string;
   toStatus: string;
-  changedBy: string;
+  changedBy: string | null;
   changedAt: string;
   notes: string | null;
+  source: 'MANUAL' | 'BULK' | 'AUTO' | 'MIGRATION';
 }
 
 export const problemApi = {
@@ -223,9 +282,10 @@ export const problemApi = {
     ruleId?: string;
     severity?: string;
     status?: string;
-    keyword?: string;
-    startDate?: string;
-    endDate?: string;
+    search?: string;
+    taskId?: string;
+    dateFrom?: string;
+    dateTo?: string;
     page?: number;
     pageSize?: number;
   }) => apiClient.get('/account/problems', { params }),
@@ -273,12 +333,12 @@ export const dashboardApi = {
   overview: () =>
     apiClient.get('/account/dashboard/overview'),
 
-  trends: (params?: { period?: string }) =>
+  trends: (params?: { days?: number }) =>
     apiClient.get('/account/dashboard/trends', { params }),
 
   distribution: () =>
     apiClient.get('/account/dashboard/risk-distribution'),
 
-  ranking: (params?: { top?: number }) =>
+  ranking: (params?: { limit?: number }) =>
     apiClient.get('/account/dashboard/source-ranking', { params }),
 };

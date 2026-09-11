@@ -212,23 +212,24 @@ export class CronSchedulerService {
   }
 
   buildCronExpression(type: ScheduleType, scheduleConfig?: Record<string, any> | null): string | null {
-    const numberInRange = (value: unknown, fallback: number, min: number, max: number): number => {
-      const number = value === undefined ? fallback : Number(value);
+    const numberInRange = (value: unknown, min: number, max: number): number => {
+      const number = Number(value);
       if (!Number.isInteger(number) || number < min || number > max) {
         throw new Error('任务调度参数无效');
       }
       return number;
     };
-    const hour = numberInRange(scheduleConfig?.hour, 0, 0, 23);
-    const minute = numberInRange(scheduleConfig?.minute, 0, 0, 59);
-    let expression: string | null = null;
     if (type === ScheduleType.MANUAL) return null;
-    if (type === ScheduleType.DAILY) expression = `${minute} ${hour} * * *`;
+    if (!scheduleConfig) throw new Error('任务调度参数无效');
+    let expression: string | null = null;
+    if (type === ScheduleType.DAILY) {
+      expression = `${numberInRange(scheduleConfig.minute, 0, 59)} ${numberInRange(scheduleConfig.hour, 0, 23)} * * *`;
+    }
     if (type === ScheduleType.WEEKLY) {
-      expression = `${minute} ${hour} * * ${numberInRange(scheduleConfig?.dayOfWeek, 1, 0, 6)}`;
+      expression = `${numberInRange(scheduleConfig.minute, 0, 59)} ${numberInRange(scheduleConfig.hour, 0, 23)} * * ${numberInRange(scheduleConfig.dayOfWeek, 0, 6)}`;
     }
     if (type === ScheduleType.MONTHLY) {
-      expression = `${minute} ${hour} ${numberInRange(scheduleConfig?.dayOfMonth, 1, 1, 28)} * *`;
+      expression = `${numberInRange(scheduleConfig.minute, 0, 59)} ${numberInRange(scheduleConfig.hour, 0, 23)} ${numberInRange(scheduleConfig.dayOfMonth, 1, 28)} * *`;
     }
     if (type === ScheduleType.CRON) {
       expression = typeof scheduleConfig?.expression === 'string' ? scheduleConfig.expression.trim() : null;

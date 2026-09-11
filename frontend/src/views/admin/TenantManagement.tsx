@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Table, Button, Modal, Form, Input, Select, Space, Tag, Popconfirm, App, Typography } from 'antd';
-import { PlusOutlined, ReloadOutlined, TeamOutlined, DeleteOutlined, StopOutlined, CheckCircleOutlined, UserOutlined } from '@ant-design/icons';
+import { PlusOutlined, ReloadOutlined, DeleteOutlined, StopOutlined, CheckCircleOutlined, UserOutlined } from '@ant-design/icons';
 import apiClient from '../../api/client';
 import { useAuthStore } from '../../store/auth';
 import { getApiErrorMessage } from '../../utils/error';
@@ -174,6 +174,8 @@ export default function TenantManagement() {
     <div style={{ padding: '0 0 24px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <div>
+          <Title level={3} style={{ margin: 0 }}>平台管理</Title>
+          <Text type="secondary">管理平台租户；进入租户后才能查看和操作该租户的业务数据。</Text>
         </div>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={fetchTenants}>刷新</Button>

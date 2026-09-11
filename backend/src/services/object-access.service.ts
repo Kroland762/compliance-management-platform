@@ -1,15 +1,26 @@
 import { Op, type WhereOptions } from 'sequelize';
 import {
   Asset,
+  AssessmentAuditor,
+  AssessmentPlan,
   AuditTask,
   Department,
   Qualification,
+  Finding,
+  FindingActionLink,
   QuestionItem,
+  EvaluationHistoryLink,
   RemediationAction,
   RiskActionLink,
   RiskRecord,
+  Product,
+  ProductComplianceDossier,
+  ProductVersion,
 } from '../models';
 import type { DataScope, PermissionResource } from '../models';
+import type AccountAuditTaskModel from '../models/account/AuditTask';
+import type AccountDataSourceModel from '../models/account/DataSource';
+import type ProblemAccountModel from '../models/account/ProblemAccount';
 import { AppError } from '../utils/http';
 
 type RequestUser = NonNullable<Express.Request['user']>;
@@ -55,7 +66,15 @@ class ObjectAccessService {
       group: ['taskId'],
       raw: true,
     });
-    const assignedIds = assigned.map((row: any) => row.taskId);
+    const auditorAssignments = await AssessmentAuditor.findAll({
+      where: { auditorUserId: user.userId },
+      attributes: ['taskId'],
+      raw: true,
+    });
+    const assignedIds = [...new Set([
+      ...assigned.map((row: any) => row.taskId),
+      ...auditorAssignments.map((row: any) => row.taskId),
+    ])];
     if (onlyAssignedQuestions || scope === 'assigned') {
       return {
         [Op.or]: [
@@ -151,6 +170,103 @@ class ObjectAccessService {
     return asset;
   }
 
+  async accountDataSourceScope(user: RequestUser, action = 'read'): Promise<WhereOptions> {
+    if (this.scope(user, 'data_sources', action) === 'all') return {};
+    return { createdBy: user.userId };
+  }
+
+  async accountDataSourceOrNotFound(id: string, user: RequestUser, action = 'read'): Promise<AccountDataSourceModel> {
+    const { default: AccountDataSource } = await import('../models/account/DataSource');
+    const source = await AccountDataSource.findOne({
+      where: { id, ...(await this.accountDataSourceScope(user, action) as object) },
+    });
+    if (!source) throw new AppError(404, 'NOT_FOUND', '数据源不存在');
+    return source;
+  }
+
+  async accountTaskScope(user: RequestUser, action = 'read'): Promise<WhereOptions> {
+    if (this.scope(user, 'account_tasks', action) === 'all') return {};
+    return { createdBy: user.userId };
+  }
+
+  async accountTaskOrNotFound(id: string, user: RequestUser, action = 'read'): Promise<AccountAuditTaskModel> {
+    const { default: AccountAuditTask } = await import('../models/account/AuditTask');
+    const task = await AccountAuditTask.findOne({
+      where: { id, ...(await this.accountTaskScope(user, action) as object) },
+    });
+    if (!task) throw new AppError(404, 'NOT_FOUND', '审计任务不存在');
+    return task;
+  }
+
+  async accountProblemScope(user: RequestUser, action = 'read'): Promise<WhereOptions> {
+    const scope = this.scope(user, 'problems', action);
+    if (scope === 'all') return {};
+    const { default: AccountAuditTask } = await import('../models/account/AuditTask');
+    const tasks = await AccountAuditTask.findAll({
+      where: { createdBy: user.userId },
+      attributes: ['id'],
+      raw: true,
+    });
+    return { taskId: { [Op.in]: tasks.map((task: any) => task.id) } };
+  }
+
+  async accountProblemOrNotFound(id: string, user: RequestUser, action = 'read'): Promise<ProblemAccountModel> {
+    const { default: ProblemAccount } = await import('../models/account/ProblemAccount');
+    const problem = await ProblemAccount.findOne({
+      where: { id, ...(await this.accountProblemScope(user, action) as object) },
+    });
+    if (!problem) throw new AppError(404, 'NOT_FOUND', '问题记录不存在');
+    return problem;
+  }
+
+  async assessmentPlanScope(user: RequestUser, action = 'read'): Promise<WhereOptions> {
+    const scope = this.scope(user, 'assessment_plans', action);
+    if (scope === 'all') return {};
+    if (scope === 'department' || scope === 'department_tree') {
+      return { defaultDepartmentId: { [Op.in]: await this.departmentIds(user, scope) } };
+    }
+    return { createdBy: user.userId };
+  }
+
+  async assessmentPlanOrNotFound(id: string, user: RequestUser, action = 'read'): Promise<AssessmentPlan> {
+    const plan = await AssessmentPlan.findOne({
+      where: { id, ...(await this.assessmentPlanScope(user, action) as object) },
+    });
+    if (!plan) throw new AppError(404, 'NOT_FOUND', '周期评估计划不存在');
+    return plan;
+  }
+
+  async productScope(user: RequestUser, resource: 'products' | 'product_dossiers' = 'products', action = 'read'): Promise<WhereOptions> {
+    const scope = this.scope(user, resource, action);
+    if (scope === 'all') return {};
+    if (scope === 'department' || scope === 'department_tree') {
+      return { ownerDepartmentId: { [Op.in]: await this.departmentIds(user, scope) } };
+    }
+    return scope === 'assigned'
+      ? { ownerUserId: user.userId }
+      : { [Op.or]: [{ ownerUserId: user.userId }, { createdBy: user.userId }] };
+  }
+
+  async productOrNotFound(id: string, user: RequestUser, action = 'read'): Promise<Product> {
+    const product = await Product.findOne({ where: { id, ...(await this.productScope(user, 'products', action) as object) } });
+    if (!product) throw new AppError(404, 'NOT_FOUND', '产品不存在');
+    return product;
+  }
+
+  async dossierOrNotFound(id: string, user: RequestUser, action = 'read'): Promise<ProductComplianceDossier> {
+    const dossier = await ProductComplianceDossier.findOne({
+      where: { id },
+      include: [{
+        model: ProductVersion,
+        as: 'productVersion',
+        required: true,
+        include: [{ model: Product, as: 'product', where: await this.productScope(user, 'product_dossiers', action), required: true }],
+      }],
+    });
+    if (!dossier) throw new AppError(404, 'NOT_FOUND', '产品合规档案不存在');
+    return dossier;
+  }
+
   async evaluationOrNotFound(id: string, user: RequestUser, action = 'read'): Promise<QuestionItem> {
     const item = await QuestionItem.findOne({
       where: { id, ...(await this.evaluationScope(user, action) as object) },
@@ -166,25 +282,42 @@ class ObjectAccessService {
       return { responsibleDepartmentId: { [Op.in]: await this.departmentIds(user, scope) } };
     }
     if (scope === 'assigned') {
-      const tasks = await AuditTask.findAll({
-        where: {
-          [Op.or]: [
-            { assignedTo: user.userId },
-            { reviewerId: user.userId },
-          ],
-        },
-        attributes: ['id'],
+      const taskAssignments = await AssessmentAuditor.findAll({
+        where: { auditorUserId: user.userId },
+        attributes: ['taskId'],
         raw: true,
       });
       return {
         [Op.or]: [
           { assignedTo: user.userId },
           { reviewedBy: user.userId },
-          { taskId: { [Op.in]: tasks.map((task: any) => task.id) } },
+          { reviewClaimedBy: user.userId },
+          { taskId: { [Op.in]: taskAssignments.map((task: any) => task.taskId) } },
         ],
       };
     }
     return { [Op.or]: [{ assignedTo: user.userId }, { reviewedBy: user.userId }] };
+  }
+
+  async findingScope(user: RequestUser): Promise<WhereOptions> {
+    const scope = this.scope(user, 'findings', 'read');
+    if (scope === 'all') return {};
+    if (scope === 'department' || scope === 'department_tree') {
+      return { ownerDepartmentId: { [Op.in]: await this.departmentIds(user, scope) } };
+    }
+    const visibleTaskIds = await this.accessibleTaskIds(user);
+    return {
+      [Op.or]: [
+        { ownerUserId: user.userId },
+        ...(visibleTaskIds === null ? [] : [{ taskId: { [Op.in]: visibleTaskIds } }]),
+      ],
+    };
+  }
+
+  async findingOrNotFound(id: string, user: RequestUser): Promise<Finding> {
+    const finding = await Finding.findOne({ where: { id, ...(await this.findingScope(user) as object) } });
+    if (!finding) throw new AppError(404, 'NOT_FOUND', '不符合项不存在');
+    return finding;
   }
 
   async riskScope(user: RequestUser, action = 'read'): Promise<WhereOptions> {
@@ -202,11 +335,19 @@ class ObjectAccessService {
       return {
         [Op.or]: [
           { ownerUserId: user.userId },
+          { createdBy: user.userId },
+          { reviewerUserId: user.userId },
           { taskId: { [Op.in]: tasks.map((task: any) => task.id) } },
         ],
       };
     }
-    return { ownerUserId: user.userId };
+    return {
+      [Op.or]: [
+        { ownerUserId: user.userId },
+        { createdBy: user.userId },
+        { reviewerUserId: user.userId },
+      ],
+    };
   }
 
   async accessibleRiskIds(user: RequestUser, action = 'read'): Promise<string[] | null> {
@@ -229,7 +370,19 @@ class ObjectAccessService {
       group: ['actionId'],
       raw: true,
     })).map((link: any) => link.actionId);
-    const linked = { id: { [Op.in]: linkedActionIds } };
+    const visibleFindings = await Finding.findAll({
+      where: await this.findingScope(user),
+      attributes: ['id'],
+      raw: true,
+    });
+    const findingActionIds = visibleFindings.length
+      ? (await FindingActionLink.findAll({
+        where: { findingId: { [Op.in]: visibleFindings.map((finding: any) => finding.id) } },
+        attributes: ['actionId'],
+        raw: true,
+      })).map((link: any) => link.actionId)
+      : [];
+    const linked = { id: { [Op.in]: [...new Set([...linkedActionIds, ...findingActionIds])] } };
     if (scope === 'department' || scope === 'department_tree') {
       return {
         [Op.or]: [
@@ -263,6 +416,22 @@ class ObjectAccessService {
 
   async questionOrNotFound(id: string, user: RequestUser, write = false): Promise<QuestionItem> {
     return this.evaluationOrNotFound(id, user, write ? 'answer' : 'read');
+  }
+
+  async questionOrHistorySourceNotFound(id: string, user: RequestUser): Promise<QuestionItem> {
+    try {
+      return await this.evaluationOrNotFound(id, user, 'read');
+    } catch (error) {
+      const links = await EvaluationHistoryLink.findAll({ where: { sourceEvaluationId: id }, attributes: ['currentEvaluationId'] });
+      for (const link of links) {
+        try {
+          await this.evaluationOrNotFound(link.currentEvaluationId, user, 'read');
+          const item = await QuestionItem.findByPk(id);
+          if (item) return item;
+        } catch { /* try the next explicitly linked current evaluation */ }
+      }
+      throw error;
+    }
   }
 }
 

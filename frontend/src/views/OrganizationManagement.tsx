@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
-import { App, Button, Card, Empty, Input, InputNumber, Popconfirm, Select, Space, Spin, Table, Tag, Tooltip, Tree } from 'antd';
+import { App, Button, Card, Empty, Input, InputNumber, Popconfirm, Space, Spin, Table, Tag, Tooltip, Tree } from 'antd';
 import { ApartmentOutlined, CloseOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import apiClient from '../api/client';
 import { useAuthStore } from '../store/auth';
+import { expandDepartment, reconcileExpandedDepartmentIds } from '../utils/organization';
+import { DepartmentSelect, PersonnelSelect } from '../components/lookups';
 
 interface DepartmentNode {
   id: string;
@@ -38,6 +40,15 @@ function toTreeData(items: DepartmentNode[]): any[] {
   }));
 }
 
+function filterDepartmentTree(items: DepartmentNode[], keyword: string): DepartmentNode[] {
+  if (!keyword.trim()) return items;
+  const normalized = keyword.trim().toLocaleLowerCase();
+  return items.flatMap((item) => {
+    const children = filterDepartmentTree(item.children || [], keyword);
+    return item.name.toLocaleLowerCase().includes(normalized) || children.length ? [{ ...item, children }] : [];
+  });
+}
+
 function getSiblingDepartments(items: DepartmentNode[], parentId: string | null) {
   return flattenDepartments(items).filter((item) => item.parentId === parentId);
 }
@@ -58,12 +69,14 @@ export default function OrganizationManagement() {
   const canManage = can('organization', 'create') || can('organization', 'update') || can('organization', 'delete');
   const canReadOrganization = can('organization', 'read');
   const [departments, setDepartments] = useState<DepartmentNode[]>([]);
+  const [expandedDeptIds, setExpandedDeptIds] = useState<string[] | null>(null);
   const [users, setUsers] = useState<UserOption[]>([]);
   const [selectedDeptId, setSelectedDeptId] = useState<string | null>(null);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
   const [deptDraft, setDeptDraft] = useState({ name: '', code: '', parentId: '', description: '', sortOrder: 0, managerMemberId: '' });
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [treeKeyword, setTreeKeyword] = useState('');
 
   const selectedDept = selectedDeptId ? flattenDepartments(departments).find((item) => item.id === selectedDeptId) || null : null;
 
@@ -77,6 +90,7 @@ export default function OrganizationManagement() {
       ]);
       const nextDepartments = deptRes.data || [];
       setDepartments(nextDepartments);
+      setExpandedDeptIds((current) => reconcileExpandedDepartmentIds(nextDepartments, current));
       setUsers(userRes.data?.items || userRes.data?.users || []);
       const flat = flattenDepartments(nextDepartments);
       const nextSelectedId = preferredDeptId && flat.some((item) => item.id === preferredDeptId)
@@ -144,6 +158,7 @@ export default function OrganizationManagement() {
         sortOrder: 0,
       });
       message.success(successText || (parentId ? '子部门已创建' : '部门已创建'));
+      setExpandedDeptIds((current) => expandDepartment(current, parentId));
       setSelectedDeptId(res.data.id);
       await fetchOrganization(res.data.id);
     } catch (err: any) {
@@ -170,6 +185,7 @@ export default function OrganizationManagement() {
         managerMemberId: deptDraft.managerMemberId || null,
       });
       message.success('部门信息已更新');
+      setExpandedDeptIds((current) => expandDepartment(current, deptDraft.parentId || null));
       await fetchOrganization(selectedDeptId);
     } catch (err: any) {
       if (err?.error?.message) message.error(err.error.message);
@@ -243,6 +259,7 @@ export default function OrganizationManagement() {
                 )}
               </Space>
             </div>
+            <Input.Search allowClear value={treeKeyword} onChange={(event) => setTreeKeyword(event.target.value)} placeholder="按部门名称检索" style={{ marginBottom: 12 }} />
             {departments.length === 0 ? (
               <Empty
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
@@ -264,8 +281,9 @@ export default function OrganizationManagement() {
             ) : (
               <Tree
                 selectedKeys={selectedDeptId ? [selectedDeptId] : []}
-                defaultExpandAll
-                treeData={toTreeData(departments)}
+                expandedKeys={expandedDeptIds || []}
+                onExpand={(keys) => setExpandedDeptIds(keys.map(String))}
+                treeData={toTreeData(filterDepartmentTree(departments, treeKeyword))}
                 onSelect={handleSelectDepartment}
               />
             )}
@@ -296,14 +314,15 @@ export default function OrganizationManagement() {
                   </div>
                   <div>
                     <div style={{ fontSize: 14, marginBottom: 8 }}>上级部门</div>
-                    <Select
+                    <DepartmentSelect
+                      purpose="organization-parent"
+                      contextId={selectedDeptId || undefined}
                       allowClear
                       disabled={!canManage}
                       value={deptDraft.parentId || undefined}
                       onChange={(value) => setDeptDraft((draft) => ({ ...draft, parentId: value || '' }))}
                       placeholder="无上级部门"
                       style={{ width: '100%' }}
-                      options={flattenDepartments(departments).filter((item) => item.id !== selectedDeptId).map((item) => ({ value: item.id, label: item.name }))}
                     />
                   </div>
                 </div>
@@ -314,13 +333,15 @@ export default function OrganizationManagement() {
                   </div>
                   <div>
                     <div style={{ fontSize: 14, marginBottom: 8 }}>部门负责人</div>
-                    <Select
+                    <PersonnelSelect
+                      purpose="organization-manager"
+                      valueType="memberId"
+                      contextId={selectedDeptId || undefined}
                       allowClear
                       disabled={!canManage}
                       value={deptDraft.managerMemberId || undefined}
                       onChange={(value) => setDeptDraft((draft) => ({ ...draft, managerMemberId: value || '' }))}
                       style={{ width: '100%' }}
-                      options={users.map((member) => ({ value: member.id, label: `${member.displayName} (${member.username})` }))}
                     />
                   </div>
                 </div>
@@ -356,12 +377,12 @@ export default function OrganizationManagement() {
                     {can('organization', 'delete') && (
                       <Popconfirm
                         title="删除该部门？"
-                        description="仅无子部门、无成员且无历史业务引用的部门可以归档。"
+                        description="删除后不可恢复。仅无子部门、无成员且未被业务数据引用的非根部门可以删除。"
                         okText="确认"
                         cancelText="取消"
                         onConfirm={handleDeleteDepartment}
                       >
-                        <Button danger icon={<DeleteOutlined />} loading={saving}>归档部门</Button>
+                        <Button danger icon={<DeleteOutlined />} loading={saving}>删除部门</Button>
                       </Popconfirm>
                     )}
                   </Space>

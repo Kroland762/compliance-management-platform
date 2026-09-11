@@ -1,14 +1,30 @@
 import { useState, useEffect } from 'react';
-import { Modal, Form, Input, Select, InputNumber, Button, Typography, message, Divider, Space, Tag, Tooltip, Switch } from 'antd';
-import { useNavigate } from 'react-router-dom';
-import { ArrowLeftOutlined, PlusOutlined, DeleteOutlined, InfoCircleOutlined, DownOutlined, RightOutlined } from '@ant-design/icons';
-import { dataSourceApi, type DataSource } from '../../api/account';
+import { Modal, Form, Input, Select, InputNumber, Button, Typography, message, Space, Steps, Tag, Tooltip, Switch, Upload, Alert, Descriptions } from 'antd';
+import { useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeftOutlined, PlusOutlined, DeleteOutlined, InfoCircleOutlined, DownOutlined, RightOutlined, UploadOutlined } from '@ant-design/icons';
+import { dataSourceApi, type CsvPreview, type DataSource } from '../../api/account';
 import { getApiErrorMessage } from '../../utils/error';
 import apiClient from '../../api/client';
 
 const { Title, Text } = Typography;
 
-const DB_TYPES = [{ value: 'postgres', label: 'PostgreSQL' }];
+const DB_TYPES = [
+  { value: 'postgres', label: 'PostgreSQL', defaultPort: 5432, defaultSchema: 'public' },
+  { value: 'mysql', label: 'MySQL', defaultPort: 3306 },
+  { value: 'mssql', label: 'SQL Server', defaultPort: 1433, defaultSchema: 'dbo' },
+  { value: 'oracle', label: 'Oracle', defaultPort: 1521 },
+  { value: 'sqlite', label: 'SQLite' },
+];
+const BASIC_FIELDS = ['name', 'type'];
+const NETWORK_DATABASE_FIELDS = ['dbType', 'host', 'port', 'database', 'username', 'password', 'table'];
+const SQLITE_DATABASE_FIELDS = ['dbType', 'database', 'table'];
+
+function schemaForDbType(type: string, schema?: string) {
+  const selected = DB_TYPES.find(item => item.value === type) || DB_TYPES[0];
+  return ['postgres', 'mssql', 'oracle'].includes(type)
+    ? schema || selected.defaultSchema
+    : undefined;
+}
 
 interface ConvertPair {
   sourceValue: string;
@@ -83,28 +99,53 @@ function buildFieldMappingConfig(mappings: MappingItem[]): Record<string, any> {
 
 export default function DataSourceForm({ open, editingDataSource, onClose, onSuccess }: Props) {
   const navigate = useNavigate();
+  const { id: routeId } = useParams<{ id: string }>();
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
+  const [currentStep, setCurrentStep] = useState(0);
+  const [sourceType, setSourceType] = useState<'DATABASE' | 'CSV'>('DATABASE');
+  const [dbType, setDbType] = useState('postgres');
   const [mappings, setMappings] = useState<MappingItem[]>([...defaultMappings]);
   const [dbColumns, setDbColumns] = useState<string[]>([]);
+  const [csvColumns, setCsvColumns] = useState<string[]>([]);
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [csvPreview, setCsvPreview] = useState<CsvPreview | null>(null);
+  const [previewingCsv, setPreviewingCsv] = useState(false);
   const [previewingFields, setPreviewingFields] = useState(false);
   const [expandedConverts, setExpandedConverts] = useState<Set<string>>(new Set());
 
   const inModal = open !== undefined;
-  const isEdit = !!editingDataSource;
+  const [routeDataSource, setRouteDataSource] = useState<DataSource | null>(null);
+  const effectiveDataSource = editingDataSource || routeDataSource;
+  const isEdit = !!effectiveDataSource || !!routeId;
+
+  useEffect(() => {
+    if (inModal || !routeId) return;
+    dataSourceApi.get(routeId)
+      .then((res: any) => setRouteDataSource(res.data))
+      .catch((err: any) => message.error(getApiErrorMessage(err, '获取数据源失败')));
+  }, [inModal, routeId]);
 
   // Available source field column names
-  const availableColumns = dbColumns;
+  const availableColumns = sourceType === 'CSV' ? csvColumns : dbColumns;
+  const selectedDbType = DB_TYPES.find(item => item.value === dbType) || DB_TYPES[0];
+  const isSqlite = dbType === 'sqlite';
+  const usesSchema = ['postgres', 'mssql', 'oracle'].includes(dbType);
+  const databaseLabel = isSqlite ? 'SQLite 文件路径' : dbType === 'oracle' ? '服务名/SID' : '数据库名';
+  const databasePlaceholder = isSqlite ? '/data/accounts.sqlite' : dbType === 'oracle' ? 'ORCLPDB1' : 'accounts_db';
 
   // Pre-fill form when editing
   useEffect(() => {
-    if (!isEdit || !editingDataSource || !inModal) return;
-    const ds = editingDataSource;
+    if (!isEdit || !effectiveDataSource) return;
+    const ds = effectiveDataSource;
+    setSourceType(ds.sourceType);
+    const nextDbType = ds.connectionConfig?.dbType || 'postgres';
+    setDbType(nextDbType);
     // Basic fields
     form.setFieldsValue({
       name: ds.name,
-      type: 'DATABASE',
-      dbType: 'postgres',
+      type: ds.sourceType,
+      dbType: nextDbType,
       host: ds.connectionConfig?.host,
       port: ds.connectionConfig?.port,
       database: ds.connectionConfig?.database,
@@ -117,25 +158,35 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
 
     // Restore mappings from fieldMappingConfig
     setMappings(configToMappings(ds.fieldMappingConfig || {}));
+    setCsvColumns(ds.csvConfig?.headers || []);
 
-  }, [open, editingDataSource]);
+  }, [open, effectiveDataSource]);
 
   // Reset on close / open for create
   useEffect(() => {
     if (inModal && !isEdit) {
       form.resetFields();
       setMappings([...defaultMappings]);
+      setSourceType('DATABASE');
+      setDbType('postgres');
       setDbColumns([]);
+      setCsvColumns([]);
+      setCsvFile(null);
+      setCsvPreview(null);
       setExpandedConverts(new Set());
+      setCurrentStep(0);
     }
   }, [open, editingDataSource]);
+
+  useEffect(() => {
+    if (inModal && open) setCurrentStep(0);
+  }, [inModal, open, editingDataSource]);
 
   // DB field preview
   const handlePreviewDbFields = async () => {
     try {
-      const values = await form.validateFields([
-        'dbType', 'host', 'port', 'database', 'username', 'password', 'schema', 'table', 'ssl',
-      ]);
+      const currentDbType = form.getFieldValue('dbType') || dbType;
+      const values = await form.validateFields(currentDbType === 'sqlite' ? SQLITE_DATABASE_FIELDS : NETWORK_DATABASE_FIELDS);
       setPreviewingFields(true);
       const res: any = await apiClient.post('/account/data-sources/preview-fields', {
         dbType: values.dbType,
@@ -144,7 +195,7 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
         database: values.database,
         username: values.username,
         password: values.password,
-        schema: values.schema || 'public',
+        schema: schemaForDbType(values.dbType, values.schema),
         table: values.table,
         ssl: values.ssl === true,
       });
@@ -159,6 +210,57 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
     }
   };
 
+  const handleCsvSelect = async (file: File) => {
+    setCsvFile(file);
+    setCsvPreview(null);
+    setPreviewingCsv(true);
+    try {
+      const response: any = await dataSourceApi.previewCsv(file);
+      setCsvPreview(response.data);
+      setCsvColumns(response.data?.headers || []);
+      message.success(`检测到 ${response.data?.rowCount || 0} 行、${response.data?.headers?.length || 0} 个字段`);
+    } catch (error: any) {
+      setCsvFile(null);
+      setCsvColumns([]);
+      message.error(getApiErrorMessage(error, 'CSV 预览失败'));
+    } finally {
+      setPreviewingCsv(false);
+    }
+    return false;
+  };
+
+  const handleNextStep = async () => {
+    try {
+      if (currentStep === 0) {
+        await form.validateFields(BASIC_FIELDS);
+        setCurrentStep(1);
+        return;
+      }
+
+      if (sourceType === 'DATABASE') {
+        const currentDbType = form.getFieldValue('dbType') || dbType;
+        await form.validateFields(currentDbType === 'sqlite' ? SQLITE_DATABASE_FIELDS : NETWORK_DATABASE_FIELDS);
+        if (!isEdit && dbColumns.length === 0) {
+          message.error('请先获取数据库字段，确认连接可用后再配置映射');
+          return;
+        }
+      } else if (!isEdit && (!csvFile || !csvPreview)) {
+        message.error('请选择并成功预览 CSV 文件后再配置映射');
+        return;
+      }
+
+      setCurrentStep(2);
+    } catch (error: any) {
+      if (!error?.errorFields) message.error(getApiErrorMessage(error, '请检查当前步骤'));
+    }
+  };
+
+  const finishSuccess = () => {
+    onSuccess?.();
+    if (inModal) onClose?.();
+    else navigate('/account-audit/data-sources');
+  };
+
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields();
@@ -169,42 +271,83 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
           .filter(Boolean),
       )];
       if (!fieldMappingConfig.accountId || allowedColumns.length === 0) {
-        message.error('必须将账户ID映射到一个 PostgreSQL 字段');
+        message.error(`必须将账户ID映射到一个${sourceType === 'CSV' ? ' CSV' : '数据库'}字段`);
         return;
       }
       setLoading(true);
+
+      if (sourceType === 'CSV') {
+        if (isEdit) {
+          await dataSourceApi.update(effectiveDataSource!.id, { name: values.name, fieldMappingConfig });
+          message.success('CSV 数据源映射已更新');
+          finishSuccess();
+          return;
+        }
+        if (!csvFile) {
+          message.error('请选择 CSV 文件');
+          return;
+        }
+        const previewResponse: any = await dataSourceApi.previewCsv(csvFile, { fieldMappingConfig });
+        const preview: CsvPreview = previewResponse.data;
+        setCsvPreview(preview);
+        if (preview.compatibility.status !== 'COMPATIBLE') {
+          message.error('字段映射不完整，请检查 CSV 源字段');
+          return;
+        }
+        if (preview.warnings.blankAccountRows.length > 0) {
+          message.error(`账户 ID 不能为空，请检查第 ${preview.warnings.blankAccountRows.join('、')} 行`);
+          return;
+        }
+        Modal.confirm({
+          title: '确认创建 CSV 数据源并导入？',
+          content: `将导入 ${preview.rowCount} 行；原始 CSV 不会保留。`,
+          okText: '确认导入',
+          cancelText: '返回检查',
+          onOk: async () => {
+            try {
+              await dataSourceApi.uploadCsv(csvFile, {
+                name: values.name,
+                fieldMappingConfig,
+                expectedSha256: preview.file.sha256,
+                delimiter: preview.file.delimiter,
+              });
+              message.success(`CSV 数据源已创建，导入 ${preview.rowCount} 行`);
+              finishSuccess();
+            } catch (error: any) {
+              message.error(getApiErrorMessage(error, 'CSV 导入失败'));
+              throw error;
+            }
+          },
+        });
+        return;
+      }
 
       const payload: any = {
         name: values.name,
         sourceType: 'DATABASE',
         fieldMappingConfig,
-        connectionConfig: {
-          dbType: 'postgres',
+      connectionConfig: {
+          dbType: values.dbType,
           host: values.host,
           port: values.port,
           database: values.database,
           username: values.username,
           password: values.password,
-          schema: values.schema || 'public',
+          schema: schemaForDbType(values.dbType, values.schema),
           table: values.table,
           allowedColumns,
           ssl: values.ssl === true,
         },
       };
       if (isEdit) {
-        await dataSourceApi.update(editingDataSource!.id, payload);
+        await dataSourceApi.update(effectiveDataSource!.id, payload);
         message.success('数据源已更新');
       } else {
         await dataSourceApi.create(payload);
         message.success('数据源创建成功');
       }
 
-      if (onSuccess) onSuccess();
-      if (inModal) {
-        onClose?.();
-      } else {
-        navigate('/account-audit/data-sources');
-      }
+      finishSuccess();
     } catch (err: any) {
       if (err?.errorFields) return;
       message.error(getApiErrorMessage(err, isEdit ? '更新失败' : '创建失败'));
@@ -262,7 +405,16 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
   // ============ Form Content ============
 
   const formContent = (
-    <div style={{ maxWidth: inModal ? '100%' : 720 }}>
+    <div style={{ maxWidth: inModal ? '100%' : 760 }}>
+      <Steps
+        current={currentStep}
+        items={[
+          { title: '基本信息' },
+          { title: sourceType === 'DATABASE' ? '数据库连接' : 'CSV 文件' },
+          { title: '字段映射' },
+        ]}
+        style={{ marginBottom: 24 }}
+      />
       <Form form={form} layout="vertical" initialValues={{
         type: 'DATABASE',
         dbType: 'postgres',
@@ -272,6 +424,7 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
       }}>
         {/* Basic Info */}
         <div style={{
+          display: currentStep === 0 ? 'block' : 'none',
           background: 'rgba(255,255,255,0.8)',
           backdropFilter: 'blur(20px)',
           borderRadius: 14,
@@ -285,69 +438,115 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
           </Form.Item>
           <Form.Item name="type" label="数据源类型">
             <Select
-              value="DATABASE"
-              disabled
-              options={[{ value: 'DATABASE', label: 'PostgreSQL 只读表' }]}
+              disabled={isEdit}
+              onChange={(value: 'DATABASE' | 'CSV') => {
+                setSourceType(value);
+                form.setFieldValue('type', value);
+                if (value === 'DATABASE') {
+                  setDbType('postgres');
+                  form.setFieldsValue({ dbType: 'postgres', port: 5432, schema: 'public' });
+                }
+                setMappings([...defaultMappings]);
+                setDbColumns([]);
+                setCsvColumns([]);
+                setCsvFile(null);
+                setCsvPreview(null);
+              }}
+              options={[
+                { value: 'DATABASE', label: '数据库只读表' },
+                { value: 'CSV', label: 'CSV 文件' },
+              ]}
             />
           </Form.Item>
         </div>
 
         {/* Connection Config */}
-        <div style={{
-          background: 'rgba(255,255,255,0.8)',
-          backdropFilter: 'blur(20px)',
-          borderRadius: 14,
-          padding: '20px 24px',
-          border: '0.5px solid rgba(0,0,0,0.06)',
-          marginBottom: 16,
-        }}>
-          <Text strong style={{ fontSize: 14, marginBottom: 12, display: 'block' }}>
-            PostgreSQL 只读连接
-          </Text>
-
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-            <Button size="small" loading={previewingFields} onClick={handlePreviewDbFields}>
-              获取数据库字段
-            </Button>
+        <div style={{ display: currentStep === 1 ? 'block' : 'none' }}>
+        {sourceType === 'DATABASE' ? (
+          <div style={{
+            background: 'rgba(255,255,255,0.8)', backdropFilter: 'blur(20px)', borderRadius: 14,
+            padding: '20px 24px', border: '0.5px solid rgba(0,0,0,0.06)', marginBottom: 16,
+          }}>
+            <Text strong style={{ fontSize: 14, marginBottom: 12, display: 'block' }}>{selectedDbType.label} 只读连接</Text>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+              <Button size="small" loading={previewingFields} onClick={handlePreviewDbFields}>获取数据库字段</Button>
+            </div>
+            <Form.Item name="dbType" label="数据库类型" rules={[{ required: sourceType === 'DATABASE', message: '请选择数据库类型' }]}>
+              <Select
+                options={DB_TYPES}
+                onChange={(value: string) => {
+                  const next = DB_TYPES.find(item => item.value === value) || DB_TYPES[0];
+                  setDbType(value);
+                  setDbColumns([]);
+                  form.setFieldsValue({
+                    dbType: value,
+                    port: next.defaultPort,
+                    schema: next.defaultSchema,
+                    host: value === 'sqlite' ? undefined : form.getFieldValue('host'),
+                    username: value === 'sqlite' ? undefined : form.getFieldValue('username'),
+                    password: value === 'sqlite' ? undefined : form.getFieldValue('password'),
+                    ssl: value === 'sqlite' ? false : form.getFieldValue('ssl'),
+                  });
+                }}
+              />
+            </Form.Item>
+            {!isSqlite && (
+              <div style={{ display: 'flex', gap: 12 }}>
+                <Form.Item name="host" label="主机地址" rules={[{ required: sourceType === 'DATABASE' && !isSqlite, message: '请输入主机地址' }]} style={{ flex: 1 }}><Input placeholder="readonly-db.example.com" /></Form.Item>
+                <Form.Item name="port" label="端口" rules={[{ required: sourceType === 'DATABASE' && !isSqlite, message: '请输入端口' }]} style={{ width: 140 }}><InputNumber placeholder={String(selectedDbType.defaultPort || '')} style={{ width: '100%' }} /></Form.Item>
+              </div>
+            )}
+            <Form.Item name="database" label={databaseLabel} rules={[{ required: sourceType === 'DATABASE', message: isSqlite ? '请输入 SQLite 文件路径' : '请输入数据库名' }]}><Input placeholder={databasePlaceholder} /></Form.Item>
+            {!isSqlite && (
+              <div style={{ display: 'flex', gap: 12 }}>
+                <Form.Item name="username" label="只读用户名" rules={[{ required: sourceType === 'DATABASE' && !isSqlite, message: '请输入只读用户名' }]} style={{ flex: 1 }}><Input placeholder="accounts_reader" /></Form.Item>
+                <Form.Item name="password" label="密码" rules={[{ required: sourceType === 'DATABASE' && !isEdit && !isSqlite, message: '请输入密码' }]} style={{ flex: 1 }}><Input.Password placeholder={isEdit ? '留空表示不修改' : '••••••'} /></Form.Item>
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 12 }}>
+              {usesSchema && <Form.Item name="schema" label="Schema/Owner" style={{ flex: 1 }}><Input placeholder={selectedDbType.defaultSchema || '可留空'} /></Form.Item>}
+              <Form.Item name="table" label="只读表名" rules={[{ required: sourceType === 'DATABASE', message: '请输入只读表名' }]} style={{ flex: 1 }}><Input placeholder="accounts" /></Form.Item>
+            </div>
+            {!isSqlite && (
+              <Form.Item name="ssl" label="TLS" valuePropName="checked" extra="生产环境必须启用并校验证书；本地测试仅可在非生产环境关闭。">
+                <Switch checkedChildren="启用" unCheckedChildren="关闭" />
+              </Form.Item>
+            )}
           </div>
-          <Form.Item name="dbType" label="数据库类型" rules={[{ required: true }]}>
-            <Select disabled options={DB_TYPES} />
-          </Form.Item>
-          <div style={{ display: 'flex', gap: 12 }}>
-            <Form.Item name="host" label="主机地址" rules={[{ required: true }]} style={{ flex: 1 }}>
-              <Input placeholder="readonly-db.example.com" />
-            </Form.Item>
-            <Form.Item name="port" label="端口" rules={[{ required: true }]} style={{ width: 140 }}>
-              <InputNumber placeholder="5432" style={{ width: '100%' }} />
-            </Form.Item>
+        ) : (
+          <div style={{
+            background: 'rgba(255,255,255,0.8)', backdropFilter: 'blur(20px)', borderRadius: 14,
+            padding: '20px 24px', border: '0.5px solid rgba(0,0,0,0.06)', marginBottom: 16,
+          }}>
+            <Text strong style={{ fontSize: 14, marginBottom: 12, display: 'block' }}>CSV 文件</Text>
+            <Alert type="info" showIcon message="文件仅在内存中预览和导入，不会保存原始 CSV。后续可在同一系统下重新上传并复用映射。" style={{ marginBottom: 12 }} />
+            {!isEdit ? (
+              <Upload
+                accept=".csv"
+                maxCount={1}
+                beforeUpload={handleCsvSelect}
+                onRemove={() => { setCsvFile(null); setCsvColumns([]); setCsvPreview(null); }}
+                fileList={csvFile ? [{ uid: '-1', name: csvFile.name, status: 'done' }] : []}
+              >
+                <Button icon={<UploadOutlined />} loading={previewingCsv}>选择 CSV 文件</Button>
+              </Upload>
+            ) : (
+              <Text type="secondary" style={{ color: '#636366' }}>请在数据源详情页使用“重新上传”更新账户数据；此处仅维护名称和字段映射。</Text>
+            )}
+            {csvPreview && (
+              <Descriptions size="small" bordered column={3} style={{ marginTop: 12 }}>
+                <Descriptions.Item label="数据行">{csvPreview.rowCount}</Descriptions.Item>
+                <Descriptions.Item label="字段数">{csvPreview.headers.length}</Descriptions.Item>
+                <Descriptions.Item label="编码">{csvPreview.file.encoding}</Descriptions.Item>
+              </Descriptions>
+            )}
           </div>
-          <Form.Item name="database" label="数据库名" rules={[{ required: true }]}>
-            <Input placeholder="accounts_db" />
-          </Form.Item>
-          <div style={{ display: 'flex', gap: 12 }}>
-            <Form.Item name="username" label="只读用户名" rules={[{ required: true }]} style={{ flex: 1 }}>
-              <Input placeholder="accounts_reader" />
-            </Form.Item>
-            <Form.Item name="password" label="密码" rules={[{ required: !isEdit }]} style={{ flex: 1 }}>
-              <Input.Password placeholder={isEdit ? '留空表示不修改' : '••••••'} />
-            </Form.Item>
-          </div>
-          <div style={{ display: 'flex', gap: 12 }}>
-            <Form.Item name="schema" label="Schema" rules={[{ required: true }]} style={{ flex: 1 }}>
-              <Input placeholder="public" />
-            </Form.Item>
-            <Form.Item name="table" label="只读表名" rules={[{ required: true }]} style={{ flex: 1 }}>
-              <Input placeholder="accounts" />
-            </Form.Item>
-          </div>
-          <Form.Item name="ssl" label="TLS" valuePropName="checked"
-            extra="生产环境必须启用并校验证书；本地测试仅可在非生产环境关闭。">
-            <Switch checkedChildren="启用" unCheckedChildren="关闭" />
-          </Form.Item>
+        )}
         </div>
 
         {/* Field Mapping */}
         <div style={{
+          display: currentStep === 2 ? 'block' : 'none',
           background: 'rgba(255,255,255,0.8)',
           backdropFilter: 'blur(20px)',
           borderRadius: 14,
@@ -366,13 +565,13 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ display: 'flex', gap: 8, padding: '0 4px', marginBottom: 4 }}>
-              <Text type="secondary" style={{ flex: 1, fontSize: 12 }}>标准字段</Text>
-              <Text type="secondary" style={{ flex: 1, fontSize: 12 }}>源字段名</Text>
-              <Text type="secondary" style={{ width: 48, fontSize: 12 }}>必填</Text>
+              <Text type="secondary" style={{ flex: 1, fontSize: 12, color: '#636366' }}>标准字段</Text>
+              <Text type="secondary" style={{ flex: 1, fontSize: 12, color: '#636366' }}>源字段名</Text>
+              <Text type="secondary" style={{ width: 48, fontSize: 12, color: '#636366' }}>必填</Text>
               <div style={{ width: 72 }} />
             </div>
             {mappings.map(m => {
-              const isRequired = m.key === '1';
+              const isRequired = m.fieldName === 'accountId';
               const isExpanded = expandedConverts.has(m.key);
               const hasConvert = m.convertConfig && m.convertConfig.length > 0;
 
@@ -387,11 +586,18 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
                       <Input
                         placeholder="字段名"
                         value={m.label}
-                        onChange={e => updateMapping(m.key, 'label', e.target.value)}
+                        onChange={e => {
+                          const value = e.target.value;
+                          const isStandard = defaultMappings.some(item => item.fieldName === m.fieldName);
+                          setMappings(previous => previous.map(item => item.key === m.key
+                            ? { ...item, label: value, fieldName: isStandard ? item.fieldName : value }
+                            : item));
+                        }}
                         style={{ flex: 1 }}
                       />
                     )}
                     <Select
+                      data-testid={`mapping-${m.fieldName || m.key}`}
                       showSearch
                       allowClear
                       placeholder="对应的源列名"
@@ -438,7 +644,7 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
                       border: '0.5px solid rgba(0,0,0,0.08)',
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                        <Text type="secondary" style={{ fontSize: 12 }}>值转换配置</Text>
+                        <Text type="secondary" style={{ fontSize: 12, color: '#636366' }}>值转换配置</Text>
                         <Button size="small" type="link" icon={<PlusOutlined />} onClick={() => addConvertPair(m.key)}
                           style={{ fontSize: 12, padding: 0, height: 20 }}>
                           添加转换
@@ -448,7 +654,7 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                           {m.convertConfig.map((pair, idx) => (
                             <div key={idx} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                              <Text type="secondary" style={{ fontSize: 12, flexShrink: 0, width: 28 }}>源值</Text>
+                              <Text type="secondary" style={{ fontSize: 12, flexShrink: 0, width: 28, color: '#636366' }}>源值</Text>
                               <Input
                                 size="small"
                                 placeholder="如 1"
@@ -456,8 +662,8 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
                                 onChange={e => updateConvertPair(m.key, idx, 'sourceValue', e.target.value)}
                                 style={{ width: 80 }}
                               />
-                              <Text type="secondary" style={{ fontSize: 12, flexShrink: 0 }}>→</Text>
-                              <Text type="secondary" style={{ fontSize: 12, flexShrink: 0, width: 42 }}>目标值</Text>
+                              <Text type="secondary" style={{ fontSize: 12, flexShrink: 0, color: '#636366' }}>→</Text>
+                              <Text type="secondary" style={{ fontSize: 12, flexShrink: 0, width: 42, color: '#636366' }}>目标值</Text>
                               <Input
                                 size="small"
                                 placeholder="如 true"
@@ -472,7 +678,7 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
                           ))}
                         </div>
                       ) : (
-                        <Text type="secondary" style={{ fontSize: 12 }}>尚未配置值转换，点击"添加转换"开始</Text>
+                        <Text type="secondary" style={{ fontSize: 12, color: '#636366' }}>尚未配置值转换，点击"添加转换"开始</Text>
                       )}
                     </div>
                   )}
@@ -482,11 +688,29 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
           </div>
         </div>
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
+        <div style={{
+          position: 'sticky',
+          bottom: 0,
+          zIndex: 2,
+          display: 'flex',
+          justifyContent: 'space-between',
+          gap: 8,
+          marginTop: 20,
+          padding: '12px 0',
+          background: '#FFFFFF',
+          borderTop: '1px solid #F0F0F0',
+        }}>
           <Button onClick={() => inModal ? onClose?.() : navigate('/account-audit/data-sources')}>取消</Button>
-          <Button type="primary" loading={loading} onClick={handleSubmit}>
-            {isEdit ? '保存修改' : '创建数据源'}
-          </Button>
+          <Space>
+            {currentStep > 0 && <Button onClick={() => setCurrentStep((step) => step - 1)}>上一步</Button>}
+            {currentStep < 2 ? (
+              <Button type="primary" onClick={handleNextStep}>下一步</Button>
+            ) : (
+              <Button type="primary" loading={loading} onClick={handleSubmit}>
+                {isEdit ? '保存修改' : '创建数据源'}
+              </Button>
+            )}
+          </Space>
         </div>
       </Form>
     </div>
@@ -501,7 +725,8 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
         onCancel={onClose}
         footer={null}
         width={800}
-        destroyOnClose
+        destroyOnHidden
+        styles={{ body: { maxHeight: 'calc(100vh - 180px)', overflowY: 'auto', paddingBottom: 0 } }}
       >
         {formContent}
       </Modal>
@@ -513,7 +738,9 @@ export default function DataSourceForm({ open, editingDataSource, onClose, onSuc
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
         <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/account-audit/data-sources')} type="text" />
-        <Title level={3} style={{ fontWeight: 600, letterSpacing: "-0.02em", marginBottom: 24 }}>添加数据源</Title>
+        <Title level={3} style={{ fontWeight: 600, letterSpacing: "-0.02em", marginBottom: 24 }}>
+          {isEdit ? '编辑数据源' : '添加数据源'}
+        </Title>
       </div>
       {formContent}
     </div>

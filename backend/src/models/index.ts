@@ -3,6 +3,7 @@
 // ========================================
 
 export { default as User } from './User';
+export { default as AuthSession } from './AuthSession';
 export { default as QuestionnaireTemplate } from './QuestionnaireTemplate';
 export { default as QuestionTemplate } from './QuestionTemplate';
 export { default as AuditTask } from './AuditTask';
@@ -26,6 +27,12 @@ export { default as Qualification } from './Qualification';
 export { default as Asset } from './Asset';
 export { default as AssessmentAsset } from './AssessmentAsset';
 export { default as AssessmentControlAsset } from './AssessmentControlAsset';
+export { default as AssessmentAuditor } from './AssessmentAuditor';
+export { default as EvaluationAsset } from './EvaluationAsset';
+export { default as EvaluationHistoryLink } from './EvaluationHistoryLink';
+export { default as Finding } from './Finding';
+export { default as FindingActionLink } from './FindingActionLink';
+export { default as RiskFindingLink } from './RiskFindingLink';
 export { default as RiskSource } from './RiskSource';
 export { default as RiskAffectedAsset } from './RiskAffectedAsset';
 export { default as RemediationAction } from './RemediationAction';
@@ -33,6 +40,36 @@ export { default as RiskActionLink } from './RiskActionLink';
 export { default as AssessmentPlan } from './AssessmentPlan';
 export { default as AssessmentPlanExecution } from './AssessmentPlanExecution';
 export { default as IdempotencyRecord } from './IdempotencyRecord';
+export {
+  ProductType,
+  Product,
+  ProductVersion,
+  ProductComplianceDossier,
+  ProductQuestionnaireTemplate,
+  ProductQuestion,
+  ProductTypeQuestionnaireRule,
+  ProductDossierQuestionnaire,
+  ProductDossierAnswer,
+  ProductPlatformPermission,
+  ProductDataCatalogItem,
+  ProductDataItem,
+  ProductProcessingActivity,
+  ProductPermissionDataItem,
+  ProductProcessingDataItem,
+  ProductThirdPartyService,
+  ProductThirdPartyAssessment,
+  ProductThirdPartyAssessmentAnswer,
+} from './ProductCompliance';
+export type {
+  ProductRecordStatus,
+  ProductTypeStatus,
+  ProductQuestionnaireStatus,
+  ProductQuestionType,
+  DossierLifecycleStatus,
+  DossierComplianceConclusion,
+  DossierAssignmentSource,
+  DossierInheritanceStatus,
+} from './ProductCompliance';
 export { default as ControlEvaluation } from './QuestionItem';
 export type { PermissionMatrix, PermissionScopeMatrix, PermissionResource, PermissionAction, DataScope } from './Role';
 export { setupAssociations } from './associations';

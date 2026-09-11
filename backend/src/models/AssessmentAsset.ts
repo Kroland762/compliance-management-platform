@@ -13,11 +13,12 @@ interface Attributes {
   assetTypeSnapshot: string;
   criticalitySnapshot: string;
   ownerDepartmentIdSnapshot: string | null;
+  ownerDepartmentNameSnapshot: string | null;
   addedBy: string;
   addedAt: Date;
 }
 
-type CreationAttributes = Optional<Attributes, 'id' | 'scopeStatus' | 'ownerDepartmentIdSnapshot' | 'addedAt'>;
+type CreationAttributes = Optional<Attributes, 'id' | 'scopeStatus' | 'ownerDepartmentIdSnapshot' | 'ownerDepartmentNameSnapshot' | 'addedAt'>;
 
 class AssessmentAsset extends Model<Attributes, CreationAttributes> implements Attributes {
   declare id: string;
@@ -29,6 +30,7 @@ class AssessmentAsset extends Model<Attributes, CreationAttributes> implements A
   declare assetTypeSnapshot: string;
   declare criticalitySnapshot: string;
   declare ownerDepartmentIdSnapshot: string | null;
+  declare ownerDepartmentNameSnapshot: string | null;
   declare addedBy: string;
   declare addedAt: Date;
 }
@@ -43,6 +45,7 @@ AssessmentAsset.init({
   assetTypeSnapshot: { type: DataTypes.STRING(32), allowNull: false },
   criticalitySnapshot: { type: DataTypes.STRING(16), allowNull: false },
   ownerDepartmentIdSnapshot: { type: DataTypes.UUID, allowNull: true },
+  ownerDepartmentNameSnapshot: { type: DataTypes.STRING(100), allowNull: true },
   addedBy: { type: DataTypes.UUID, allowNull: false },
   addedAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
 }, {

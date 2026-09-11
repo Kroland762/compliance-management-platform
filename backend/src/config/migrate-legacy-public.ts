@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-import { QueryTypes, Transaction } from 'sequelize';
+import { QueryTypes } from 'sequelize';
 import sequelize from './database';
 import Tenant from '../models/Tenant';
 import { migrateUp } from './migrations/runner';
+import { importLegacyTables } from './migrations/legacy-risk-compat';
 
 const BUSINESS_TABLES = [
   'roles',
@@ -53,41 +54,6 @@ async function count(schema: string, table: string): Promise<number> {
   return Number(row?.count || 0);
 }
 
-async function columns(schema: string, table: string): Promise<string[]> {
-  const rows = await sequelize.query<{ column_name: string }>(
-    `SELECT column_name FROM information_schema.columns
-     WHERE table_schema = :schema AND table_name = :table ORDER BY ordinal_position`,
-    { replacements: { schema, table }, type: QueryTypes.SELECT },
-  );
-  return rows.map((row) => row.column_name);
-}
-
-async function rowHash(
-  schema: string,
-  table: string,
-  selectedColumns: string[],
-  transaction: Transaction,
-  restrictToPublicIds = false,
-): Promise<string> {
-  const projected = selectedColumns.map(quote).join(', ');
-  const restriction = restrictToPublicIds
-    ? `WHERE id IN (SELECT id FROM public.${quote(table)})`
-    : '';
-  const [row] = await sequelize.query<{ hash: string }>(
-    `SELECT md5(COALESCE(
-       string_agg(md5(to_jsonb(row_data)::text), '' ORDER BY row_data.id::text),
-       ''
-     )) AS hash
-     FROM (
-       SELECT ${projected}
-       FROM ${quote(schema)}.${quote(table)}
-       ${restriction}
-     ) row_data`,
-    { type: QueryTypes.SELECT, transaction },
-  );
-  return row.hash;
-}
-
 async function main(): Promise<void> {
   await sequelize.authenticate();
   const report: Array<{ table: string; rows: number }> = [];
@@ -109,43 +75,8 @@ async function main(): Promise<void> {
   if (!tenant) throw new Error('目标租户不存在');
   await migrateUp([tenant.schemaName]);
 
-  await sequelize.transaction({ type: Transaction.TYPES.DEFERRED }, async (transaction) => {
-    await sequelize.query('SET CONSTRAINTS ALL DEFERRED', { transaction }).catch(() => undefined);
-    for (const { table, rows } of report) {
-      if (rows === 0 || !await tableExists(tenant.schemaName, table)) continue;
-      const sourceColumns = await columns('public', table);
-      const targetColumns = await columns(tenant.schemaName, table);
-      const shared = targetColumns.filter((column) => sourceColumns.includes(column));
-      if (!shared.includes('id')) throw new Error(`${table} 缺少可核对的 id 字段`);
-      const insertColumns = [...shared];
-      const selectColumns = shared.map((column) => `p.${quote(column)}`);
-      if (table === 'roles' && targetColumns.includes('tenantId') && !sourceColumns.includes('tenantId')) {
-        insertColumns.push('tenantId');
-        selectColumns.push(':tenantId');
-      }
-      await sequelize.query(
-        `INSERT INTO ${quote(tenant.schemaName)}.${quote(table)} (${insertColumns.map(quote).join(', ')})
-         SELECT ${selectColumns.join(', ')} FROM public.${quote(table)} p
-         ON CONFLICT (id) DO NOTHING`,
-        { replacements: { tenantId: tenant.id }, transaction },
-      );
-      const [verified] = await sequelize.query<{ count: string }>(
-        `SELECT count(*)::text AS count
-         FROM ${quote(tenant.schemaName)}.${quote(table)} t
-         JOIN public.${quote(table)} p ON p.id = t.id`,
-        { type: QueryTypes.SELECT, transaction },
-      );
-      if (Number(verified.count) !== rows) {
-        throw new Error(`${table} 数量核对失败: source=${rows}, target=${verified.count}`);
-      }
-      const sourceHash = await rowHash('public', table, shared, transaction);
-      const targetHash = await rowHash(tenant.schemaName, table, shared, transaction, true);
-      if (sourceHash !== targetHash) {
-        throw new Error(`${table} 哈希核对失败: source=${sourceHash}, target=${targetHash}`);
-      }
-      console.log(`✓ ${table}: rows=${rows}, hash=${sourceHash}`);
-    }
-  });
+  const verified = await importLegacyTables(sequelize, tenant.schemaName, tenant.id, report);
+  for (const result of verified) console.log(`✓ ${result.table}: rows=${result.rows}, hash=${result.hash}`);
   console.log(`✅ public 存量业务数据已复制到 ${tenant.schemaName}；原数据未删除`);
 }
 

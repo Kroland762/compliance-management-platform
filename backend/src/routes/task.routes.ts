@@ -4,6 +4,8 @@ import taskService from '../services/task.service';
 import taskLifecycleService from '../services/task-lifecycle.service';
 import objectAccessService from '../services/object-access.service';
 import { AppError } from '../utils/http';
+import assessmentAuditorService from '../services/assessment-auditor.service';
+import evaluationService from '../services/evaluation.service';
 
 const router = Router();
 router.use(authenticate);
@@ -24,7 +26,7 @@ router.post('/', authorize('tasks', 'create'), async (req: Request, res: Respons
     const departmentId = req.body.departmentId || req.user!.primaryDepartmentId;
     if (!departmentId) throw new AppError(400, 'PRIMARY_DEPARTMENT_REQUIRED', '请选择任务归属部门');
     // assignedTo 不再必填 — 创建草稿任务，后续再指派
-    const task = await taskService.createTask({ ...req.body, departmentId, createdBy: req.user!.userId });
+    const task = await taskService.createTask({ ...req.body, departmentId, createdBy: req.user!.userId }, req.user!);
     res.status(201).json({ success: true, data: task });
   } catch (error: any) {
     sendError(res, error, 400, 'CREATE_FAILED');
@@ -51,6 +53,15 @@ router.get('/:id/questions', authorize('tasks', 'read'), async (req: Request, re
   }
 });
 
+router.post('/:id/evaluations/bulk-submit', authorize('evaluations', 'submit'), async (req: Request, res: Response) => {
+  try {
+    const data = await evaluationService.bulkSubmit(req.params.id, req.body.items || [], req.user!);
+    res.json({ success: true, data });
+  } catch (error: any) {
+    sendError(res, error, 400, 'BULK_SUBMIT_FAILED');
+  }
+});
+
 router.get('/:id', authorize('tasks', 'read'), async (req: Request, res: Response) => {
   try {
     await objectAccessService.taskOrNotFound(req.params.id, req.user!);
@@ -61,7 +72,26 @@ router.get('/:id', authorize('tasks', 'read'), async (req: Request, res: Respons
   }
 });
 
-router.post('/:id/submit', authorize('tasks', 'submit'), async (req: Request, res: Response) => {
+router.put('/:id/column-schema/sync', authorize('tasks', 'update'), async (req: Request, res: Response) => {
+  try {
+    await objectAccessService.taskOrNotFound(req.params.id, req.user!, 'update');
+    const result = await taskService.syncColumnSchema(req.params.id, req.user!.userId);
+    res.json({ success: true, data: result });
+  } catch (error: any) {
+    sendError(res, error, 409, 'COLUMN_SCHEMA_SYNC_FAILED');
+  }
+});
+
+router.put('/:id/auditors', authorize('tasks', 'update'), async (req: Request, res: Response) => {
+  try {
+    const items = await assessmentAuditorService.replace(req.params.id, req.body.auditorUserIds || [], req.user!);
+    res.json({ success: true, data: { items } });
+  } catch (error: any) {
+    sendError(res, error, 400, 'AUDITOR_ASSIGNMENT_FAILED');
+  }
+});
+
+router.post('/:id/submit', authorize('tasks', 'submit'), async (_req: Request, res: Response) => {
   res.status(410).json({
     success: false,
     error: {
@@ -71,7 +101,7 @@ router.post('/:id/submit', authorize('tasks', 'submit'), async (req: Request, re
   });
 });
 
-router.post('/:id/return', authorize('tasks', 'update'), async (req: Request, res: Response) => {
+router.post('/:id/return', authorize('tasks', 'update'), async (_req: Request, res: Response) => {
   res.status(410).json({
     success: false,
     error: {
@@ -91,8 +121,18 @@ router.post('/:id/complete-review', authorize('tasks', 'update'), async (req: Re
   }
 });
 
+router.post('/:id/close', authorize('tasks', 'update'), async (req: Request, res: Response) => {
+  try {
+    await objectAccessService.taskOrNotFound(req.params.id, req.user!, 'update');
+    const task = await taskLifecycleService.closeAssessment(req.params.id, req.user!.userId);
+    res.json({ success: true, data: task });
+  } catch (error: any) {
+    sendError(res, error, 409, 'ASSESSMENT_CLOSE_BLOCKED');
+  }
+});
+
 // 审计员配置任务：更新问题责任分配
-router.put('/:id/configure', authorize('tasks', 'update'), async (req: Request, res: Response) => {
+router.put('/:id/configure', authorize('tasks', 'update'), async (_req: Request, res: Response) => {
   res.status(410).json({
     success: false,
     error: {
@@ -105,7 +145,7 @@ router.put('/:id/configure', authorize('tasks', 'update'), async (req: Request, 
 // 删除任务（仅管理员）
 router.delete('/:id', authorize('tasks', 'delete'), async (req: Request, res: Response) => {
   try {
-    const { AuditTask, QuestionItem, EvidenceFile, Notification, AuditLog, OperationType } = await import('../models');
+    const { OperationType } = await import('../models');
     const task = await objectAccessService.taskOrNotFound(req.params.id, req.user!);
     if (!task) {
       res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '任务不存在' } });

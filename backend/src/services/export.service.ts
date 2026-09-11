@@ -1,8 +1,8 @@
 import ExcelJS from 'exceljs';
 import { Op, type WhereOptions } from 'sequelize';
 import {
-  Asset,
   AuditTask,
+  Department,
   EvidenceFile,
   QuestionItem,
   RemediationAction,
@@ -10,6 +10,7 @@ import {
   RiskAffectedAsset,
   RiskRecord,
   RiskSource,
+  TenantMember,
 } from '../models';
 import { decrypt } from '../utils/crypto';
 
@@ -79,20 +80,23 @@ class ExportService {
     riskAccessWhere: WhereOptions,
     metadata: { tenantName: string; exportedBy: string },
   ): Promise<Buffer> {
-    const where: any = { ...(riskAccessWhere as object) };
+    const where: any = { [Op.and]: [riskAccessWhere] };
     if (filters.status) where.status = filters.status;
     if (filters.riskLevel) where.riskLevel = filters.riskLevel;
     if (filters.treatmentStrategy) where.treatmentStrategy = filters.treatmentStrategy;
     if (filters.ownerDepartmentId) where.ownerDepartmentId = filters.ownerDepartmentId;
+    if (filters.taskId) where.taskId = filters.taskId;
+    if (filters.creationMode) where.creationMode = filters.creationMode;
+    if (filters.discoverySource) where.discoverySource = filters.discoverySource;
     if (filters.keyword) {
-      where[Op.or] = [
+      where[Op.and].push({ [Op.or]: [
         { code: { [Op.iLike]: `%${filters.keyword}%` } },
         { title: { [Op.iLike]: `%${filters.keyword}%` } },
-      ];
+      ] });
     }
     const risks = await RiskRecord.findAll({ where, order: [['identifiedAt', 'DESC']] });
     const riskIds = risks.map((risk) => risk.id);
-    const taskIds = [...new Set(risks.map((risk) => risk.taskId))];
+    const taskIds = [...new Set(risks.map((risk) => risk.taskId).filter(Boolean))] as string[];
     const tasks = taskIds.length
       ? await AuditTask.findAll({
         where: { id: { [Op.in]: taskIds } },
@@ -118,6 +122,13 @@ class ExportService {
       ? await RemediationAction.findAll({ where: { id: { [Op.in]: actionIds } } })
       : [];
     const actionById = new Map(actions.map((action) => [action.id, action]));
+    const [departments, members] = await Promise.all([
+      Department.findAll({ where: { id: { [Op.in]: [...new Set(risks.map((risk) => risk.ownerDepartmentId))] } } }),
+      TenantMember.findAll({ where: { userId: { [Op.in]: [...new Set(risks.flatMap((risk) => [risk.ownerUserId, risk.reviewerUserId, risk.createdBy]).filter(Boolean))] as string[] } } }),
+    ]);
+    const departmentNames = new Map(departments.map((item) => [item.id, item.name]));
+    const memberNames = new Map(members.map((item) => [item.userId, item.displayName]));
+    const taskNames = new Map(tasks.map((item) => [item.id, item.name || item.assessmentTarget]));
     const evidence = await EvidenceFile.findAll({
       where: {
         status: 'active',
@@ -149,11 +160,17 @@ class ExportService {
       { header: '风险编号', key: 'code', width: 22 },
       { header: '标题', key: 'title', width: 30 },
       { header: '描述', key: 'description', width: 42 },
+      { header: '创建方式', key: 'creationMode', width: 18 },
+      { header: '发现来源', key: 'discoverySource', width: 22 },
+      { header: '来源说明', key: 'discoverySourceDetail', width: 42 },
+      { header: '来源引用', key: 'sourceReference', width: 34 },
+      { header: '关联项目', key: 'task', width: 28 },
       { header: '等级', key: 'riskLevel', width: 12 },
       { header: '处置策略', key: 'strategy', width: 16 },
       { header: '状态', key: 'status', width: 22 },
       { header: '责任部门', key: 'department', width: 38 },
       { header: '负责人', key: 'owner', width: 38 },
+      { header: '审核人', key: 'reviewer', width: 24 },
       { header: '期限', key: 'dueDate', width: 16 },
       { header: '确认时间', key: 'confirmedAt', width: 24 },
       { header: '关闭时间', key: 'closedAt', width: 24 },
@@ -162,11 +179,17 @@ class ExportService {
       code: risk.code,
       title: risk.title,
       description: risk.description,
+      creationMode: risk.creationMode,
+      discoverySource: risk.discoverySource,
+      discoverySourceDetail: risk.discoverySourceDetail,
+      sourceReference: risk.sourceReference,
+      task: risk.taskId ? taskNames.get(risk.taskId) : '',
       riskLevel: risk.riskLevel,
       strategy: risk.treatmentStrategy,
       status: risk.status,
-      department: risk.ownerDepartmentId,
-      owner: risk.ownerUserId,
+      department: departmentNames.get(risk.ownerDepartmentId) || '',
+      owner: memberNames.get(risk.ownerUserId) || '',
+      reviewer: risk.reviewerUserId ? memberNames.get(risk.reviewerUserId) || '' : '',
       dueDate: risk.dueDate,
       confirmedAt: risk.confirmedAt,
       closedAt: risk.closedAt,
@@ -175,6 +198,9 @@ class ExportService {
     const sourceSheet = workbook.addWorksheet('来源');
     sourceSheet.columns = [
       { header: '风险编号', key: 'riskCode', width: 22 },
+      { header: '来源类型', key: 'sourceType', width: 22 },
+      { header: '来源说明', key: 'sourceDetail', width: 42 },
+      { header: '来源引用', key: 'sourceReference', width: 34 },
       { header: '评估单元ID', key: 'evaluationId', width: 38 },
       { header: '控制项编号', key: 'sequenceNumber', width: 16 },
       { header: '控制项', key: 'controlPoint', width: 42 },
@@ -183,11 +209,19 @@ class ExportService {
     ];
     (sources as any[]).forEach((source) => sourceSheet.addRow({
       riskCode: risks.find((risk) => risk.id === source.riskId)?.code,
+      sourceType: 'compliance_assessment',
       evaluationId: source.controlEvaluationId,
       sequenceNumber: source.controlEvaluation?.sequenceNumber,
       controlPoint: source.controlEvaluation?.controlPoint,
       relationType: source.relationType,
       rationale: source.rationale,
+    }));
+    risks.filter((risk) => risk.taskId === null).forEach((risk) => sourceSheet.addRow({
+      riskCode: risk.code,
+      sourceType: risk.discoverySource,
+      sourceDetail: risk.discoverySourceDetail,
+      sourceReference: risk.sourceReference,
+      rationale: risk.discoverySourceDetail,
     }));
 
     const assetSheet = workbook.addWorksheet('受影响资产');

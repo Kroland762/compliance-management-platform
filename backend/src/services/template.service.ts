@@ -1,6 +1,6 @@
-import { Readable } from 'stream';
 import { Op } from 'sequelize';
 import Papa from 'papaparse';
+import sequelize from '../config/database';
 import {
   QuestionnaireTemplate,
   QuestionTemplate,
@@ -10,20 +10,55 @@ import {
 } from '../models';
 import auditLogService from './audit-log.service';
 import { parsePagination, pagination } from '../utils/pagination';
-
-// CSV 行数据结构
-interface CsvRow {
-  '序号': string;
-  '控制域名': string;
-  '控制点': string;
-  '参考回答': string;
-  '历史证据': string;
-  '责任部门': string;
-  '责任人': string;
-}
+import { AppError } from '../utils/http';
+import {
+  LOCKED_VISIBLE_EVALUATION_COLUMN_KEYS,
+  normalizeEvaluationColumnSchema,
+  SYSTEM_EVALUATION_COLUMNS,
+  type EvaluationColumnDefinition,
+} from '../utils/evaluation-columns';
 
 // CSV 必填字段
 const REQUIRED_FIELDS = ['序号', '控制域名', '控制点'] as const;
+
+const FIELD_MAP: Record<string, string> = {
+  '序号': 'sequenceNumber', '控制域名': 'controlDomain', '控制点': 'controlPoint',
+  '参考回答': 'referenceAnswer', '历史证据': 'historicalEvidencePath',
+  '责任部门': 'responsibleDepartment', '责任人': 'responsiblePerson',
+};
+
+const CORE_LABELS: Record<string, string> = {
+  sequenceNumber: '序号', controlDomain: '控制域名', controlPoint: '控制点',
+  referenceAnswer: '参考回答', historicalEvidencePath: '历史证据',
+  responsibleDepartment: '责任部门', responsiblePerson: '责任人',
+};
+
+function schemaFromHeaders(headers: string[]): EvaluationColumnDefinition[] {
+  return headers.filter((header) => FIELD_MAP[header] !== 'referenceAnswer').map((header) => {
+    const mapped = FIELD_MAP[header];
+    return {
+      key: mapped || `extraData.${header}`,
+      label: mapped ? CORE_LABELS[mapped] : header,
+      source: mapped ? 'core' : 'extra',
+      visible: !['historicalEvidencePath', 'responsibleDepartment', 'responsiblePerson'].includes(mapped),
+      width: mapped === 'controlPoint' ? 320 : mapped === 'referenceAnswer' ? 240 : 160,
+    };
+  });
+}
+
+function parseCsv(fileBuffer: Buffer) {
+  const csvText = fileBuffer.toString('utf-8').replace(/^\uFEFF/, '');
+  const result: any = Papa.parse(csvText, { header: true, skipEmptyLines: true });
+  if (result.errors?.length) {
+    throw new AppError(400, 'IMPORT_FAILED', `CSV 解析失败: ${result.errors.map((e: any) => `第${e.row}行: ${e.message}`).join('; ')}`);
+  }
+  const headers: string[] = result.meta?.fields || [];
+  for (const field of REQUIRED_FIELDS) {
+    if (!headers.includes(field)) throw new AppError(400, 'IMPORT_FAILED', `CSV 缺少必填列: ${field}`);
+  }
+  if (!result.data.length) throw new AppError(400, 'IMPORT_FAILED', 'CSV 文件中没有数据行');
+  return { headers, rows: result.data as Record<string, string>[] };
+}
 
 class TemplateService {
   /**
@@ -34,52 +69,28 @@ class TemplateService {
     description: string | null,
     fileBuffer: Buffer,
     createdBy: string,
+    options: {
+      standardSeriesKey?: string;
+      version?: string;
+      controlKeyField?: string;
+      columnSchema?: EvaluationColumnDefinition[];
+    } = {},
   ): Promise<{ template: QuestionnaireTemplate; extraNote: string }> {
-    // 解析 CSV
-    const csvText = fileBuffer.toString('utf-8');
-    const parseResult: any = Papa.parse(csvText, {
-      header: true,
-      skipEmptyLines: true,
-    });
-
-    if (parseResult.errors && parseResult.errors.length > 0) {
-      const errMsg = parseResult.errors.map((e: any) => `第${e.row}行: ${e.message}`).join('; ');
-      throw new Error(`CSV 解析失败: ${errMsg}`);
-    }
-
-    // 校验必填字段
-    const headers: string[] = parseResult.meta?.fields || [];
-    for (const field of REQUIRED_FIELDS) {
-      if (!headers.includes(field)) {
-        throw new Error(`CSV 缺少必填列: ${field}`);
-      }
-    }
-
-    if (parseResult.data.length === 0) {
-      throw new Error('CSV 文件中没有数据行');
-    }
-
-    // 创建模板
-    const template = await QuestionnaireTemplate.create({
-      name,
-      description: description || null,
-      createdBy,
-      questionCount: parseResult.data.length,
-    } as any);
+    const { headers, rows } = parseCsv(fileBuffer);
+    const columnSchema = normalizeEvaluationColumnSchema(
+      options.columnSchema?.length ? options.columnSchema : schemaFromHeaders(headers),
+    );
+    const controlKeyField = options.controlKeyField || '序号';
+    if (!headers.includes(controlKeyField)) throw new AppError(400, 'IMPORT_FAILED', '稳定控制项标识列不在 CSV 中');
 
     // 动态映射：CSV 有什么列就导入什么列，不认识的存 extraData
-    const fieldMap: Record<string, string> = {
-      '序号': 'sequenceNumber', '控制域名': 'controlDomain', '控制点': 'controlPoint',
-      '参考回答': 'referenceAnswer', '历史证据': 'historicalEvidencePath',
-      '责任部门': 'responsibleDepartment', '责任人': 'responsiblePerson',
-    };
-    const mappedHeaders = headers.filter(h => fieldMap[h]);
-    const unmappedHeaders = headers.filter(h => !fieldMap[h]);
+    const mappedHeaders = headers.filter(h => FIELD_MAP[h]);
+    const unmappedHeaders = headers.filter(h => !FIELD_MAP[h]);
 
-    const questions = parseResult.data.map((row: any, index: number) => {
-      const item: any = { templateId: template.id };
+    const questions = rows.map((row: any, index: number) => {
+      const item: any = { controlKey: String(row[controlKeyField] || '').trim() };
       // 已知字段
-      for (const h of mappedHeaders) item[fieldMap[h]] = row[h] || null;
+      for (const h of mappedHeaders) item[FIELD_MAP[h]] = row[h] || null;
       // 未知字段 → extraData
       if (unmappedHeaders.length > 0) {
         const extra: any = {};
@@ -87,8 +98,12 @@ class TemplateService {
         item.extraData = extra;
       }
       if (!item.sequenceNumber) item.sequenceNumber = String(index + 1);
+      if (!item.controlKey) item.controlKey = item.sequenceNumber;
       return item;
     });
+    if (new Set(questions.map((item: any) => item.controlKey)).size !== questions.length) {
+      throw new AppError(409, 'DUPLICATE_CONTROL_KEY', '稳定控制项标识列存在重复值');
+    }
 
     // 记录跳过的列名，在返回消息中提示
     let extraNote = '';
@@ -96,7 +111,19 @@ class TemplateService {
       extraNote = `（含未识别列: ${unmappedHeaders.join(', ')}，已存入扩展数据）`;
     }
 
-    await QuestionTemplate.bulkCreate(questions as any);
+    const template = await sequelize.transaction(async (transaction) => {
+      const created = await QuestionnaireTemplate.create({
+        name,
+        description: description || null,
+        createdBy,
+        questionCount: rows.length,
+        standardSeriesKey: options.standardSeriesKey?.trim() || `standard-${Date.now()}`,
+        version: options.version?.trim() || '1.0',
+        columnSchema,
+      } as any, { transaction });
+      await QuestionTemplate.bulkCreate(questions.map((question) => ({ ...question, templateId: created.id })) as any, { transaction });
+      return created;
+    });
 
     await auditLogService.log({
       userId: createdBy,
@@ -108,6 +135,50 @@ class TemplateService {
     });
 
     return { template, extraNote };
+  }
+
+  previewImport(fileBuffer: Buffer) {
+    const { headers, rows } = parseCsv(fileBuffer);
+    return {
+      headers,
+      rowCount: rows.length,
+      sampleRows: rows.slice(0, 5),
+      suggestedControlKeyField: '序号',
+      columnSchema: schemaFromHeaders(headers),
+    };
+  }
+
+  async updateColumns(id: string, columns: EvaluationColumnDefinition[], updatedBy: string) {
+    const template = await QuestionnaireTemplate.findByPk(id);
+    if (!template) throw new AppError(404, 'NOT_FOUND', '模板不存在');
+    if (!Array.isArray(columns) || !columns.length) throw new AppError(400, 'VALIDATION_ERROR', '至少保留一个模板列');
+    const allowed = new Set([
+      ...(template.columnSchema || []).filter((column: any) => column.source !== 'system' && column.key !== 'referenceAnswer').map((column: any) => column.key),
+      ...SYSTEM_EVALUATION_COLUMNS.map((column) => column.key),
+    ]);
+    const templateKeys = (template.columnSchema || [])
+      .filter((column: any) => column.source !== 'system' && column.key !== 'referenceAnswer')
+      .map((column: any) => column.key);
+    if (new Set(columns.map((column) => column.key)).size !== columns.length
+      || columns.some((column) => !allowed.has(column.key))
+      || templateKeys.some((key) => !columns.some((column) => column.key === key))) {
+      throw new AppError(400, 'VALIDATION_ERROR', '模板列配置包含重复、未知或缺失字段');
+    }
+    if ([...LOCKED_VISIBLE_EVALUATION_COLUMN_KEYS]
+      .some((key) => !columns.some((column) => column.key === key && column.visible !== false))) {
+      throw new AppError(400, 'VALIDATION_ERROR', '序号、评估点和工作流列属于必需列，不能隐藏');
+    }
+    const columnSchema = normalizeEvaluationColumnSchema(columns);
+    await template.update({ columnSchema });
+    await auditLogService.log({
+      userId: updatedBy,
+      operationType: OperationType.UPDATE,
+      resourceType: 'template',
+      resourceId: id,
+      operationDetails: '更新评估表显示列及顺序',
+      success: true,
+    });
+    return columnSchema;
   }
 
   /**
@@ -180,9 +251,11 @@ class TemplateService {
         templateId: id,
         status: {
           [Op.in]: [
-            TaskStatus.DRAFT,
-            TaskStatus.ASSIGNED,
+            TaskStatus.PREPARING,
+            TaskStatus.READY,
             TaskStatus.IN_PROGRESS,
+            TaskStatus.PENDING_REVIEW,
+            TaskStatus.PENDING_CLOSURE,
           ],
         },
       },

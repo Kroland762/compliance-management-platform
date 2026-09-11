@@ -7,11 +7,11 @@ const router = Router();
 router.use(authenticate);
 
 router.get('/', authorize('assessment_plans', 'read'), asyncHandler(async (req: Request, res: Response) => {
-  res.json({ success: true, data: await assessmentPlanService.list(req.query) });
+  res.json({ success: true, data: await assessmentPlanService.list(req.query, req.user!) });
 }));
 
 router.get('/:id', authorize('assessment_plans', 'read'), asyncHandler(async (req: Request, res: Response) => {
-  res.json({ success: true, data: await assessmentPlanService.detail(req.params.id) });
+  res.json({ success: true, data: await assessmentPlanService.detail(req.params.id, req.user!) });
 }));
 
 router.post('/', authorize('assessment_plans', 'create'), asyncHandler(async (req: Request, res: Response) => {

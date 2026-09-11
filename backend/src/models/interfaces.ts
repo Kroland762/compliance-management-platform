@@ -4,7 +4,7 @@
 
 import {
   AssessmentType, TaskStatus, AnswerStatus,
-  ComplianceStatus, RiskLevel, RemediationStatus, RiskStatus,
+  ComplianceStatus, RiskLevel,
   NotificationType, OperationType,
   EvidenceType,
   EvidenceStatus, EvidenceScanStatus,
@@ -132,7 +132,7 @@ export interface IEvidenceFile {
 // ---- RiskRecord ----
 export interface IRiskRecord {
   id: string;
-  taskId: string;
+  taskId: string | null;
   code: string;
   title: string;
   description: string;
