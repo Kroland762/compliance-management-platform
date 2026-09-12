@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Table, Button, Tag, Select, Typography, Space, message, DatePicker, Input, Drawer } from 'antd';
-import { ExportOutlined, SearchOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
+import { Table, Button, Tag, Select, Typography, message, DatePicker, Input } from 'antd';
+import { ExportOutlined, SearchOutlined } from '@ant-design/icons';
 import { problemApi, type Problem } from '../../api/account';
 import { getApiErrorMessage } from '../../utils/error';
+import { useAuthStore } from '../../store/auth';
 import ProblemDetail from './ProblemDetail';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 const { RangePicker } = DatePicker;
 
 const severityColors: Record<string, string> = { HIGH: 'red', MEDIUM: 'orange', LOW: 'green' };
@@ -14,6 +15,7 @@ const statusColors: Record<string, string> = { PENDING: 'red', PROCESSING: 'oran
 const statusLabels: Record<string, string> = { PENDING: '待处理', PROCESSING: '处理中', RESOLVED: '已解决', AUTO_RESOLVED: '自动修复', FALSE_POSITIVE: '误报', IGNORED: '已忽略' };
 
 export default function ProblemList() {
+  const can = useAuthStore((state) => state.hasPermission);
   const [problems, setProblems] = useState<Problem[]>([]);
   const [loading, setLoading] = useState(false);
   const [total, setTotal] = useState(0);
@@ -23,7 +25,7 @@ export default function ProblemList() {
   // Filters
   const [severityFilter, setSeverityFilter] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('');
-  const [ruleIdFilter, setRuleIdFilter] = useState<string>('');
+  const [ruleIdFilter] = useState<string>('');
   const [dateRange, setDateRange] = useState<[string, string] | null>(null);
   const [keyword, setKeyword] = useState('');
 
@@ -40,10 +42,10 @@ export default function ProblemList() {
     if (severityFilter) params.severity = severityFilter;
     if (statusFilter) params.status = statusFilter;
     if (ruleIdFilter) params.ruleId = ruleIdFilter;
-    if (keyword) params.keyword = keyword;
+    if (keyword) params.search = keyword;
     if (dateRange) {
-      params.startDate = dateRange[0];
-      params.endDate = dateRange[1];
+      params.dateFrom = dateRange[0];
+      params.dateTo = dateRange[1];
     }
     problemApi.list(params)
       .then((res: any) => {
@@ -81,13 +83,14 @@ export default function ProblemList() {
       const params: any = {};
       if (severityFilter) params.severity = severityFilter;
       if (statusFilter) params.status = statusFilter;
-      if (dateRange) { params.startDate = dateRange[0]; params.endDate = dateRange[1]; }
+      if (dateRange) { params.dateFrom = dateRange[0]; params.dateTo = dateRange[1]; }
       const res = await problemApi.export(params);
-      const url = window.URL.createObjectURL(new Blob([res as any]));
+      const url = window.URL.createObjectURL(new Blob([res as any], { type: 'text/csv;charset=utf-8' }));
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'problems-export.xlsx';
+      a.download = 'problems-export.csv';
       a.click();
+      window.URL.revokeObjectURL(url);
       message.success('导出成功');
     } catch {
       message.error('导出失败');
@@ -154,9 +157,9 @@ export default function ProblemList() {
             allowClear
             style={{ width: 100 }}
             options={[
-              { value: 'high', label: '高' },
-              { value: 'medium', label: '中' },
-              { value: 'low', label: '低' },
+              { value: 'HIGH', label: '高' },
+              { value: 'MEDIUM', label: '中' },
+              { value: 'LOW', label: '低' },
             ]}
           />
           <Select
@@ -166,10 +169,10 @@ export default function ProblemList() {
             allowClear
             style={{ width: 110 }}
             options={[
-              { value: 'open', label: '未处理' },
-              { value: 'acknowledged', label: '已确认' },
-              { value: 'resolved', label: '已解决' },
-              { value: 'false_positive', label: '误报' },
+              { value: 'PENDING', label: '待处理' },
+              { value: 'PROCESSING', label: '处理中' },
+              { value: 'RESOLVED', label: '已解决' },
+              { value: 'FALSE_POSITIVE', label: '误报' },
             ]}
           />
           <RangePicker
@@ -185,12 +188,12 @@ export default function ProblemList() {
             }}
           />
           <Button onClick={handleSearch}>查询</Button>
-          <Button icon={<ExportOutlined />} onClick={handleExport}>导出</Button>
+          {can('problems', 'export') && <Button icon={<ExportOutlined />} onClick={handleExport}>导出</Button>}
         </div>
       </div>
 
       {/* Bulk Actions */}
-      {selectedIds.length > 0 && (
+      {can('problems', 'update') && selectedIds.length > 0 && (
         <div style={{
           marginBottom: 12,
           padding: '8px 12px',
@@ -201,9 +204,9 @@ export default function ProblemList() {
           gap: 8,
         }}>
           <Text strong style={{ fontSize: 13 }}>已选 {selectedIds.length} 项</Text>
-          <Button size="small" onClick={() => handleBulkUpdate('resolved')}>标记为已解决</Button>
-          <Button size="small" onClick={() => handleBulkUpdate('acknowledged')}>标记为已确认</Button>
-          <Button size="small" onClick={() => handleBulkUpdate('false_positive')}>标记为误报</Button>
+          <Button size="small" onClick={() => handleBulkUpdate('RESOLVED')}>标记为已解决</Button>
+          <Button size="small" onClick={() => handleBulkUpdate('PROCESSING')}>标记为处理中</Button>
+          <Button size="small" onClick={() => handleBulkUpdate('FALSE_POSITIVE')}>标记为误报</Button>
           <Button size="small" onClick={() => setSelectedIds([])}>取消选择</Button>
         </div>
       )}
@@ -215,10 +218,10 @@ export default function ProblemList() {
         loading={loading}
         size="small"
         scroll={{ x: 1000 }}
-        rowSelection={{
+        rowSelection={can('problems', 'update') ? {
           selectedRowKeys: selectedIds,
           onChange: (keys) => setSelectedIds(keys as string[]),
-        }}
+        } : undefined}
         pagination={{
           current: page,
           pageSize,

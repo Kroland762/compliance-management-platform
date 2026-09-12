@@ -2,6 +2,8 @@ import fs from 'fs/promises';
 import path from 'path';
 import Papa from 'papaparse';
 import type EvidenceFile from '../models/EvidenceFile';
+import { config } from '../config';
+import { AppError } from '../utils/http';
 import { fileStorage } from './file-storage.service';
 
 export type PreviewKind = 'image' | 'pdf' | 'csv' | 'unsupported';
@@ -125,8 +127,23 @@ export async function readCsvPreview(
   return parseCsvPreview(decoded.text, page, pageSize, decoded.encoding);
 }
 
+export function resolveLegacyEvidencePath(filePath: string): string {
+  if (!config.upload.legacyEvidenceDir) {
+    throw new AppError(410, 'LEGACY_EVIDENCE_UNAVAILABLE', '历史证据旧路径未配置，无法读取');
+  }
+  const root = path.resolve(config.upload.legacyEvidenceDir);
+  if (root === path.parse(root).root) {
+    throw new AppError(500, 'LEGACY_EVIDENCE_ROOT_INVALID', '历史证据旧路径根目录配置非法');
+  }
+  const target = path.resolve(root, filePath);
+  if (target !== root && !target.startsWith(`${root}${path.sep}`)) {
+    throw new AppError(400, 'INVALID_LEGACY_EVIDENCE_PATH', '历史证据路径非法');
+  }
+  return target;
+}
+
 export function resolveEvidencePath(evidence: EvidenceFile): string {
   if (evidence.storageKey) return fileStorage.absolutePath(evidence.storageKey);
-  if (evidence.filePath) return path.resolve(evidence.filePath);
+  if (evidence.filePath) return resolveLegacyEvidencePath(evidence.filePath);
   throw new Error('证据文件没有可用的存储位置');
 }

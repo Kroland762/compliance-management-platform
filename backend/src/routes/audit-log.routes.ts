@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import { Router } from 'express';
 import { authenticate, authorize } from '../middlewares/auth';
 import auditLogService from '../services/audit-log.service';
 import objectAccessService from '../services/object-access.service';

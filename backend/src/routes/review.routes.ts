@@ -22,7 +22,7 @@ router.get('/tasks/:taskId', async (req: Request, res: Response) => {
   }
 });
 
-router.put('/questions/:id', async (req: Request, res: Response) => {
+router.put('/questions/:id', async (_req: Request, res: Response) => {
   res.status(410).json({
     success: false,
     error: {

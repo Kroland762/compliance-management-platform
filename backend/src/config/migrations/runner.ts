@@ -104,14 +104,23 @@ export async function migrateUp(schemas?: string[]): Promise<void> {
         if (migration.scope === 'tenant') {
           await sequelize.query(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(schemaName)}`);
         }
-        await sequelize.transaction({ type: Transaction.TYPES.DEFERRED }, async (transaction) => {
-          await migration.up(schemaName, transaction);
+        if (migration.transactional === false) {
+          await migration.up(schemaName);
           await sequelize.query(
             `INSERT INTO public.schema_migrations (migration_id, schema_name, checksum)
              VALUES (:migrationId, :schemaName, :checksum)`,
-            { replacements: { migrationId: migration.id, schemaName, checksum }, transaction },
+            { replacements: { migrationId: migration.id, schemaName, checksum } },
           );
-        });
+        } else {
+          await sequelize.transaction({ type: Transaction.TYPES.DEFERRED }, async (transaction) => {
+            await migration.up(schemaName, transaction);
+            await sequelize.query(
+              `INSERT INTO public.schema_migrations (migration_id, schema_name, checksum)
+               VALUES (:migrationId, :schemaName, :checksum)`,
+              { replacements: { migrationId: migration.id, schemaName, checksum }, transaction },
+            );
+          });
+        }
       }
     }
   });
@@ -128,12 +137,20 @@ export async function migrateDown(schemaName: string, confirmMigrationId: string
       throw new Error('仅允许回滚指定 schema 的最后一个迁移，且必须通过 --confirm=<migration_id> 明确确认');
     }
     if (!migration.down) throw new Error(`迁移 ${migration.id} 不支持自动回滚；请先恢复备份`);
-    await sequelize.transaction(async (transaction) => {
-      await migration.down!(schemaName, transaction);
+    if (migration.transactional === false) {
+      await migration.down!(schemaName);
       await sequelize.query(
         'DELETE FROM public.schema_migrations WHERE migration_id = :migrationId AND schema_name = :schemaName',
-        { replacements: { migrationId: migration.id, schemaName }, transaction },
+        { replacements: { migrationId: migration.id, schemaName } },
       );
-    });
+    } else {
+      await sequelize.transaction(async (transaction) => {
+        await migration.down!(schemaName, transaction);
+        await sequelize.query(
+          'DELETE FROM public.schema_migrations WHERE migration_id = :migrationId AND schema_name = :schemaName',
+          { replacements: { migrationId: migration.id, schemaName }, transaction },
+        );
+      });
+    }
   });
 }

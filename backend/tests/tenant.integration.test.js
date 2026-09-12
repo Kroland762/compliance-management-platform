@@ -11,6 +11,7 @@ describeIntegration('tenant identity, membership, roles and organization governa
   let tenantAToken;
   let tenantBToken;
   let identityToken;
+  let identitySessionId;
   let sharedUser;
   let memberA;
   let memberB;
@@ -20,6 +21,8 @@ describeIntegration('tenant identity, membership, roles and organization governa
   let roleB;
   let taskB;
   let qualificationB;
+  const cleanupTenants = [];
+  const cleanupUsernames = [];
   const sharedPassword = 'SharedMember123!';
 
   beforeAll(async () => {
@@ -31,6 +34,7 @@ describeIntegration('tenant identity, membership, roles and organization governa
     const { migrateUp } = require('../src/config/migrations/runner');
     const {
       AuditTask,
+      AuthSession,
       Department,
       DepartmentMember,
       MemberRole,
@@ -43,7 +47,6 @@ describeIntegration('tenant identity, membership, roles and organization governa
     } = require('../src/models');
     const provisioning = require('../src/services/tenant-provisioning.service').default;
     const { runWithTenantContext } = require('../src/middlewares/tenant');
-
     await migrateUp();
     const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const provisionA = await provisioning.provision({
@@ -66,6 +69,8 @@ describeIntegration('tenant identity, membership, roles and organization governa
     });
     tenantA = provisionA.tenant;
     tenantB = provisionB.tenant;
+    cleanupTenants.push(tenantA, tenantB);
+    cleanupUsernames.push(provisionA.bootstrapCredentials.username, provisionB.bootstrapCredentials.username);
 
     sharedUser = await User.create({
       username: `shared_${suffix}`,
@@ -136,22 +141,55 @@ describeIntegration('tenant identity, membership, roles and organization governa
         assignedTo: sharedUser.id,
         reviewerId: sharedUser.id,
         departmentId: departmentB.id,
-        status: 'draft',
+        status: 'preparing',
       });
     });
 
-    identityToken = jwt.sign({
+    const { createHash, randomUUID } = require('crypto');
+    identitySessionId = randomUUID();
+    const identityRefreshToken = jwt.sign({
       kind: 'identity',
+      tokenUse: 'refresh',
+      sessionId: identitySessionId,
       userId: sharedUser.id,
       username: sharedUser.username,
       tokenVersion: sharedUser.tokenVersion,
       passwordChangeRequired: false,
       isGlobalAdmin: false,
-    }, process.env.JWT_SECRET, { expiresIn: 600 });
+    }, process.env.JWT_SECRET, { expiresIn: 600, jwtid: randomUUID() });
+    identityToken = jwt.sign({
+      kind: 'identity',
+      tokenUse: 'access',
+      sessionId: identitySessionId,
+      userId: sharedUser.id,
+      username: sharedUser.username,
+      tokenVersion: sharedUser.tokenVersion,
+      passwordChangeRequired: false,
+      isGlobalAdmin: false,
+    }, process.env.JWT_SECRET, { expiresIn: 600, jwtid: randomUUID() });
+    await AuthSession.create({
+      id: identitySessionId,
+      userId: sharedUser.id,
+      refreshTokenHash: createHash('sha256').update(identityRefreshToken).digest('hex'),
+      expiresAt: new Date(Date.now() + 600_000),
+      revokedAt: null,
+    });
   }, 90_000);
 
   afterAll(async () => {
-    await sequelize.close();
+    try {
+      if (sequelize) {
+        const { cleanupIntegrationState } = require('./helpers/tenant-cleanup');
+        await cleanupIntegrationState({
+          sequelize,
+          tenants: cleanupTenants,
+          userIds: sharedUser ? [sharedUser.id] : [],
+          usernames: cleanupUsernames,
+        });
+      }
+    } finally {
+      if (sequelize) await sequelize.close();
+    }
   });
 
   test('one global identity selects either tenant and receives different member context', async () => {
@@ -170,6 +208,7 @@ describeIntegration('tenant identity, membership, roles and organization governa
       tenantId: tenantA.id,
       memberId: memberA.id,
       primaryDepartmentId: departmentA.id,
+      primaryDepartmentName: departmentA.name,
     });
     tenantAToken = selectedA.body.data.token;
 
@@ -181,10 +220,12 @@ describeIntegration('tenant identity, membership, roles and organization governa
       tenantId: tenantB.id,
       memberId: memberB.id,
       primaryDepartmentId: departmentB.id,
+      primaryDepartmentName: departmentB.name,
     });
     expect(selectedB.body.data.user.roleIds).toHaveLength(2);
-    expect(selectedB.body.data.user.permissions.tasks).toEqual(
-      expect.arrayContaining(['read', 'update', 'submit']),
+    expect(selectedB.body.data.user.permissions.tasks).toEqual(['read']);
+    expect(selectedB.body.data.user.permissions.evaluations).toEqual(
+      expect.arrayContaining(['read', 'answer', 'submit', 'claim', 'review']),
     );
     tenantBToken = selectedB.body.data.token;
   });
@@ -224,6 +265,78 @@ describeIntegration('tenant identity, membership, roles and organization governa
     );
   });
 
+  test('concurrent invalid logins retain every failed-attempt increment', async () => {
+    const { User } = require('../src/models');
+    await sharedUser.update({ failedLoginAttempts: 0, lockedUntil: null });
+    const authService = require('../src/services/auth.service').default;
+
+    const attempts = await Promise.allSettled([
+      authService.login(sharedUser.username, 'wrong-password', undefined, '0000'),
+      authService.login(sharedUser.username, 'wrong-password', undefined, '0000'),
+    ]);
+
+    expect(attempts.every((attempt) => attempt.status === 'rejected')).toBe(true);
+    const reloaded = await User.findByPk(sharedUser.id);
+    expect(reloaded.failedLoginAttempts).toBe(2);
+    await reloaded.update({ failedLoginAttempts: 0, lockedUntil: null });
+  });
+
+  test('concurrent refresh rotation allows exactly one use of a refresh token', async () => {
+    const { createHash, randomUUID } = require('crypto');
+    const { AuthSession } = require('../src/models');
+    const authService = require('../src/services/auth.service').default;
+    const sessionId = randomUUID();
+    const refreshToken = jwt.sign({
+      kind: 'identity',
+      tokenUse: 'refresh',
+      sessionId,
+      userId: sharedUser.id,
+      username: sharedUser.username,
+      tokenVersion: sharedUser.tokenVersion,
+      passwordChangeRequired: false,
+      isGlobalAdmin: false,
+    }, process.env.JWT_SECRET, { expiresIn: 600, jwtid: randomUUID() });
+    await AuthSession.create({
+      id: sessionId,
+      userId: sharedUser.id,
+      refreshTokenHash: createHash('sha256').update(refreshToken).digest('hex'),
+      expiresAt: new Date(Date.now() + 600_000),
+      revokedAt: null,
+    });
+
+    const refreshes = await Promise.allSettled([
+      authService.refreshToken(refreshToken),
+      authService.refreshToken(refreshToken),
+    ]);
+    const fulfilled = refreshes.filter((result) => result.status === 'fulfilled');
+    expect(fulfilled).toHaveLength(1);
+    expect(refreshes.filter((result) => result.status === 'rejected')).toHaveLength(1);
+
+    const rotated = fulfilled[0].value;
+    const logout = await request.post('/api/auth/logout')
+      .set('Authorization', `Bearer ${rotated.token}`)
+      .set('Cookie', `refreshToken=${rotated.refreshToken}`);
+    expect(logout.status).toBe(200);
+    expect(logout.headers['set-cookie'].join(';')).toContain('refreshToken=;');
+    const rejectedAccess = await request.get('/api/auth/contexts')
+      .set('Authorization', `Bearer ${rotated.token}`);
+    expect(rejectedAccess.status).toBe(401);
+    await expect(authService.refreshToken(rotated.refreshToken)).rejects.toThrow('登录会话已失效');
+  });
+
+  test('auth-session migration is idempotent and refuses rollback with active sessions', async () => {
+    const { migrateUp, status } = require('../src/config/migrations/runner');
+    const migrations = require('../src/config/migrations/registry').default;
+    await migrateUp();
+    await migrateUp();
+    const migration = (await status()).find((item) =>
+      item.migrationId === '016_control_auth_sessions' && item.schemaName === 'public');
+    expect(migration).toMatchObject({ applied: true, checksumValid: true });
+    const authSessionMigration = migrations.find((item) => item.id === '016_control_auth_sessions');
+    await expect(sequelize.transaction((transaction) => authSessionMigration.down('public', transaction)))
+      .rejects.toThrow('存在未过期的登录会话');
+  });
+
   test('active members require exactly one primary department and at least one role', async () => {
     const { DepartmentMember, MemberRole } = require('../src/models');
     const { runWithTenantContext } = require('../src/middlewares/tenant');
@@ -249,6 +362,8 @@ describeIntegration('tenant identity, membership, roles and organization governa
         displayName: '临时管理员',
       },
     });
+    cleanupTenants.push(result.tenant);
+    cleanupUsernames.push(result.bootstrapCredentials.username);
     const captchaService = require('../src/services/captcha.service').default;
     const captcha = jest.spyOn(captchaService, 'verify').mockReturnValueOnce(true);
     const login = await request.post('/api/auth/login').send({
@@ -343,6 +458,12 @@ describeIntegration('tenant identity, membership, roles and organization governa
           VALUES (:departmentMemberId, :departmentId, :userId)`, {
         replacements: { roleId, tenantId, departmentId, departmentMemberId, userId: legacyUser.id },
       });
+      const {
+        DataSource, AccountData, AuditRule, AccountAuditTask, ProblemAccount, TaskExecution,
+      } = require('../src/models/account');
+      for (const model of [DataSource, AccountData, AuditRule, AccountAuditTask, ProblemAccount, TaskExecution]) {
+        await model.schema(schema).sync();
+      }
       for (const migrationId of ['001_tenant_business', '002_tenant_security_fields']) {
         const migration = migrations.find((item) => item.id === migrationId);
         await sequelize.query(`INSERT INTO public.schema_migrations
@@ -351,7 +472,11 @@ describeIntegration('tenant identity, membership, roles and organization governa
         });
       }
 
-      await migrateUp([schema]);
+      try {
+        await migrateUp([schema]);
+      } catch (error) {
+        throw new Error([error.message, error.parent?.message, error.parent?.detail, error.sql].filter(Boolean).join(' | '));
+      }
       const rows = await sequelize.query(`
         SELECT member."userId", role."roleId", department."departmentId", department."isPrimary"
         FROM ${quote}.tenant_members member

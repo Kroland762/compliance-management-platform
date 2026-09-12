@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import { Router } from 'express';
 import { authenticate, authorize } from '../middlewares/auth';
 import qualificationService from '../services/qualification.service';
 import objectAccessService from '../services/object-access.service';
@@ -20,14 +20,14 @@ router.post('/', authorize('qualifications', 'create'), asyncHandler(async (req,
   if (!ownerDepartmentId) throw new AppError(400, 'PRIMARY_DEPARTMENT_REQUIRED', '请选择归属部门');
   const qualification = await qualificationService.create(
     { ...req.body, ownerDepartmentId },
-    req.user!.userId,
+    req.user!,
   );
   res.status(201).json({ success: true, data: qualification });
 }));
 
 router.put('/:id', authorize('qualifications', 'update'), asyncHandler(async (req, res) => {
   await objectAccessService.qualificationOrNotFound(req.params.id, req.user!, 'update');
-  const qualification = await qualificationService.update(req.params.id, req.body, req.user!.userId);
+  const qualification = await qualificationService.update(req.params.id, req.body, req.user!);
   res.json({ success: true, data: qualification });
 }));
 

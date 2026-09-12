@@ -1,15 +1,20 @@
 import { Notification, NotificationType } from '../models';
 import { parsePagination, pagination } from '../utils/pagination';
+import { AppError } from '../utils/http';
+import type { Transaction } from 'sequelize';
 
 class NotificationService {
-  async create(data: { userId: string; taskId: string | null; type: NotificationType; title: string; content: string }) {
+  async create(
+    data: { userId: string; taskId: string | null; type: NotificationType; title: string; content: string },
+    transaction?: Transaction,
+  ) {
     return Notification.create({
       userId: data.userId,
       taskId: data.taskId,
       notificationType: data.type,
       title: data.title,
       content: data.content,
-    } as any);
+    } as any, { transaction });
   }
 
   async getNotifications(userId: string, query: { page?: number; pageSize?: number; isRead?: boolean }) {
@@ -35,9 +40,9 @@ class NotificationService {
     return Notification.count({ where: { userId, isRead: false } });
   }
 
-  async markAsRead(id: string) {
-    const notif = await Notification.findByPk(id);
-    if (!notif) throw new Error('通知不存在');
+  async markAsRead(id: string, userId: string) {
+    const notif = await Notification.findOne({ where: { id, userId } });
+    if (!notif) throw new AppError(404, 'NOT_FOUND', '通知不存在');
     notif.isRead = true;
     notif.readAt = new Date();
     await notif.save();

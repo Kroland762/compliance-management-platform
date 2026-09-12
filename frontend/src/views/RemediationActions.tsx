@@ -1,18 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Button, DatePicker, Form, Input, message, Modal, Select, Space, Table, Tag, Typography } from 'antd';
+import { Button, DatePicker, Form, Input, message, Modal, Space, Table, Tag, Typography } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import apiClient from '../api/client';
 import { getApiErrorMessage } from '../utils/error';
 import { useAuthStore } from '../store/auth';
+import { DepartmentSelect, LookupSelect, PersonnelSelect } from '../components/lookups';
 
 export default function RemediationActions() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [items, setItems] = useState<any[]>([]);
-  const [risks, setRisks] = useState<any[]>([]);
-  const [departments, setDepartments] = useState<any[]>([]);
-  const [people, setPeople] = useState<any[]>([]);
   const [open, setOpen] = useState(searchParams.has('riskId'));
   const [form] = Form.useForm();
   const user = useAuthStore((state) => state.user);
@@ -21,14 +19,7 @@ export default function RemediationActions() {
     .then((response: any) => setItems(response.data?.items || []));
   useEffect(() => {
     load();
-    Promise.all([
-      apiClient.get('/risks', { params: { pageSize: 100 } }),
-      apiClient.get('/lookup/departments'),
-      apiClient.get('/lookup/personnel'),
-    ]).then(([r, d, p]: any[]) => {
-      setRisks(r.data?.items || []);
-      setDepartments(d.data || []);
-      setPeople(p.data || []);
+    Promise.resolve().then(() => {
       const riskId = searchParams.get('riskId');
       if (riskId) form.setFieldValue('riskIds', [riskId]);
       if (user?.id) form.setFieldValue('ownerUserId', user.id);
@@ -95,17 +86,16 @@ export default function RemediationActions() {
       <Modal width={680} title="创建整改行动" open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} destroyOnClose>
         <Form form={form} layout="vertical" onFinish={create} preserve={false}>
           <Form.Item name="riskIds" label="关联风险" rules={[{ required: true, type: 'array', min: 1 }]}>
-            <Select mode="multiple" options={risks.map((risk) => ({ value: risk.id, label: `${risk.code} · ${risk.title}` }))} />
+            <LookupSelect kind="risks" purpose="remediation-risk" mode="multiple" placeholder="输入风险标题检索" />
           </Form.Item>
           <Form.Item name="title" label="行动标题" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="description" label="执行说明" rules={[{ required: true }]}><Input.TextArea rows={3} /></Form.Item>
           {selectedRiskIds.map((riskId: string) => {
-            const risk = risks.find((item) => item.id === riskId);
             return (
               <Form.Item
                 key={riskId}
                 name={['riskContributions', riskId]}
-                label={`对 ${risk?.code || '关联风险'} 的整改贡献`}
+                label="对关联风险的整改贡献"
                 rules={[{ required: true, message: '请分别说明该行动如何降低此风险' }]}
               >
                 <Input.TextArea rows={2} placeholder="该说明只作用于当前风险的关联与复核" />
@@ -114,10 +104,10 @@ export default function RemediationActions() {
           })}
           <Space align="start">
             <Form.Item name="ownerDepartmentId" label="责任部门" rules={[{ required: true }]} style={{ width: 300 }}>
-              <Select options={departments.map((item) => ({ value: item.id, label: item.name }))} />
+              <DepartmentSelect purpose="remediation-owner" />
             </Form.Item>
             <Form.Item name="ownerUserId" label="负责人" rules={[{ required: true }]} style={{ width: 300 }}>
-              <Select showSearch optionFilterProp="label" options={people.map((item) => ({ value: item.userId, label: item.displayName || item.username }))} />
+              <PersonnelSelect purpose="remediation-owner" />
             </Form.Item>
           </Space>
           <Space align="start">

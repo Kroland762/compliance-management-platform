@@ -9,7 +9,8 @@ export const PERMISSION_DEFINITIONS = {
   assets:          ['create', 'read', 'update', 'archive'],
   qualifications:  ['create', 'read', 'update', 'delete'],
   tasks:           ['create', 'read', 'update', 'delete', 'submit', 'return', 'publish', 'cancel'],
-  evaluations:     ['read', 'answer', 'submit', 'review'],
+  evaluations:     ['read', 'answer', 'submit', 'claim', 'review'],
+  findings:        ['read', 'triage', 'remediate', 'escalate', 'verify', 'close'],
   risks:           ['create', 'read', 'update', 'confirm', 'assign', 'accept', 'verify', 'close', 'export'],
   remediation_actions: ['create', 'read', 'update', 'submit', 'verify', 'link'],
   assessment_plans: ['create', 'read', 'update', 'delete', 'execute'],
@@ -24,6 +25,9 @@ export const PERMISSION_DEFINITIONS = {
   problems:        ['read', 'update', 'export'],
   dashboard:       ['read'],
   account_dashboard:['read'],
+  products:        ['create', 'read', 'update', 'archive'],
+  product_dossiers:['read', 'update', 'submit', 'review', 'confirm', 'revise'],
+  product_compliance_config: ['create', 'read', 'update', 'retire'],
 } as const;
 
 export type PermissionResource = keyof typeof PERMISSION_DEFINITIONS;

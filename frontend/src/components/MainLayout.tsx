@@ -1,11 +1,11 @@
-import { Button, Badge, Typography, Dropdown, Space, Avatar, Popover, List, Tag, Menu, Layout, Select, message } from 'antd';
+import { Alert, Button, Badge, Typography, Dropdown, Space, Avatar, Popover, List, Tag, Menu, Layout, Select, message, Spin } from 'antd';
 import {
   DashboardOutlined, FileTextOutlined, UserOutlined,
   AuditOutlined, FormOutlined, WarningOutlined,
   BellOutlined, LogoutOutlined, FileSearchOutlined,
-  MenuFoldOutlined, MenuUnfoldOutlined, DatabaseOutlined, ScheduleOutlined,
+  MenuFoldOutlined, DatabaseOutlined, ScheduleOutlined,
   SecurityScanOutlined, SafetyCertificateOutlined, HomeOutlined, ApartmentOutlined,
-  AppstoreOutlined, NodeIndexOutlined, ToolOutlined,
+  AppstoreOutlined, ToolOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import { useAuthStore } from '../store/auth';
@@ -30,16 +30,19 @@ export default function MainLayout() {
   const contexts = useAuthStore((s) => s.contexts);
   const selectContext = useAuthStore((s) => s.selectContext);
   const clearContext = useAuthStore((s) => s.clearContext);
+  const isPlatformMode = Boolean(user?.isGlobalAdmin && !selectedTenant);
   useIdleTimeout();
   const [collapsed, setCollapsed] = useState(false);
-  const [activeNav, setActiveNav] = useState<'compliance' | 'account-audit' | 'system'>('compliance');
+  const [activeNav, setActiveNav] = useState<'compliance' | 'product-compliance' | 'account-audit' | 'system'>('compliance');
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
+  const [notificationError, setNotificationError] = useState('');
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [isCompact, setIsCompact] = useState(false);
   const tenantOptions = [
-    ...(user?.isGlobalAdmin ? [{ label: '控制面（不读取业务数据）', value: '__control__' }] : []),
+    ...(user?.isGlobalAdmin ? [{ label: '平台管理', value: '__control__' }] : []),
     ...contexts.map((tenant) => ({ label: tenant.name, value: tenant.id })),
   ];
 
@@ -48,6 +51,7 @@ export default function MainLayout() {
       try {
         await clearContext();
         navigate('/tenants');
+        message.success('已切换到平台管理');
       } catch {
         message.error('退出租户上下文失败');
       }
@@ -58,6 +62,7 @@ export default function MainLayout() {
     try {
       await selectContext(tenantId);
       navigate('/dashboard');
+      message.success(`已切换到${option.label}`);
     } catch {
       message.error('租户上下文切换失败');
     }
@@ -77,24 +82,39 @@ export default function MainLayout() {
     try {
       const res: any = await apiClient.get('/notifications/unread-count');
       setUnreadCount(res.data?.count || 0);
-    } catch {}
+      setNotificationError('');
+    } catch {
+      setNotificationError('通知状态暂时无法更新');
+    }
   };
 
   const fetchNotifications = async () => {
+    setNotificationsLoading(true);
     try {
       const res: any = await apiClient.get('/notifications?pageSize=20');
       setNotifications(res.data?.items || []);
-    } catch {}
+      setNotificationError('');
+    } catch {
+      setNotificationError('通知加载失败，请重试');
+    } finally {
+      setNotificationsLoading(false);
+    }
   };
 
   useEffect(() => {
+    if (isPlatformMode) {
+      setUnreadCount(0);
+      return undefined;
+    }
     fetchUnread();
     const timer = setInterval(fetchUnread, 30000);
     return () => clearInterval(timer);
-  }, []);
+  }, [isPlatformMode, selectedTenant?.id]);
 
   useEffect(() => {
-    if (location.pathname.startsWith('/account-audit')) {
+    if (location.pathname.startsWith('/product-compliance')) {
+      setActiveNav('product-compliance');
+    } else if (location.pathname.startsWith('/account-audit')) {
       setActiveNav('account-audit');
     } else if (
       location.pathname.startsWith('/users') ||
@@ -117,7 +137,7 @@ export default function MainLayout() {
       { key: '/dashboard', icon: <DashboardOutlined />, label: '工作台' },
     ] : []),
     ...(can('templates', 'read') ? [
-      { key: '/templates', icon: <FileTextOutlined />, label: '合规模板' },
+      { key: '/templates', icon: <FileTextOutlined />, label: '合规标准' },
     ] : []),
     ...(can('assets', 'read') ? [
       { key: '/assets', icon: <AppstoreOutlined />, label: '资产台账' },
@@ -126,28 +146,25 @@ export default function MainLayout() {
       { key: '/qualifications', icon: <SafetyCertificateOutlined />, label: '资质台账' },
     ] : []),
     ...(can('tasks', 'read') ? [
-      { key: '/tasks/review', icon: <AuditOutlined />, label: '合规检查' },
+      { key: '/assessments', icon: <AuditOutlined />, label: '评估项目' },
     ] : []),
-    ...(can('tasks', 'create') ? [
-      { key: '/assessments/new', icon: <NodeIndexOutlined />, label: '创建评估' },
+    ...((can('evaluations', 'read') || can('remediation_actions', 'read')) ? [
+      { key: '/work-items', icon: <FormOutlined />, label: '我的待办' },
     ] : []),
-    ...(can('tasks', 'read') ? [
-      { key: '/my-tasks', icon: <FormOutlined />, label: '我的任务' },
+    ...(can('findings', 'read') ? [
+      { key: '/findings', icon: <FileSearchOutlined />, label: '不符合项' },
     ] : []),
-    ...(can('risks', 'read') ? [
-      { key: '/risks', icon: <WarningOutlined />, label: '合规风险' },
-    ] : []),
-    ...(can('remediation_actions', 'read') ? [
-      { key: '/remediation-actions', icon: <ToolOutlined />, label: '我的整改' },
+    ...((can('risks', 'read') || can('remediation_actions', 'read')) ? [
+      { key: '/governance', icon: <ToolOutlined />, label: '风险与整改' },
     ] : []),
     ...(can('assessment_plans', 'read') ? [
-      { key: '/assessment-plans', icon: <ScheduleOutlined />, label: '周期计划' },
+      { key: '/assessment-plans', icon: <ScheduleOutlined />, label: '周期评估' },
     ] : []),
   ];
 
   const accountAuditMenuItems: any[] = [
     ...(can('account_dashboard', 'read') ? [
-      { key: '/account-audit', icon: <DashboardOutlined />, label: '概览' },
+      { key: '/account-audit/dashboard', icon: <DashboardOutlined />, label: '概览' },
     ] : []),
     ...(can('data_sources', 'read') ? [
       { key: '/account-audit/data-sources', icon: <DatabaseOutlined />, label: '数据源' },
@@ -160,6 +177,18 @@ export default function MainLayout() {
     ] : []),
     ...(can('problems', 'read') ? [
       { key: '/account-audit/problems', icon: <WarningOutlined />, label: '问题' },
+    ] : []),
+  ];
+
+  const productComplianceMenuItems: any[] = [
+    ...(can('products', 'read') ? [
+      { key: '/product-compliance/products', icon: <AppstoreOutlined />, label: '产品台账' },
+    ] : []),
+    ...(can('product_dossiers', 'review') ? [
+      { key: '/product-compliance/review', icon: <AuditOutlined />, label: '待复核' },
+    ] : []),
+    ...(can('product_compliance_config', 'read') ? [
+      { key: '/product-compliance/config', icon: <ToolOutlined />, label: '配置管理' },
     ] : []),
   ];
 
@@ -176,18 +205,28 @@ export default function MainLayout() {
     ...(can('organization', 'read') ? [
       { key: '/organization', icon: <ApartmentOutlined />, label: '组织管理' },
     ] : []),
-    ...(can('users', 'read') ? [
+    ...(can('audit_logs', 'read') ? [
       { key: '/audit-logs', icon: <FileSearchOutlined />, label: '操作日志' },
     ] : []),
     { type: 'divider' as any },
     { key: '/settings', icon: <SecurityScanOutlined />, label: '安全设置' },
   ];
 
-  const firstSystemPath = systemMenuItems.find((item) => item?.key)?.key || '/settings';
+  const platformMenuItems: any[] = [
+    ...(can('tenants', 'read') ? [
+      { key: '/tenants', icon: <HomeOutlined />, label: '租户管理' },
+    ] : []),
+  ];
 
-  const sideMenuItems = activeNav === 'compliance' ? complianceMenuItems
-    : activeNav === 'account-audit' ? accountAuditMenuItems
-    : systemMenuItems;
+  const firstSystemPath = systemMenuItems.find((item) => item?.key)?.key || '/settings';
+  const firstProductCompliancePath = productComplianceMenuItems.find((item) => item?.key)?.key || '/product-compliance/products';
+
+  const sideMenuItems = isPlatformMode
+    ? platformMenuItems
+    : activeNav === 'compliance' ? complianceMenuItems
+      : activeNav === 'product-compliance' ? productComplianceMenuItems
+      : activeNav === 'account-audit' ? accountAuditMenuItems
+        : systemMenuItems;
 
   const userMenuItems = [
     { key: 'profile', icon: <UserOutlined />, label: '个人信息' },
@@ -212,21 +251,24 @@ export default function MainLayout() {
   });
 
   const activeSideKey = (() => {
-    if (location.pathname.startsWith('/tasks/review') || location.pathname.startsWith('/tasks/configure')) return '/tasks/review';
-    if (location.pathname.startsWith('/assessments/new')) return '/assessments/new';
-    if (location.pathname.startsWith('/assessments/')) return '/tasks/review';
+    if (location.pathname.startsWith('/tasks/review') || location.pathname.startsWith('/tasks/configure')) return '/assessments';
+    if (location.pathname.startsWith('/assessments')) return '/assessments';
     if (location.pathname.startsWith('/assets')) return '/assets';
-    if (location.pathname.startsWith('/remediation-actions')) return '/remediation-actions';
+    if (location.pathname.startsWith('/remediation-actions') || location.pathname.startsWith('/governance') || location.pathname.startsWith('/risks')) return '/governance';
     if (location.pathname.startsWith('/assessment-plans')) return '/assessment-plans';
-    if (location.pathname.startsWith('/my-tasks')) return '/my-tasks';
+    if (location.pathname.startsWith('/my-tasks') || location.pathname.startsWith('/work-items')) return '/work-items';
+    if (location.pathname.startsWith('/findings')) return '/findings';
     if (location.pathname.startsWith('/qualifications')) return '/qualifications';
     if (location.pathname.startsWith('/dashboard')) return '/dashboard';
+    if (location.pathname.startsWith('/product-compliance/review')) return '/product-compliance/review';
+    if (location.pathname.startsWith('/product-compliance/config')) return '/product-compliance/config';
+    if (location.pathname.startsWith('/product-compliance')) return '/product-compliance/products';
     if (location.pathname.startsWith('/account-audit')) {
       if (location.pathname.startsWith('/account-audit/data-sources')) return '/account-audit/data-sources';
       if (location.pathname.startsWith('/account-audit/rules')) return '/account-audit/rules';
       if (location.pathname.startsWith('/account-audit/tasks')) return '/account-audit/tasks';
       if (location.pathname.startsWith('/account-audit/problems')) return '/account-audit/problems';
-      return '/account-audit';
+      return '/account-audit/dashboard';
     }
     if (location.pathname.startsWith('/users')) return '/users';
     if (location.pathname.startsWith('/roles')) return '/roles';
@@ -236,6 +278,8 @@ export default function MainLayout() {
     if (location.pathname.startsWith('/settings')) return '/settings';
     return '/' + location.pathname.split('/').filter(Boolean)[0];
   })();
+
+  const useFullWidthContent = /^\/assessments\/[^/]+\/workbench\/?$/.test(location.pathname);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: '#F5F5F7' }}>
@@ -267,12 +311,23 @@ export default function MainLayout() {
         </div>
         <div className="app-topbar-main" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', minWidth: 0 }}>
           <nav className="app-topnav" style={{ display: 'flex', gap: 4 }}>
-            <button style={navTabStyle(activeNav === 'compliance')}
-              onClick={() => { setActiveNav('compliance'); navigate('/dashboard'); }}>资质合规</button>
-            <button style={navTabStyle(activeNav === 'account-audit')}
-              onClick={() => { setActiveNav('account-audit'); navigate('/account-audit'); }}>账户审计</button>
-            <button style={navTabStyle(activeNav === 'system')}
-              onClick={() => { setActiveNav('system'); navigate(firstSystemPath); }}>系统设置</button>
+            {isPlatformMode ? (
+              <button style={navTabStyle(true)} onClick={() => navigate('/tenants')}>平台管理</button>
+            ) : (
+              <>
+                <button style={navTabStyle(activeNav === 'compliance')}
+                  onClick={() => { setActiveNav('compliance'); navigate('/dashboard'); }}>合规评估</button>
+                {(can('products', 'read') || can('product_dossiers', 'review') || can('product_compliance_config', 'read')) && (
+                  <button style={navTabStyle(activeNav === 'product-compliance')}
+                    onClick={() => { setActiveNav('product-compliance'); navigate(firstProductCompliancePath); }}>产品合规</button>
+                )}
+                {(can('account_dashboard', 'read') || can('data_sources', 'read') || can('rules', 'read') || can('account_tasks', 'read') || can('problems', 'read')) && <button style={navTabStyle(activeNav === 'account-audit')}
+                  onClick={() => { setActiveNav('account-audit'); navigate('/account-audit'); }}>账户审计</button>
+                }
+                <button style={navTabStyle(activeNav === 'system')}
+                  onClick={() => { setActiveNav('system'); navigate(firstSystemPath); }}>系统设置</button>
+              </>
+            )}
           </nav>
           <Space size={16} className="app-topbar-actions">
             {tenantOptions.length > 1 && (
@@ -287,12 +342,16 @@ export default function MainLayout() {
                 optionFilterProp="label"
               />
             )}
-            <Popover open={notifOpen} onOpenChange={(open) => { setNotifOpen(open); if (open) fetchNotifications(); }}
+            {!isPlatformMode && <Popover open={notifOpen} onOpenChange={(open) => { setNotifOpen(open); if (open) fetchNotifications(); }}
               trigger="click" placement="bottomRight"
               content={
                 <div style={{ width: 360, maxHeight: 400, overflow: 'auto' }}>
-                  {notifications.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: 20, color: '#8E8E93' }}>暂无通知</div>
+                  {notificationError ? (
+                    <Alert type="warning" showIcon message={notificationError} action={<Button size="small" onClick={() => void fetchNotifications()}>重试</Button>} />
+                  ) : notificationsLoading ? (
+                    <div style={{ textAlign: 'center', padding: 28 }}><Spin /><div style={{ marginTop: 8 }}>正在加载通知</div></div>
+                  ) : notifications.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: 20, color: '#636366' }}>暂无通知</div>
                   ) : (
                     <List dataSource={notifications} renderItem={(item: any) => (
                       <List.Item
@@ -307,14 +366,18 @@ export default function MainLayout() {
                           if (!item.isRead) {
                             setNotifications(prev => prev.map(n => n.id === item.id ? { ...n, isRead: true } : n));
                             setUnreadCount(prev => Math.max(0, prev - 1));
-                            apiClient.put(`/notifications/${item.id}/read`).catch(() => fetchUnread());
+                            apiClient.put(`/notifications/${item.id}/read`).catch(() => {
+                              message.error('通知状态更新失败');
+                              void fetchNotifications();
+                              void fetchUnread();
+                            });
                           }
                         }}>
                         <div style={{ width: '100%' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                            <Tag color={item.notificationType === 'task_assigned' ? 'blue' : item.notificationType === 'task_returned' ? 'red' : 'green'}
+                            <Tag color={item.notificationType.includes('rejected') || item.notificationType === 'task_returned' ? 'red' : item.notificationType.includes('pending') || item.notificationType.includes('submitted') ? 'orange' : item.notificationType.includes('assigned') ? 'blue' : 'green'}
                               style={{ fontSize: 11, lineHeight: '18px' }}>
-                              {item.notificationType === 'task_assigned' ? '分配' : item.notificationType === 'task_returned' ? '退回' : '提交'}
+                              {{ task_assigned: '任务分配', task_returned: '退回', task_submitted: '任务提交', risk_assigned: '风险分配', risk_pending_confirmation: '风险待确认', risk_review_due: '复查到期', remediation_assigned: '整改分配', remediation_submitted: '整改待验证', remediation_approved: '验证通过', remediation_rejected: '验证驳回' }[item.notificationType as string] || '通知'}
                             </Tag>
                             <Text strong style={{ fontSize: 13 }}>{item.title}</Text>
                             {!item.isRead && (
@@ -329,7 +392,7 @@ export default function MainLayout() {
                             )}
                           </div>
                           <Text style={{ fontSize: 12, color: '#636366' }}>{item.content}</Text>
-                          <div style={{ fontSize: 11, color: '#AEAEB2', marginTop: 2 }}>
+                          <div style={{ fontSize: 11, color: '#636366', marginTop: 2 }}>
                             {new Date(item.createdAt).toLocaleString('zh-CN')}
                           </div>
                         </div>
@@ -338,10 +401,8 @@ export default function MainLayout() {
                   )}
                 </div>
               }>
-              <Badge count={unreadCount} size="small" offset={[-2, 2]}>
-                <BellOutlined style={{ fontSize: 18, cursor: 'pointer', color: '#1D1D1F', opacity: 0.7 }} />
-              </Badge>
-            </Popover>
+              <Button type="text" aria-label={unreadCount ? `通知，${unreadCount} 条未读` : '通知'} icon={<Badge count={unreadCount} size="small" offset={[-2, 2]}><BellOutlined style={{ fontSize: 18, color: '#1D1D1F' }} /></Badge>} />
+            </Popover>}
             <Dropdown menu={{
               items: userMenuItems,
               onClick: ({ key }) => {
@@ -349,12 +410,12 @@ export default function MainLayout() {
                 if (key === 'profile') setProfileOpen(true);
               },
             }} placement="bottomRight">
-              <div style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button type="button" aria-label="打开账户菜单" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, border: 0, background: 'transparent', padding: 0, font: 'inherit' }}>
                 <Avatar size={28} style={{ backgroundColor: '#007AFF', fontSize: 13 }}>
                   {user?.username?.[0]?.toUpperCase()}
                 </Avatar>
                 <Text className="app-username" style={{ fontSize: 14, fontWeight: 500, color: '#1D1D1F' }}>{user?.username}</Text>
-              </div>
+              </button>
             </Dropdown>
           </Space>
         </div>
@@ -375,7 +436,17 @@ export default function MainLayout() {
             onClick={({ key }) => navigate(key)}
             style={{ background: 'transparent', borderInlineEnd: 'none', marginTop: 8, fontSize: 14 }} />
         </Sider>
-        <Content className="app-content" style={{ padding: '28px 32px', maxWidth: 1280, margin: '0 auto', width: '100%', minWidth: 0, minHeight: 'calc(100vh - 52px)' }}>
+        <Content
+          className="app-content"
+          style={{
+            padding: '28px 32px',
+            maxWidth: useFullWidthContent ? 'none' : 1280,
+            margin: '0 auto',
+            width: '100%',
+            minWidth: 0,
+            minHeight: 'calc(100vh - 52px)',
+          }}
+        >
           <Outlet />
         </Content>
       </div>

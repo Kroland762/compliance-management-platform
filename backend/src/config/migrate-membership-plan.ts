@@ -3,6 +3,7 @@ import { readFileSync } from 'fs';
 import { QueryTypes } from 'sequelize';
 import sequelize from './database';
 import { migrateUp } from './migrations/runner';
+import { risksWithoutTask } from './migrations/legacy-risk-compat';
 import Tenant from '../models/Tenant';
 import {
   AuditTask,
@@ -83,11 +84,7 @@ async function buildPlan() {
               attributes: ['id', 'name', 'ownerDepartment', 'responsiblePerson'],
               raw: true,
             }),
-            risksWithoutTask: await RiskRecord.findAll({
-              where: { taskId: null as any },
-              attributes: ['id', 'taskId', 'title'],
-              raw: true,
-            }),
+            risksWithoutTask: await risksWithoutTask(sequelize, tenant.schemaName),
           };
         },
       );

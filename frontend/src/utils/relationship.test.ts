@@ -15,9 +15,12 @@ describe('vNext relationship graph helpers', () => {
       ],
       [{ id: 'a1', name: '应用' }, { id: 'a2', name: '数据库' }],
       'department-1',
+      'user-1',
     );
     expect(rows).toHaveLength(4);
     expect(uniquePrimaryCount(rows, (row) => `${row.controlPointId}:${row.assetId}`)).toBe(4);
+    expect(rows.every((row) => row.responsibleDepartmentId === 'department-1')).toBe(true);
+    expect(rows.every((row) => row.assignedTo === 'user-1')).toBe(true);
   });
 
   it('supports a sparse matrix by excluding individual control-asset pairs', () => {

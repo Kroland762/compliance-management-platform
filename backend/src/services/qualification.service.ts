@@ -4,6 +4,9 @@ import { QualificationStatus } from '../models/Qualification';
 import { config as appConfig } from '../config';
 import { pagination, parsePagination } from '../utils/pagination';
 import auditLogService from './audit-log.service';
+import lookupService from './lookup.service';
+
+type RequestUser = NonNullable<Express.Request['user']>;
 
 interface QualificationInput {
   name: string;
@@ -110,9 +113,9 @@ class QualificationService {
     };
   }
 
-  async create(input: QualificationInput, userId: string) {
+  async create(input: QualificationInput, user: RequestUser) {
     this.validate(input);
-    await this.validateOwnership(input.ownerDepartmentId, input.responsibleUserId);
+    await this.validateOwnership(input.ownerDepartmentId, input.responsibleUserId, user);
     const cleaned = this.clean(input);
     const qualification = await Qualification.create({
       ...cleaned,
@@ -120,20 +123,22 @@ class QualificationService {
       category: cleaned.category!,
       ownerDepartmentId: input.ownerDepartmentId,
       responsibleUserId: input.responsibleUserId || null,
-      createdBy: userId,
+      createdBy: user.userId,
     });
 
-    await this.log(userId, OperationType.CREATE, qualification.id, `创建资质: ${qualification.name}`);
+    await this.log(user.userId, OperationType.CREATE, qualification.id, `创建资质: ${qualification.name}`);
     return toView(qualification);
   }
 
-  async update(id: string, input: Partial<QualificationInput>, userId: string) {
+  async update(id: string, input: Partial<QualificationInput>, user: RequestUser) {
     const qualification = await Qualification.findByPk(id);
     if (!qualification) throw new Error('资质记录不存在');
     this.validate({ ...qualification.toJSON(), ...input } as QualificationInput);
     await this.validateOwnership(
       input.ownerDepartmentId || qualification.ownerDepartmentId,
       input.responsibleUserId !== undefined ? input.responsibleUserId : qualification.responsibleUserId,
+      user,
+      id,
     );
 
     await qualification.update({
@@ -141,7 +146,7 @@ class QualificationService {
       ...(input.ownerDepartmentId !== undefined ? { ownerDepartmentId: input.ownerDepartmentId } : {}),
       ...(input.responsibleUserId !== undefined ? { responsibleUserId: input.responsibleUserId || null } : {}),
     });
-    await this.log(userId, OperationType.UPDATE, id, `更新资质: ${qualification.name}`);
+    await this.log(user.userId, OperationType.UPDATE, id, `更新资质: ${qualification.name}`);
     return toView(qualification);
   }
 
@@ -176,7 +181,8 @@ class QualificationService {
     if (!input.ownerDepartmentId) throw new Error('归属部门为必填项');
   }
 
-  private async validateOwnership(departmentId: string, responsibleUserId?: string | null) {
+  private async validateOwnership(departmentId: string, responsibleUserId: string | null | undefined, user: RequestUser, contextId = '') {
+    await lookupService.assertOwners('qualification-owner', departmentId, responsibleUserId, user, contextId);
     const department = await Department.findOne({ where: { id: departmentId, status: 'active' } });
     if (!department) throw new Error('归属部门不存在或已归档');
     if (responsibleUserId) {
@@ -204,6 +210,14 @@ class QualificationService {
     textFields.forEach((field) => {
       if (input[field] !== undefined) data[field] = input[field]?.trim() || null;
     });
+    if (input.attachmentUrl !== undefined && data.attachmentUrl) {
+      try {
+        const parsed = new URL(data.attachmentUrl);
+        if (parsed.protocol !== 'https:') throw new Error('unsupported');
+      } catch {
+        throw new Error('附件链接必须是有效的 HTTPS 地址');
+      }
+    }
     if (input.issueDate !== undefined) data.issueDate = normalizeDate(input.issueDate);
     if (input.expiryDate !== undefined) data.expiryDate = normalizeDate(input.expiryDate);
     return data as Partial<QualificationInput>;

@@ -56,6 +56,7 @@ describe('tenant session state', () => {
           permissionScopes: {},
           departmentIds: ['dept-a'],
           primaryDepartmentId: 'dept-a',
+          primaryDepartmentName: '安全合规部',
           mustChangePassword: false,
           isGlobalAdmin: false,
         },
@@ -64,6 +65,7 @@ describe('tenant session state', () => {
     return useAuthStore.getState().selectContext('tenant-a').then(() => {
     expect(sessionStorage.getItem('selectedTenant')).toContain('tenant-a');
     expect(localStorage.getItem('selectedTenant')).toBeNull();
+    expect(useAuthStore.getState().user?.primaryDepartmentName).toBe('安全合规部');
     });
   });
 
@@ -110,6 +112,31 @@ describe('tenant session state', () => {
     expect(useAuthStore.getState().contexts).toHaveLength(2);
     expect(useAuthStore.getState().selectedTenant).toBeNull();
     expect(sessionStorage.getItem('selectedTenant')).toBeNull();
+  });
+
+  it('does not expose the bearer token on window globals', async () => {
+    apiMock.post.mockResolvedValueOnce({
+      data: {
+        token: 'identity-token',
+        status: 'tenant_selection_required',
+        contexts: [],
+        user: {
+          id: 'user-a',
+          username: 'alice',
+          email: null,
+          role: 'identity',
+          roleIds: [],
+          permissions: {},
+          permissionScopes: {},
+          departmentIds: [],
+          mustChangePassword: false,
+          isGlobalAdmin: false,
+        },
+      },
+    });
+    await useAuthStore.getState().login('alice', 'secret');
+    expect((window as any).__authStore).toBeUndefined();
+    expect((window as any).__authSetState).toBeUndefined();
   });
 
   it('surfaces forced password change before a tenant context is selected', async () => {

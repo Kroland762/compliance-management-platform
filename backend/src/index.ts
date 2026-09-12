@@ -4,7 +4,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import cron from 'node-cron';
-import { config } from './config';
+import { assertProductionFrontendUrl, config } from './config';
 import sequelize from './config/database';
 import { setupAssociations } from './models/associations';
 import './models/account/associations';
@@ -38,6 +38,7 @@ function validateProductionSecrets(): void {
   if (!process.env.METRICS_TOKEN || process.env.METRICS_TOKEN.length < 24) {
     throw new Error('生产环境必须设置至少 24 字符的 METRICS_TOKEN');
   }
+  assertProductionFrontendUrl(config.frontendUrl);
 }
 
 function validMetricsToken(value: string | undefined): boolean {
@@ -57,6 +58,9 @@ export function createApp(): express.Application {
 
   const app = express();
   app.disable('x-powered-by');
+  // Only trust the exact number of reverse proxies configured by deployment.
+  // This keeps req.ip and IP-based rate limits resistant to spoofed forwarding headers.
+  app.set('trust proxy', config.security.trustProxyHops);
   app.use(config.nodeEnv === 'production'
     ? helmet({
       contentSecurityPolicy: {

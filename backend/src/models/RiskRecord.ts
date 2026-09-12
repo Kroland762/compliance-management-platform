@@ -1,16 +1,25 @@
 import { DataTypes, Model, type Optional } from 'sequelize';
 import sequelize from '../config/database';
 import {
+  RiskCreationMode,
+  RiskDiscoverySource,
   RiskLevel,
   RiskLifecycleStatus,
   TreatmentStrategy,
 } from './enums';
 import AuditTask from './AuditTask';
+import User from './User';
 
 interface Attributes {
   id: string;
   code: string;
-  taskId: string;
+  taskId: string | null;
+  creationMode: RiskCreationMode;
+  discoverySource: RiskDiscoverySource;
+  discoverySourceDetail: string | null;
+  sourceReference: string | null;
+  createdBy: string;
+  reviewerUserId: string | null;
   title: string;
   description: string;
   riskLevel: RiskLevel;
@@ -35,7 +44,8 @@ interface Attributes {
 }
 
 type CreationAttributes = Optional<Attributes,
-  'id' | 'treatmentStrategy' | 'dueDate' | 'status' | 'identifiedAt' |
+  'id' | 'taskId' | 'reviewerUserId' | 'discoverySourceDetail' | 'sourceReference' |
+  'treatmentStrategy' | 'dueDate' | 'status' | 'identifiedAt' |
   'confirmedBy' | 'confirmedAt' | 'acceptedBy' | 'acceptedAt' |
   'acceptanceReason' | 'reviewDueDate' | 'closedBy' | 'closedAt' |
   'closeComment' | 'lockVersion' | 'createdAt' | 'updatedAt'>;
@@ -43,7 +53,13 @@ type CreationAttributes = Optional<Attributes,
 class RiskRecord extends Model<Attributes, CreationAttributes> implements Attributes {
   declare id: string;
   declare code: string;
-  declare taskId: string;
+  declare taskId: string | null;
+  declare creationMode: RiskCreationMode;
+  declare discoverySource: RiskDiscoverySource;
+  declare discoverySourceDetail: string | null;
+  declare sourceReference: string | null;
+  declare createdBy: string;
+  declare reviewerUserId: string | null;
   declare title: string;
   declare description: string;
   declare riskLevel: RiskLevel;
@@ -70,7 +86,13 @@ class RiskRecord extends Model<Attributes, CreationAttributes> implements Attrib
 RiskRecord.init({
   id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
   code: { type: DataTypes.STRING(32), allowNull: false },
-  taskId: { type: DataTypes.UUID, allowNull: false, references: { model: AuditTask, key: 'id' } },
+  taskId: { type: DataTypes.UUID, allowNull: true, references: { model: AuditTask, key: 'id' }, onDelete: 'RESTRICT' },
+  creationMode: { type: DataTypes.STRING(24), allowNull: false, validate: { isIn: [Object.values(RiskCreationMode)] } },
+  discoverySource: { type: DataTypes.STRING(32), allowNull: false, validate: { isIn: [Object.values(RiskDiscoverySource)] } },
+  discoverySourceDetail: { type: DataTypes.TEXT, allowNull: true },
+  sourceReference: { type: DataTypes.STRING(300), allowNull: true },
+  createdBy: { type: DataTypes.UUID, allowNull: false, references: { model: User, key: 'id' } },
+  reviewerUserId: { type: DataTypes.UUID, allowNull: true, references: { model: User, key: 'id' } },
   title: { type: DataTypes.STRING(200), allowNull: false },
   description: { type: DataTypes.TEXT, allowNull: false },
   riskLevel: { type: DataTypes.STRING(20), allowNull: false, validate: { isIn: [Object.values(RiskLevel)] } },
@@ -99,6 +121,8 @@ RiskRecord.init({
   indexes: [
     { unique: true, fields: ['code'] },
     { fields: ['taskId', 'status'] },
+    { fields: ['creationMode', 'status'] },
+    { fields: ['discoverySource', 'status'] },
     { fields: ['ownerDepartmentId', 'status'] },
     { fields: ['ownerUserId', 'status'] },
     { fields: ['riskLevel', 'identifiedAt'] },

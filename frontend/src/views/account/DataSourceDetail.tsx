@@ -1,16 +1,32 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Typography, Button, Tabs, Table, Tag, Descriptions, Space, message, Spin, Row, Col, Statistic, Card } from 'antd';
-import { ArrowLeftOutlined, SyncOutlined, LinkOutlined, EditOutlined, RiseOutlined, FallOutlined, LineChartOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, SyncOutlined, LinkOutlined, EditOutlined, RiseOutlined, FallOutlined, LineChartOutlined, UploadOutlined } from '@ant-design/icons';
 import { dataSourceApi, type DataSource, type DataSourceAccount, type AccountChanges } from '../../api/account';
 import { getApiErrorMessage } from '../../utils/error';
+import { useAuthStore } from '../../store/auth';
+import CsvReuploadModal from './CsvReuploadModal';
 
 const { Title, Text } = Typography;
 
-const statusColors: Record<string, string> = { active: 'green', inactive: 'default', error: 'red' };
-const statusLabels: Record<string, string> = { active: '正常', inactive: '停用', error: '异常' };
+const statusColors: Record<string, string> = { ACTIVE: 'green', INACTIVE: 'default' };
+const statusLabels: Record<string, string> = { ACTIVE: '正常', INACTIVE: '停用' };
+const dbTypeLabels: Record<string, string> = {
+  postgres: 'PostgreSQL',
+  mysql: 'MySQL',
+  mssql: 'SQL Server',
+  oracle: 'Oracle',
+  sqlite: 'SQLite',
+};
+
+function dataSourceTypeLabel(ds: DataSource) {
+  if (ds.sourceType === 'CSV') return 'CSV';
+  const dbType = String(ds.connectionConfig?.dbType || 'postgres').toLowerCase();
+  return dbTypeLabels[dbType] || '数据库';
+}
 
 export default function DataSourceDetail() {
+  const can = useAuthStore((state) => state.hasPermission);
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [ds, setDs] = useState<DataSource | null>(null);
@@ -18,8 +34,8 @@ export default function DataSourceDetail() {
   const [accounts, setAccounts] = useState<DataSourceAccount[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
   const [changes, setChanges] = useState<AccountChanges | null>(null);
-  const [changesLoading, setChangesLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -41,11 +57,9 @@ export default function DataSourceDetail() {
 
   const fetchChanges = () => {
     if (!id) return;
-    setChangesLoading(true);
     dataSourceApi.accountChanges(id)
       .then((res: any) => setChanges(res.data))
-      .catch(() => message.error('获取变更统计失败'))
-      .finally(() => setChangesLoading(false));
+      .catch(() => message.error('获取变更统计失败'));
   };
 
   const handleSync = async () => {
@@ -108,7 +122,7 @@ export default function DataSourceDetail() {
         <Descriptions bordered column={2} size="small" style={{ marginTop: 8 }}>
           <Descriptions.Item label="名称">{ds.name}</Descriptions.Item>
           <Descriptions.Item label="类型">
-            <Tag color="blue">PostgreSQL</Tag>
+            <Tag color={ds.sourceType === 'CSV' ? 'cyan' : 'blue'}>{dataSourceTypeLabel(ds)}</Tag>
           </Descriptions.Item>
           <Descriptions.Item label="状态">
             <Tag color={statusColors[ds.status]}>{statusLabels[ds.status] || ds.status}</Tag>
@@ -127,6 +141,20 @@ export default function DataSourceDetail() {
               </Descriptions.Item>
             </>
           )}
+          {ds.sourceType === 'CSV' && ds.csvConfig && (
+            <Descriptions.Item label="最近 CSV" span={2}>
+              {ds.csvConfig.needsReupload ? (
+                <Tag color="orange">历史数据源，需重新上传一次</Tag>
+              ) : (
+                <Space wrap>
+                  <Text>{ds.csvConfig.originalName}</Text>
+                  <Tag>{ds.csvConfig.encoding}</Tag>
+                  <Text type="secondary">{ds.csvConfig.rowCount || 0} 行</Text>
+                  <Text type="secondary">{ds.csvConfig.importedAt ? new Date(ds.csvConfig.importedAt).toLocaleString('zh-CN') : '-'}</Text>
+                </Space>
+              )}
+            </Descriptions.Item>
+          )}
         </Descriptions>
       ),
     },
@@ -143,7 +171,13 @@ export default function DataSourceDetail() {
               size="small"
               columns={[
                 { title: '标准字段', dataIndex: 'fieldName', render: (v: string) => <Text code>{v}</Text> },
-                { title: '源字段', dataIndex: 'sourceField', render: (v: any) => v ? <Text strong>{String(v)}</Text> : <Text type="secondary">未映射</Text> },
+                {
+                  title: '源字段', dataIndex: 'sourceField', render: (v: any) => {
+                    const field = typeof v === 'string' ? v : v?.sourceField;
+                    const convertCount = typeof v === 'object' && v?.convert ? Object.keys(v.convert).length : 0;
+                    return field ? <Space><Text strong>{field}</Text>{convertCount > 0 && <Tag>{convertCount} 条值转换</Tag>}</Space> : <Text type="secondary">未映射</Text>;
+                  },
+                },
               ]}
             />
           ) : (
@@ -227,9 +261,10 @@ export default function DataSourceDetail() {
           <Tag color={statusColors[ds.status]}>{statusLabels[ds.status] || ds.status}</Tag>
         </div>
         <Space>
-          <Button icon={<LinkOutlined />} onClick={handleTestConnection}>测试连接</Button>
-          <Button icon={<SyncOutlined />} loading={syncing} onClick={handleSync}>同步</Button>
-          <Button icon={<EditOutlined />} onClick={() => navigate(`/account-audit/data-sources/${id}/edit`)}>编辑</Button>
+          {ds.sourceType === 'DATABASE' && can('data_sources', 'update') && <Button icon={<LinkOutlined />} onClick={handleTestConnection}>测试连接</Button>}
+          {ds.sourceType === 'DATABASE' && can('data_sources', 'sync') && <Button icon={<SyncOutlined />} loading={syncing} onClick={handleSync}>同步</Button>}
+          {ds.sourceType === 'CSV' && can('data_sources', 'sync') && <Button icon={<UploadOutlined />} onClick={() => setUploadOpen(true)}>重新上传</Button>}
+          {can('data_sources', 'update') && <Button icon={<EditOutlined />} onClick={() => navigate(`/account-audit/data-sources/${id}/edit`)}>编辑</Button>}
         </Space>
       </div>
 
@@ -248,6 +283,19 @@ export default function DataSourceDetail() {
           }}
         />
       </div>
+
+      <CsvReuploadModal
+        open={uploadOpen}
+        source={ds}
+        onClose={() => setUploadOpen(false)}
+        onSuccess={async () => {
+          if (!id) return;
+          const response: any = await dataSourceApi.get(id);
+          setDs(response.data);
+          fetchAccounts();
+          fetchChanges();
+        }}
+      />
     </div>
   );
 }

@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { authenticate, authorize } from '../../middlewares/auth';
 import problemService from '../../services/account/problem.service';
+import { validate } from '../../middlewares/validate';
+import { problemBulkStatusBody, problemListQuery, problemStatusBody } from './validation';
 
 const router = Router();
 router.use(authenticate);
@@ -10,9 +12,9 @@ router.use(authorize('problems', 'read'));
  * GET /api/account/problems
  * 列表查询
  */
-router.get('/', async (req: Request, res: Response) => {
+router.get('/', validate({ query: problemListQuery }), async (req: Request, res: Response) => {
   try {
-    const result = await problemService.listProblems(req.query as any);
+    const result = await problemService.listProblems(req.query as any, req.user!);
     res.json({ success: true, data: result });
   } catch (error: any) {
     res.status(500).json({ success: false, error: { code: 'QUERY_FAILED', message: error.message } });
@@ -25,7 +27,7 @@ router.get('/', async (req: Request, res: Response) => {
  */
 router.get('/stats', async (req: Request, res: Response) => {
   try {
-    const result = await problemService.getProblemStats(req.query.taskId as string);
+    const result = await problemService.getProblemStats(req.query.taskId as string, req.user!);
     res.json({ success: true, data: result });
   } catch (error: any) {
     res.status(500).json({ success: false, error: { code: 'QUERY_FAILED', message: error.message } });
@@ -38,7 +40,7 @@ router.get('/stats', async (req: Request, res: Response) => {
  */
 router.get('/:id', async (req: Request, res: Response) => {
   try {
-    const result = await problemService.getProblem(req.params.id);
+    const result = await problemService.getProblem(req.params.id, req.user!);
     res.json({ success: true, data: result });
   } catch (error: any) {
     const status = error.message === '问题记录不存在' ? 404 : 500;
@@ -50,14 +52,14 @@ router.get('/:id', async (req: Request, res: Response) => {
  * PATCH /api/account/problems/:id/status
  * 更新状态 - ADMIN & AUDITOR
  */
-router.patch('/:id/status', authorize('problems', 'update'), async (req: Request, res: Response) => {
+router.patch('/:id/status', authorize('problems', 'update'), validate({ body: problemStatusBody }), async (req: Request, res: Response) => {
   try {
     const { status, notes } = req.body;
     if (!status) {
       res.status(400).json({ success: false, error: { code: 'INVALID_INPUT', message: '状态值不能为空' } });
       return;
     }
-    const result = await problemService.updateStatus(req.params.id, status, req.user!.userId, notes);
+    const result = await problemService.updateStatus(req.params.id, status, req.user!, notes);
     res.json({ success: true, data: result });
   } catch (error: any) {
     const status = error.message === '问题记录不存在' ? 404 : 400;
@@ -69,7 +71,7 @@ router.patch('/:id/status', authorize('problems', 'update'), async (req: Request
  * POST /api/account/problems/bulk-status
  * 批量更新状态 - ADMIN & AUDITOR
  */
-router.post('/bulk-status', authorize('problems', 'update'), async (req: Request, res: Response) => {
+router.post('/bulk-status', authorize('problems', 'update'), validate({ body: problemBulkStatusBody }), async (req: Request, res: Response) => {
   try {
     const { ids, status, notes } = req.body;
     if (!ids || !Array.isArray(ids) || ids.length === 0) {
@@ -80,7 +82,7 @@ router.post('/bulk-status', authorize('problems', 'update'), async (req: Request
       res.status(400).json({ success: false, error: { code: 'INVALID_INPUT', message: '状态值不能为空' } });
       return;
     }
-    const result = await problemService.bulkUpdateStatus({ ids, status, notes }, req.user!.userId);
+    const result = await problemService.bulkUpdateStatus({ ids, status, notes }, req.user!);
     res.json({ success: true, data: result });
   } catch (error: any) {
     res.status(400).json({ success: false, error: { code: 'UPDATE_FAILED', message: error.message } });
@@ -93,17 +95,16 @@ router.post('/bulk-status', authorize('problems', 'update'), async (req: Request
  */
 router.get('/export/data', authorize('problems', 'export'), async (req: Request, res: Response) => {
   try {
-    const format = (req.query.format as string) || 'json';
-    const result = await problemService.exportProblems(req.query as any, format as 'csv' | 'json');
-
-    if (format === 'csv') {
-      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-      res.setHeader('Content-Disposition', `attachment; filename=problem-accounts-${Date.now()}.csv`);
-      // Add BOM for Excel compatibility
-      res.send('\uFEFF' + result);
-    } else {
-      res.json({ success: true, data: result });
+    const query = problemListQuery.fork(['page', 'pageSize'], (schema) => schema.forbidden());
+    const { value, error } = query.validate(req.query, { abortEarly: false, allowUnknown: false, stripUnknown: false, convert: true });
+    if (error) {
+      res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: '导出参数校验失败' } });
+      return;
     }
+    const result = await problemService.exportProblems(value, req.user!);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename=problem-accounts-${Date.now()}.csv`);
+    res.send(result);
   } catch (error: any) {
     res.status(500).json({ success: false, error: { code: 'EXPORT_FAILED', message: error.message } });
   }

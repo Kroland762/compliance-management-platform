@@ -1,5 +1,6 @@
 import axios from 'axios';
 import type { AxiosRequestConfig } from 'axios';
+import { currentAuthSnapshot, patchAuthState } from '../store/authBridge';
 
 declare module 'axios' {
   export interface AxiosRequestConfig {
@@ -20,25 +21,19 @@ let refreshPromise: Promise<{ token: string; user: unknown }> | null = null;
 const clearAuthState = () => {
   localStorage.removeItem('user');
   sessionStorage.removeItem('selectedTenant');
-  try {
-    const setState = (window as any).__authSetState;
-    if (setState) setState({
-      token: null,
-      user: null,
-      contexts: [],
-      selectedTenant: null,
-      isAuthenticated: false,
-      refreshPending: null,
-    });
-  } catch {}
+  patchAuthState({
+    token: null,
+    user: null,
+    contexts: [],
+    selectedTenant: null,
+    isAuthenticated: false,
+    refreshPending: null,
+  });
 };
 
 const updateAuthState = (token: string, user: unknown) => {
   localStorage.setItem('user', JSON.stringify(user));
-  try {
-    const setState = (window as any).__authSetState;
-    if (setState) setState({ token, user, isAuthenticated: true });
-  } catch {}
+  patchAuthState({ token, user: user as any, isAuthenticated: true });
 };
 
 const refreshToken = async (): Promise<{ token: string; user: unknown }> => {
@@ -59,11 +54,9 @@ const refreshToken = async (): Promise<{ token: string; user: unknown }> => {
 
 // 请求拦截器
 apiClient.interceptors.request.use((config) => {
-  try {
-    const store = (window as any).__authStore;
-    if (store?.token) config.headers.Authorization = `Bearer ${store.token}`;
-    if (store?.selectedTenant?.id) config.headers['X-Tenant-ID'] = store.selectedTenant.id;
-  } catch {}
+  const store = currentAuthSnapshot();
+  if (store.token) config.headers.Authorization = `Bearer ${store.token}`;
+  if (store.selectedTenant?.id) config.headers['X-Tenant-ID'] = store.selectedTenant.id;
   return config;
 });
 
@@ -98,8 +91,7 @@ apiClient.interceptors.response.use(
     }
     if (['TENANT_INACTIVE', 'TENANT_NOT_FOUND', 'MEMBERSHIP_INACTIVE'].includes(code)) {
       sessionStorage.removeItem('selectedTenant');
-      const setState = (window as any).__authSetState;
-      if (setState) setState({ selectedTenant: null });
+      patchAuthState({ selectedTenant: null });
       if (window.location.pathname !== '/tenant-select') window.location.replace('/tenant-select');
     }
     return Promise.reject(error.response?.data || error);

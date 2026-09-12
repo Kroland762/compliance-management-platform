@@ -9,6 +9,9 @@ upload_root="${UPLOAD_DIR:-./uploads}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 output_file="${backup_root%/}/compliance-${timestamp}.tar.enc"
 encryption_key="${BACKUP_ENCRYPTION_KEY:-}"
+if [[ -z "$encryption_key" && -n "${BACKUP_ENCRYPTION_KEY_FILE:-}" ]]; then
+  encryption_key="$(<"$BACKUP_ENCRYPTION_KEY_FILE")"
+fi
 export PGPASSWORD="${DB_PASSWORD:-${PGPASSWORD:-}}"
 
 if [[ -z "${DB_NAME:-}" || -z "${DB_USER:-}" ]]; then
@@ -17,13 +20,14 @@ if [[ -z "${DB_NAME:-}" || -z "${DB_USER:-}" ]]; then
 fi
 if [[ "$apply" != true ]]; then
   echo "DRY RUN: would back up database '${DB_NAME}' and uploads '${upload_root}' to '${output_file}'"
-  echo "Run with --apply and BACKUP_ENCRYPTION_KEY to create the encrypted backup."
+  echo "Run with --apply and BACKUP_ENCRYPTION_KEY_FILE (preferred) or BACKUP_ENCRYPTION_KEY to create the encrypted backup."
   exit 0
 fi
 if [[ ${#encryption_key} -lt 24 ]]; then
   echo "BACKUP_ENCRYPTION_KEY must contain at least 24 characters" >&2
   exit 1
 fi
+export BACKUP_ENCRYPTION_KEY="$encryption_key"
 
 mkdir -p "$backup_root"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/compliance-backup.XXXXXX")"
@@ -47,9 +51,17 @@ fi
 
 (
   cd "$work_dir"
-  shasum -a 256 database.dump uploads.tar > SHA256SUMS
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 database.dump uploads.tar > SHA256SUMS
+  else
+    sha256sum database.dump uploads.tar > SHA256SUMS
+  fi
   tar -cf - database.dump uploads.tar SHA256SUMS
 ) | openssl enc -aes-256-cbc -salt -pbkdf2 -pass env:BACKUP_ENCRYPTION_KEY -out "$output_file"
 
-shasum -a 256 "$output_file" > "${output_file}.sha256"
+if command -v shasum >/dev/null 2>&1; then
+  shasum -a 256 "$output_file" > "${output_file}.sha256"
+else
+  sha256sum "$output_file" > "${output_file}.sha256"
+fi
 echo "Backup created: $output_file"

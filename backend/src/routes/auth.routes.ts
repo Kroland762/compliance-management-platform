@@ -2,13 +2,13 @@ import { Router, Request, Response } from 'express';
 import authService from '../services/auth.service';
 import captchaService from '../services/captcha.service';
 import { authenticate } from '../middlewares/auth';
-import { loginLimiter } from '../middlewares/rateLimiter';
+import { captchaLimiter, loginLimiter } from '../middlewares/rateLimiter';
 import { config } from '../config';
 import { ControlAuditEvent, OperationType, Tenant, User } from '../models';
 import { loginFailures } from '../services/metrics.service';
 import authAuditService from '../services/auth-audit.service';
 import logger from '../services/logger.service';
-import { asyncHandler } from '../utils/http';
+import { AppError, asyncHandler } from '../utils/http';
 import memberService from '../services/member.service';
 import { runWithTenantContext } from '../middlewares/tenant';
 
@@ -38,12 +38,14 @@ function authResponse(result: Awaited<ReturnType<typeof authService.login>>) {
  * GET /api/auth/captcha
  * 获取图形验证码
  */
-router.get('/captcha', (_req: Request, res: Response) => {
+router.get('/captcha', captchaLimiter, (_req: Request, res: Response) => {
   try {
     const { captchaId, svg } = captchaService.generate();
     res.json({ success: true, data: { captchaId, svg } });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: { code: 'CAPTCHA_FAILED', message: error.message } });
+    const status = error instanceof AppError ? error.statusCode : 500;
+    const code = error instanceof AppError ? error.code : 'CAPTCHA_FAILED';
+    res.status(status).json({ success: false, error: { code, message: error.message } });
   }
 });
 
@@ -111,17 +113,25 @@ router.post('/login', loginLimiter, async (req: Request, res: Response) => {
 /**
  * POST /api/auth/logout
  */
-router.post('/logout', authenticate, asyncHandler(async (req, res) => {
-  await authAuditService.record({
-    operationType: OperationType.LOGOUT,
-    userId: req.user!.userId,
-    tenantId: req.tenant?.id || req.user!.tenantId || null,
-    success: true,
-    details: '用户登出',
-    ipAddress: req.ip,
-    requestId: req.requestId,
-  });
-  res.clearCookie('refreshToken', { path: '/api/auth' });
+router.post('/logout', asyncHandler(async (req, res) => {
+  const authHeader = req.headers.authorization;
+  const accessToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined;
+  const revoked = await authService.revokeSession(accessToken, req.cookies?.refreshToken);
+  try {
+    if (revoked.userId) {
+      await authAuditService.record({
+        operationType: OperationType.LOGOUT,
+        userId: revoked.userId,
+        tenantId: revoked.tenantId || null,
+        success: true,
+        details: '用户登出',
+        ipAddress: req.ip,
+        requestId: req.requestId,
+      });
+    }
+  } finally {
+    res.clearCookie('refreshToken', { path: '/api/auth' });
+  }
   res.json({ success: true, message: '已登出' });
 }));
 
@@ -135,7 +145,11 @@ router.get('/contexts', authenticate, asyncHandler(async (req, res) => {
 }));
 
 router.post('/context', authenticate, asyncHandler(async (req, res) => {
-  const result = await authService.selectContext(req.user!.userId, String(req.body.tenantId || ''));
+  const result = await authService.selectContext(
+    req.user!.userId,
+    String(req.body.tenantId || ''),
+    req.user!.sessionId,
+  );
   await ControlAuditEvent.create({
     eventType: 'tenant.context.selected',
     actorUserId: req.user!.userId,
@@ -152,7 +166,7 @@ router.post('/context', authenticate, asyncHandler(async (req, res) => {
 
 router.delete('/context', authenticate, asyncHandler(async (req, res) => {
   const previousTenantId = req.user!.tenantId || null;
-  const result = await authService.clearContext(req.user!.userId);
+  const result = await authService.clearContext(req.user!.userId, req.user!.sessionId);
   await ControlAuditEvent.create({
     eventType: 'tenant.context.cleared',
     actorUserId: req.user!.userId,
@@ -197,6 +211,7 @@ router.post('/refresh', async (req: Request, res: Response) => {
     setRefreshCookie(res, result.refreshToken);
     res.json({ success: true, data: authResponse(result) });
   } catch (error: any) {
+    res.clearCookie('refreshToken', { path: '/api/auth' });
     res.status(401).json({
       success: false,
       error: { code: 'REFRESH_FAILED', message: error.message },
@@ -242,6 +257,7 @@ router.post('/change-password', authenticate, async (req: Request, res: Response
   try {
     const { oldPassword, newPassword } = req.body;
     await authService.changePassword(req.user!.userId, oldPassword, newPassword);
+    res.clearCookie('refreshToken', { path: '/api/auth' });
 
     await ControlAuditEvent.create({
       eventType: 'auth.password.changed',

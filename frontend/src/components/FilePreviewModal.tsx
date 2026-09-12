@@ -258,7 +258,7 @@ export default function FilePreviewModal({
           </Space>
         </div>
       )}
-      destroyOnClose
+      destroyOnHidden
     >
       {renderPreview()}
     </Modal>

@@ -54,7 +54,9 @@ async function assertCanAccessEvidence(req: Request, evidenceId: string, write =
   if (!evidence) throw new AppError(404, 'NOT_FOUND', '文件不存在');
   if (!evidence.questionItemId) throw new AppError(404, 'NOT_FOUND', '文件不存在');
 
-  const item = await assertCanAccessQuestion(req, evidence.questionItemId, write);
+  const item = write
+    ? await assertCanAccessQuestion(req, evidence.questionItemId, true)
+    : await objectAccessService.questionOrHistorySourceNotFound(evidence.questionItemId, req.user!);
   if (write && evidence.uploadedBy !== req.user!.userId && !objectAccessService.canReadAllTasks(req.user!)) {
     throw new AppError(404, 'NOT_FOUND', '文件不存在');
   }
@@ -69,7 +71,7 @@ router.get('/tasks/:taskId/questions', authorize('tasks', 'read'), asyncHandler(
 }));
 
 // 保存问题答案
-router.put('/questions/:id/answer', authorize('tasks', 'update'), asyncHandler(async (req: Request, res: Response) => {
+router.put('/questions/:id/answer', authorize('tasks', 'update'), asyncHandler(async (_req: Request, _res: Response) => {
   throw new AppError(
     410,
     'LEGACY_WRITE_PATH_DISABLED',

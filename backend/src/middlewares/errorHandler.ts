@@ -24,6 +24,19 @@ export const normalizeErrorResponses: RequestHandler = (_req, res, next) => {
       'TENANT_NOT_FOUND',
       'PASSWORD_CHANGE_REQUIRED',
       'MEMBERSHIP_INACTIVE',
+      'CSV_SCHEMA_MISMATCH',
+      'FILE_CHANGED',
+      'INVALID_MAPPING',
+      'INVALID_HEADERS',
+      'MISSING_ACCOUNT_ID',
+      'ROW_LIMIT_EXCEEDED',
+      'NO_FILE',
+      'PREVIEW_REQUIRED',
+      'FILE_TOO_LARGE',
+      'INVALID_FILE',
+      'INVALID_CSV',
+      'INVALID_DELIMITER',
+      'EMPTY_CSV',
     ]);
     const sensitive = /(sequelize|sql|select\s|insert\s|update\s.+set|delete\s+from|\/users\/|\/var\/|enoent|stack)/i
       .test(String(body.error.message || ''));

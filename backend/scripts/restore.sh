@@ -8,6 +8,9 @@ backup_file="${BACKUP_FILE:-}"
 target_db="${RESTORE_DB_NAME:-}"
 restore_upload_dir="${RESTORE_UPLOAD_DIR:-}"
 encryption_key="${BACKUP_ENCRYPTION_KEY:-}"
+if [[ -z "$encryption_key" && -n "${BACKUP_ENCRYPTION_KEY_FILE:-}" ]]; then
+  encryption_key="$(<"$BACKUP_ENCRYPTION_KEY_FILE")"
+fi
 export PGPASSWORD="${DB_PASSWORD:-${PGPASSWORD:-}}"
 
 if [[ -z "$backup_file" || -z "$target_db" || -z "$restore_upload_dir" ]]; then
@@ -30,6 +33,7 @@ if [[ ${#encryption_key} -lt 24 ]]; then
   echo "BACKUP_ENCRYPTION_KEY must contain at least 24 characters" >&2
   exit 1
 fi
+export BACKUP_ENCRYPTION_KEY="$encryption_key"
 if [[ -e "$restore_upload_dir" ]] && [[ -n "$(find "$restore_upload_dir" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
   echo "RESTORE_UPLOAD_DIR must be absent or empty" >&2
   exit 1
@@ -41,7 +45,11 @@ openssl enc -d -aes-256-cbc -pbkdf2 -pass env:BACKUP_ENCRYPTION_KEY -in "$backup
   | tar -C "$work_dir" -xf -
 (
   cd "$work_dir"
-  shasum -a 256 -c SHA256SUMS
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 -c SHA256SUMS
+  else
+    sha256sum -c SHA256SUMS
+  fi
 )
 
 pg_restore \

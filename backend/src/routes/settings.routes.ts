@@ -9,11 +9,14 @@ import { asyncHandler } from '../utils/http';
 const router = Router();
 router.use(authenticate);
 
-/**
- * GET /api/settings/security
- * 获取安全设置（所有登录用户可读，用于前端读取空闲超时等）
- */
-router.get('/security', asyncHandler(async (_req, res) => {
+/** 所有登录用户只读取客户端会话超时。 */
+router.get('/session', asyncHandler(async (_req, res) => {
+  const { idleTimeoutMinutes } = await settingsService.getSecuritySettings();
+  res.json({ success: true, data: { idleTimeoutMinutes } });
+}));
+
+/** 安全策略仅允许拥有 settings.read 权限的角色查看。 */
+router.get('/security', authorize('settings', 'read'), asyncHandler(async (_req, res) => {
   const settings = await settingsService.getSecuritySettings();
   res.json({ success: true, data: settings });
 }));

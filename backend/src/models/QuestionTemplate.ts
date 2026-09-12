@@ -13,9 +13,10 @@ interface QuestionTemplateAttributes {
   responsibleDepartment: string | null;
   responsiblePerson: string | null;
   extraData: object | null;
+  controlKey: string | null;
 }
 
-type CreationAttributes = Optional<QuestionTemplateAttributes, 'id'>;
+type CreationAttributes = Optional<QuestionTemplateAttributes, 'id' | 'controlKey'>;
 
 class QuestionTemplate extends Model<QuestionTemplateAttributes, CreationAttributes> implements QuestionTemplateAttributes {
   declare id: string;
@@ -28,6 +29,7 @@ class QuestionTemplate extends Model<QuestionTemplateAttributes, CreationAttribu
   declare responsibleDepartment: string | null;
   declare responsiblePerson: string | null;
   declare extraData: object | null;
+  declare controlKey: string | null;
 }
 
 QuestionTemplate.init(
@@ -42,6 +44,7 @@ QuestionTemplate.init(
     responsibleDepartment: { type: DataTypes.STRING(100), allowNull: true },
     responsiblePerson: { type: DataTypes.STRING(100), allowNull: true },
     extraData: { type: DataTypes.JSONB, allowNull: true },
+    controlKey: { type: DataTypes.STRING(120), allowNull: true },
   },
   { sequelize, tableName: 'question_templates', timestamps: false },
 );

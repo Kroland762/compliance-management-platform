@@ -103,7 +103,7 @@ export default function Login() {
           <div style={{ fontSize: 24, fontWeight: 600, letterSpacing: '-0.02em', color: '#1D1D1F', marginBottom: 4 }}>
             合规管理平台
           </div>
-          <Text style={{ fontSize: 14, color: '#8E8E93' }}>
+          <Text style={{ fontSize: 14, color: '#636366' }}>
             Compliance Management Platform
           </Text>
         </div>
@@ -111,10 +111,13 @@ export default function Login() {
         {/* Form */}
         <form onSubmit={handleSubmit}>
           <div style={{ marginBottom: 16 }}>
+            <label htmlFor="login-username" style={{ display: 'block', marginBottom: 6, color: '#3A3A3C', fontSize: 13, fontWeight: 500 }}>用户名</label>
             <Input
+              id="login-username"
+              autoComplete="username"
               size="large"
-              prefix={<UserOutlined style={{ color: '#AEAEB2' }} />}
-              placeholder="用户名"
+              prefix={<UserOutlined style={{ color: '#636366' }} />}
+              placeholder="请输入用户名"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               style={{
@@ -127,10 +130,13 @@ export default function Login() {
             />
           </div>
           <div style={{ marginBottom: 16 }}>
+            <label htmlFor="login-password" style={{ display: 'block', marginBottom: 6, color: '#3A3A3C', fontSize: 13, fontWeight: 500 }}>密码</label>
             <Input.Password
+              id="login-password"
+              autoComplete="current-password"
               size="large"
-              prefix={<LockOutlined style={{ color: '#AEAEB2' }} />}
-              placeholder="密码"
+              prefix={<LockOutlined style={{ color: '#636366' }} />}
+              placeholder="请输入密码"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               style={{
@@ -144,56 +150,65 @@ export default function Login() {
           </div>
 
           {/* Captcha */}
-          <div style={{ marginBottom: 24, display: 'flex', gap: 12, alignItems: 'center' }}>
-            <Input
-              size="large"
-              prefix={<SafetyOutlined style={{ color: '#AEAEB2' }} />}
-              placeholder="验证码"
-              value={captchaCode}
-              onChange={(e) => setCaptchaCode(e.target.value)}
-              maxLength={4}
-              style={{
-                flex: 1,
-                height: 48,
-                borderRadius: 12,
-                border: '0.5px solid rgba(0,0,0,0.1)',
-                background: 'rgba(0,0,0,0.02)',
-                fontSize: 15,
-              }}
-            />
-            <div
-              onClick={captchaLoading ? undefined : fetchCaptcha}
-              style={{
-                width: 130,
-                height: 48,
-                borderRadius: 12,
-                border: '0.5px solid rgba(0,0,0,0.1)',
-                cursor: captchaLoading ? 'not-allowed' : 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                overflow: 'hidden',
-                background: '#fff',
-                opacity: captchaLoading ? 0.6 : 1,
-                position: 'relative',
-              }}
-              title="点击刷新验证码"
-            >
-              {captchaSvg ? (
-                <div dangerouslySetInnerHTML={{ __html: captchaSvg }} style={{ lineHeight: 0 }} />
-              ) : (
-                <Text type="secondary" style={{ fontSize: 12 }}>加载中</Text>
-              )}
-              <div style={{
-                position: 'absolute',
-                top: 2,
-                right: 4,
-                color: '#AEAEB2',
-                fontSize: 12,
-                lineHeight: 1,
-              }}>
-                <ReloadOutlined spin={captchaLoading} />
-              </div>
+          <div style={{ marginBottom: 24 }}>
+            <label htmlFor="login-captcha" style={{ display: 'block', marginBottom: 6, color: '#3A3A3C', fontSize: 13, fontWeight: 500 }}>验证码</label>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+              <Input
+                id="login-captcha"
+                autoComplete="off"
+                size="large"
+                prefix={<SafetyOutlined style={{ color: '#636366' }} />}
+                placeholder="请输入验证码"
+                value={captchaCode}
+                onChange={(e) => setCaptchaCode(e.target.value)}
+                maxLength={4}
+                style={{
+                  flex: 1,
+                  height: 48,
+                  borderRadius: 12,
+                  border: '0.5px solid rgba(0,0,0,0.1)',
+                  background: 'rgba(0,0,0,0.02)',
+                  fontSize: 15,
+                }}
+              />
+              <button
+                type="button"
+                disabled={captchaLoading}
+                onClick={() => void fetchCaptcha()}
+                aria-label="刷新验证码"
+                style={{
+                  width: 130,
+                  height: 48,
+                  borderRadius: 12,
+                  border: '0.5px solid rgba(0,0,0,0.1)',
+                  cursor: captchaLoading ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  overflow: 'hidden',
+                  background: '#fff',
+                  opacity: captchaLoading ? 0.6 : 1,
+                  position: 'relative',
+                  padding: 0,
+                }}
+                title="点击刷新验证码"
+              >
+                {captchaSvg ? (
+                  <div dangerouslySetInnerHTML={{ __html: captchaSvg }} style={{ lineHeight: 0 }} />
+                ) : (
+                  <Text type="secondary" style={{ fontSize: 12 }}>加载中</Text>
+                )}
+                <div style={{
+                  position: 'absolute',
+                  top: 2,
+                  right: 4,
+                  color: '#636366',
+                  fontSize: 12,
+                  lineHeight: 1,
+                }}>
+                  <ReloadOutlined spin={captchaLoading} />
+                </div>
+              </button>
             </div>
           </div>
 

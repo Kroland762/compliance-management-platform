@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   App,
   Button,
@@ -15,9 +15,17 @@ import { EditOutlined, LinkOutlined, PlusOutlined, SearchOutlined } from '@ant-d
 import apiClient from '../../api/client';
 import { getApiErrorMessage } from '../../utils/error';
 import { useAuthStore } from '../../store/auth';
-import { buildDepartmentAssignments } from '../../utils/membership';
+import { buildDepartmentAssignments, resolvePrimaryDepartmentId } from '../../utils/membership';
+import { DepartmentSelect, RoleSelect } from '../../components/lookups';
 
 const { Text, Paragraph } = Typography;
+
+const memberStatusPresentation: Record<string, { label: string; color: string }> = {
+  active: { label: '有效', color: 'green' },
+  suspended: { label: '已停用', color: 'orange' },
+  left: { label: '已离职', color: 'default' },
+  invited: { label: '待接受邀请', color: 'gold' },
+};
 
 interface RoleOption {
   id: string;
@@ -33,7 +41,7 @@ interface DepartmentOption {
 
 function flatten(items: DepartmentOption[], prefix = ''): Array<{ value: string; label: string }> {
   return items.flatMap((item) => {
-    const label = `${prefix}${item.name} (${item.code})`;
+    const label = `${prefix}${item.name}`;
     return [{ value: item.id, label }, ...flatten(item.children || [], `${prefix}— `)];
   });
 }
@@ -54,6 +62,7 @@ export default function UserManagement() {
   const [temporaryPassword, setTemporaryPassword] = useState('');
   const [inviteOpen, setInviteOpen] = useState(false);
   const [invitationLink, setInvitationLink] = useState('');
+  const memberRequestSequence = useRef(0);
   const [form] = Form.useForm();
   const [inviteForm] = Form.useForm();
   const selectedDepartmentIds: string[] = Form.useWatch('departmentIds', form) || [];
@@ -69,6 +78,7 @@ export default function UserManagement() {
   };
 
   const loadMembers = async () => {
+    const requestSequence = ++memberRequestSequence.current;
     setLoading(true);
     try {
       const [response, invitationResponse]: any[] = await Promise.all([
@@ -89,11 +99,14 @@ export default function UserManagement() {
           roleIds: invitation.roleIds,
           departments: invitation.departments,
         }));
+      if (requestSequence !== memberRequestSequence.current) return;
       setMembers([...(response.data?.items || []), ...invitations]);
     } catch (error) {
-      message.error(getApiErrorMessage(error, '成员列表加载失败'));
+      if (requestSequence === memberRequestSequence.current) {
+        message.error(getApiErrorMessage(error, '成员列表加载失败'));
+      }
     } finally {
-      setLoading(false);
+      if (requestSequence === memberRequestSequence.current) setLoading(false);
     }
   };
 
@@ -101,6 +114,16 @@ export default function UserManagement() {
     loadOptions().catch((error) => message.error(getApiErrorMessage(error, '角色或部门加载失败')));
   }, []);
   useEffect(() => { loadMembers(); }, [keyword]);
+  useEffect(() => {
+    const currentPrimary = form.getFieldValue('primaryDepartmentId');
+    const nextPrimary = resolvePrimaryDepartmentId(selectedDepartmentIds, currentPrimary);
+    if (nextPrimary !== currentPrimary) form.setFieldValue('primaryDepartmentId', nextPrimary);
+  }, [form, selectedDepartmentIds]);
+  useEffect(() => {
+    const currentPrimary = inviteForm.getFieldValue('primaryDepartmentId');
+    const nextPrimary = resolvePrimaryDepartmentId(invitedDepartmentIds, currentPrimary);
+    if (nextPrimary !== currentPrimary) inviteForm.setFieldValue('primaryDepartmentId', nextPrimary);
+  }, [inviteForm, invitedDepartmentIds]);
 
   const openCreate = () => {
     setEditing(null);
@@ -207,7 +230,10 @@ export default function UserManagement() {
     {
       title: '状态',
       dataIndex: 'status',
-      render: (status: string) => <Tag color={status === 'active' ? 'green' : 'default'}>{status}</Tag>,
+      render: (status: string) => {
+        const presentation = memberStatusPresentation[status] || { label: status, color: 'default' };
+        return <Tag color={presentation.color}>{presentation.label}</Tag>;
+      },
     },
     {
       title: '邀请状态',
@@ -257,6 +283,8 @@ export default function UserManagement() {
         open={modalOpen}
         onCancel={() => setModalOpen(false)}
         onOk={() => form.submit()}
+        okText={editing ? '保存' : '创建'}
+        cancelText="取消"
         width={640}
       >
         <Form form={form} layout="vertical" onFinish={save}>
@@ -282,15 +310,23 @@ export default function UserManagement() {
             </Form.Item>
           )}
           <Form.Item name="roleIds" label="多角色" rules={[{ required: true, type: 'array', min: 1 }]}>
-            <Select mode="multiple" options={roles.map((role) => ({ value: role.id, label: role.name }))} />
+            <RoleSelect mode="multiple" />
           </Form.Item>
-          <Form.Item name="departmentIds" label="主/兼职部门" rules={[{ required: true, type: 'array', min: 1 }]}>
-            <Select mode="multiple" options={departmentOptions} disabled={editing && !canOrganization} />
+          <Form.Item name="departmentIds" label="所属部门（可多选）" rules={[{ required: true, type: 'array', min: 1 }]}>
+            <DepartmentSelect
+              purpose="user-membership"
+              contextId={editing?.id}
+              mode="multiple"
+              disabled={editing && !canOrganization}
+            />
           </Form.Item>
           <Form.Item name="primaryDepartmentId" label="主部门" rules={[{ required: true }]}>
             <Select
+              showSearch
+              optionFilterProp="label"
+              placeholder={selectedDepartmentIds.length ? '选择一个主部门' : '请先选择所属部门'}
               options={departmentOptions.filter((item) => selectedDepartmentIds.includes(item.value))}
-              disabled={editing && !canOrganization}
+              disabled={selectedDepartmentIds.length === 0 || (editing && !canOrganization)}
             />
           </Form.Item>
         </Form>
@@ -301,19 +337,30 @@ export default function UserManagement() {
         open={inviteOpen}
         onCancel={() => setInviteOpen(false)}
         onOk={() => inviteForm.submit()}
+        okText="生成邀请链接"
+        cancelText="取消"
       >
         <Form form={inviteForm} layout="vertical" onFinish={createInvitation}>
           <Form.Item name="targetUsername" label="已有用户名" rules={[{ required: true }]}>
             <Input placeholder="输入对方现有登录用户名" />
           </Form.Item>
           <Form.Item name="roleIds" label="租户角色" rules={[{ required: true, type: 'array', min: 1 }]}>
-            <Select mode="multiple" options={roles.map((role) => ({ value: role.id, label: role.name }))} />
+            <RoleSelect mode="multiple" />
           </Form.Item>
-          <Form.Item name="departmentIds" label="主/兼职部门" rules={[{ required: true, type: 'array', min: 1 }]}>
-            <Select mode="multiple" options={departmentOptions} />
+          <Form.Item name="departmentIds" label="所属部门（可多选）" rules={[{ required: true, type: 'array', min: 1 }]}>
+            <DepartmentSelect
+              purpose="user-membership"
+              mode="multiple"
+            />
           </Form.Item>
           <Form.Item name="primaryDepartmentId" label="主部门" rules={[{ required: true }]}>
-            <Select options={departmentOptions.filter((item) => invitedDepartmentIds.includes(item.value))} />
+            <Select
+              showSearch
+              optionFilterProp="label"
+              placeholder={invitedDepartmentIds.length ? '选择一个主部门' : '请先选择所属部门'}
+              options={departmentOptions.filter((item) => invitedDepartmentIds.includes(item.value))}
+              disabled={invitedDepartmentIds.length === 0}
+            />
           </Form.Item>
         </Form>
       </Modal>

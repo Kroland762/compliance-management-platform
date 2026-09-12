@@ -5,13 +5,15 @@ import { useNavigate } from 'react-router-dom';
 import { ruleApi, type Rule } from '../../api/account';
 import { getApiErrorMessage } from '../../utils/error';
 import RuleForm from './RuleForm';
+import { useAuthStore } from '../../store/auth';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 const severityColors: Record<string, string> = { HIGH: 'red', MEDIUM: 'orange', LOW: 'green' };
 const severityLabels: Record<string, string> = { HIGH: '高', MEDIUM: '中', LOW: '低' };
 
 export default function RuleList() {
+  const can = useAuthStore((state) => state.hasPermission);
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'BUILTIN' | 'CUSTOM'>('BUILTIN');
   const [rules, setRules] = useState<Rule[]>([]);
@@ -23,7 +25,7 @@ export default function RuleList() {
 
   const fetchRules = () => {
     setLoading(true);
-    const params: any = { type: activeTab };
+    const params: any = { ruleType: activeTab };
     if (severityFilter) params.severity = severityFilter;
     ruleApi.list(params)
       .then((res: any) => setRules(res.data?.items || []))
@@ -82,12 +84,12 @@ export default function RuleList() {
     {
       title: '启用', dataIndex: 'isActive', width: 70, align: 'center' as const,
       render: (v: boolean, record: Rule) => (
-        <Switch
+        can('rules', 'toggle') ? <Switch
           size="small"
           checked={v}
           loading={toggling === record.id}
           onChange={() => handleToggle(record.id)}
-        />
+        /> : <Tag color={v ? 'green' : 'default'}>{v ? '启用' : '停用'}</Tag>
       ),
     },
     { title: '关联任务', dataIndex: 'taskCount', width: 80, align: 'center' as const },
@@ -96,14 +98,14 @@ export default function RuleList() {
       render: (_: any, record: Rule) => (
         <Space size="small">
           <Button size="small" icon={<EyeOutlined />} onClick={() => navigate(`/account-audit/rules/${record.id}`)} />
-          {record.ruleType === 'CUSTOM' && (
+          {record.ruleType === 'CUSTOM' && can('rules', 'update') && (
             <>
               <Button size="small" icon={<EditOutlined />}
               onClick={() => { setEditingRule(record); setFormOpen(true); }} />
-              <Popconfirm title="确定删除？" icon={<ExclamationCircleOutlined style={{ color: '#FF3B30' }} />}
+              {can('rules', 'delete') && <Popconfirm title="确定删除？" icon={<ExclamationCircleOutlined style={{ color: '#FF3B30' }} />}
                 onConfirm={() => handleDelete(record.id)} cancelText="取消" okText="确认">
                 <Button size="small" danger icon={<DeleteOutlined />} />
-              </Popconfirm>
+              </Popconfirm>}
             </>
           )}
         </Space>
@@ -127,15 +129,15 @@ export default function RuleList() {
             allowClear
             style={{ width: 110 }}
             options={[
-              { value: 'high', label: '高' },
-              { value: 'medium', label: '中' },
-              { value: 'low', label: '低' },
+              { value: 'HIGH', label: '高' },
+              { value: 'MEDIUM', label: '中' },
+              { value: 'LOW', label: '低' },
             ]}
           />
-          <Button type="primary" icon={<PlusOutlined />}
+          {can('rules', 'create') && <Button type="primary" icon={<PlusOutlined />}
             onClick={() => { setEditingRule(null); setFormOpen(true); }}>
             创建规则
-          </Button>
+          </Button>}
         </div>
       </div>
 

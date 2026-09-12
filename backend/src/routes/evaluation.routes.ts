@@ -43,6 +43,36 @@ router.get('/:id', authorize('evaluations', 'read'), asyncHandler(async (req: Re
   res.json({ success: true, data: await evaluationService.detail(req.params.id, req.user!) });
 }));
 
+router.get('/:id/history', authorize('evaluations', 'read'), asyncHandler(async (req: Request, res: Response) => {
+  res.json({ success: true, data: await evaluationService.history(req.params.id, req.user!) });
+}));
+
+router.put('/:id/assignee', authorize('tasks', 'update'), asyncHandler(async (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: await evaluationService.updateAssignee(
+      req.params.id,
+      req.body.assigneeUserId,
+      parseExpectedLockVersion(req),
+      req.user!,
+    ),
+  });
+}));
+
+router.put('/:id/assets', authorize('evaluations', 'answer'), asyncHandler(async (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: await evaluationService.updateAssets(req.params.id, req.body.assetIds, parseExpectedLockVersion(req), req.user!),
+  });
+}));
+
+router.post('/:id/split', authorize('evaluations', 'answer'), asyncHandler(async (req: Request, res: Response) => {
+  res.status(201).json({
+    success: true,
+    data: await evaluationService.split(req.params.id, req.body.assetIds, parseExpectedLockVersion(req), req.user!),
+  });
+}));
+
 router.put('/:id/answer', authorize('evaluations', 'answer'), asyncHandler(async (req: Request, res: Response) => {
   res.json({
     success: true,
@@ -85,6 +115,21 @@ router.post('/:id/submit', authorize('evaluations', 'submit'), asyncHandler(asyn
   });
 }));
 
+router.post('/:id/review-claim', authorize('evaluations', 'claim'), asyncHandler(async (req: Request, res: Response) => {
+  res.json({ success: true, data: await evaluationService.claimReview(req.params.id, req.user!) });
+}));
+
+router.delete('/:id/review-claim', authorize('evaluations', 'claim'), asyncHandler(async (req: Request, res: Response) => {
+  res.json({ success: true, data: await evaluationService.releaseReview(req.params.id, req.user!) });
+}));
+
+router.put('/:id/review-claim', authorize('tasks', 'update'), asyncHandler(async (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: await evaluationService.transferReview(req.params.id, req.body.auditorUserId, req.user!),
+  });
+}));
+
 router.post('/:id/review', authorize('evaluations', 'review'), asyncHandler(async (req: Request, res: Response) => {
   res.json({
     success: true,
@@ -93,6 +138,18 @@ router.post('/:id/review', authorize('evaluations', 'review'), asyncHandler(asyn
       req.body,
       req.user!,
       parseExpectedLockVersion(req),
+    ),
+  });
+}));
+
+router.post('/:id/reopen', authorize('tasks', 'update'), asyncHandler(async (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: await evaluationService.reopenReview(
+      req.params.id,
+      req.body.reason,
+      parseExpectedLockVersion(req),
+      req.user!,
     ),
   });
 }));

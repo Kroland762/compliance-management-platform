@@ -13,6 +13,7 @@ export function buildControlAssetMatrix(
   controls: MatrixSeed[],
   assets: AssetSeed[],
   responsibleDepartmentId?: string,
+  assignedTo?: string,
 ) {
   return controls.flatMap((control) => assets.map((asset) => ({
     key: `${control.id}:${asset.id}`,
@@ -22,6 +23,7 @@ export function buildControlAssetMatrix(
     controlPoint: control.controlPoint,
     assetName: asset.name,
     responsibleDepartmentId,
+    assignedTo,
     enabled: true,
   })));
 }

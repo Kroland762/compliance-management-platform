@@ -12,7 +12,7 @@ interface QuestionItemAttributes {
   id: string;
   taskId: string;
   templateQuestionId: string;
-  assetId: string;
+  assetId: string | null;
   sequenceNumber: string;
   controlDomain: string;
   controlPoint: string;
@@ -27,22 +27,27 @@ interface QuestionItemAttributes {
   complianceStatus: ComplianceStatus;
   assignedTo: string | null;
   reviewedBy: string | null;
+  reviewClaimedBy: string | null;
+  reviewClaimedAt: Date | null;
   answeredAt: Date | null;
   submittedAt: Date | null;
   reviewedAt: Date | null;
   lockVersion: number;
+  controlKey: string | null;
+  templateDataSnapshot: Record<string, unknown>;
 }
 
 type CreationAttributes = Optional<QuestionItemAttributes,
   'id' | 'currentStatusDescription' |
   'workflowStatus' | 'complianceStatus' | 'assignedTo' | 'reviewedBy' | 'answeredAt' |
-  'submittedAt' | 'reviewedAt' | 'lockVersion'>;
+  'reviewClaimedBy' | 'reviewClaimedAt' | 'submittedAt' | 'reviewedAt' | 'lockVersion' |
+  'controlKey' | 'templateDataSnapshot'>;
 
 class QuestionItem extends Model<QuestionItemAttributes, CreationAttributes> implements QuestionItemAttributes {
   declare id: string;
   declare taskId: string;
   declare templateQuestionId: string;
-  declare assetId: string;
+  declare assetId: string | null;
   declare sequenceNumber: string;
   declare controlDomain: string;
   declare controlPoint: string;
@@ -57,10 +62,14 @@ class QuestionItem extends Model<QuestionItemAttributes, CreationAttributes> imp
   declare complianceStatus: ComplianceStatus;
   declare assignedTo: string | null;
   declare reviewedBy: string | null;
+  declare reviewClaimedBy: string | null;
+  declare reviewClaimedAt: Date | null;
   declare answeredAt: Date | null;
   declare submittedAt: Date | null;
   declare reviewedAt: Date | null;
   declare lockVersion: number;
+  declare controlKey: string | null;
+  declare templateDataSnapshot: Record<string, unknown>;
 }
 
 QuestionItem.init(
@@ -68,7 +77,7 @@ QuestionItem.init(
     id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
     taskId: { type: DataTypes.UUID, allowNull: false, references: { model: AuditTask, key: 'id' } },
     templateQuestionId: { type: DataTypes.UUID, allowNull: false, references: { model: QuestionTemplate, key: 'id' } },
-    assetId: { type: DataTypes.UUID, allowNull: false },
+    assetId: { type: DataTypes.UUID, allowNull: true },
     sequenceNumber: { type: DataTypes.STRING(50), allowNull: false },
     controlDomain: { type: DataTypes.STRING(200), allowNull: false },
     controlPoint: { type: DataTypes.TEXT, allowNull: false },
@@ -83,19 +92,25 @@ QuestionItem.init(
     complianceStatus: { type: DataTypes.STRING(30), allowNull: false, defaultValue: ComplianceStatus.NOT_ASSESSED, validate: { isIn: [Object.values(ComplianceStatus)] } },
     assignedTo: { type: DataTypes.UUID, allowNull: true },
     reviewedBy: { type: DataTypes.UUID, allowNull: true },
+    reviewClaimedBy: { type: DataTypes.UUID, allowNull: true },
+    reviewClaimedAt: { type: DataTypes.DATE, allowNull: true },
     answeredAt: { type: DataTypes.DATE, allowNull: true },
     submittedAt: { type: DataTypes.DATE, allowNull: true },
     reviewedAt: { type: DataTypes.DATE, allowNull: true },
     lockVersion: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+    controlKey: { type: DataTypes.STRING(120), allowNull: true },
+    templateDataSnapshot: { type: DataTypes.JSONB, allowNull: false, defaultValue: {} },
   },
   {
     sequelize,
     tableName: 'question_items',
     timestamps: false,
     indexes: [
-      { unique: true, fields: ['taskId', 'templateQuestionId', 'assetId'] },
       { fields: ['assetId'] },
+      { name: 'question_items_task_sequence_idx', fields: ['taskId', 'sequenceNumber', 'id'] },
+      { name: 'question_items_task_status_idx', fields: ['taskId', 'workflowStatus', 'complianceStatus'] },
       { fields: ['assignedTo', 'workflowStatus'] },
+      { fields: ['reviewClaimedBy', 'workflowStatus'] },
       { fields: ['responsibleDepartmentId'] },
     ],
   },

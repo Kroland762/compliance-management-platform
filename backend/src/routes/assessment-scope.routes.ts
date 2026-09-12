@@ -32,6 +32,10 @@ router.post('/:id/publish', authorize('tasks', 'publish'), asyncHandler(async (r
   res.json({ success: true, data: result });
 }));
 
+router.get('/:id/evaluations/filter-options', authorize('evaluations', 'read'), asyncHandler(async (req: Request, res: Response) => {
+  res.json({ success: true, data: await evaluationService.filterOptions(req.params.id, req.user!) });
+}));
+
 router.get('/:id/evaluations', authorize('evaluations', 'read'), asyncHandler(async (req: Request, res: Response) => {
   res.json({ success: true, data: await evaluationService.list(req.params.id, req.query, req.user!) });
 }));
