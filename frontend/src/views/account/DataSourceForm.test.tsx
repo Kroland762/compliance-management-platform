@@ -93,7 +93,7 @@ describe('DataSourceForm CSV flow', () => {
     expect(screen.queryByRole('button', { name: '创建数据源' })).not.toBeInTheDocument();
   });
 
-  it('keeps the PostgreSQL create payload unchanged after completing all three steps', async () => {
+  it('preserves custom schema and TLS in both preview and create payloads', async () => {
     const user = userEvent.setup();
     vi.mocked(apiClient.post).mockResolvedValue({ data: { columns: ['uid', 'display_name'] } } as any);
     vi.mocked(dataSourceApi.create).mockResolvedValue({ data: { id: 'db-1' } } as any);
@@ -106,6 +106,9 @@ describe('DataSourceForm CSV flow', () => {
     await user.type(screen.getByLabelText('只读用户名'), 'accounts_reader');
     await user.type(screen.getByLabelText('密码'), 'secret');
     await user.type(screen.getByLabelText('只读表名'), 'accounts');
+    await user.clear(screen.getByLabelText('Schema/Owner'));
+    await user.type(screen.getByLabelText('Schema/Owner'), 'identity');
+    await user.click(screen.getByRole('switch'));
     await user.click(screen.getByRole('button', { name: '获取数据库字段' }));
 
     await waitFor(() => expect(apiClient.post).toHaveBeenCalledWith('/account/data-sources/preview-fields', {
@@ -115,9 +118,9 @@ describe('DataSourceForm CSV flow', () => {
       database: 'accounts_db',
       username: 'accounts_reader',
       password: 'secret',
-      schema: 'public',
+      schema: 'identity',
       table: 'accounts',
-      ssl: false,
+      ssl: true,
     }));
     expect(await screen.findByText('检测到 2 个字段')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '下一步' }));
@@ -138,10 +141,10 @@ describe('DataSourceForm CSV flow', () => {
         database: 'accounts_db',
         username: 'accounts_reader',
         password: 'secret',
-        schema: 'public',
+        schema: 'identity',
         table: 'accounts',
         allowedColumns: ['uid'],
-        ssl: false,
+        ssl: true,
       },
     }));
   });

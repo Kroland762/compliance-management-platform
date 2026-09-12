@@ -52,6 +52,7 @@ export default function RiskDetail() {
           <Typography.Text type="secondary">{risk.description}</Typography.Text>
         </div>
         <Space>
+          {pending && risk.creationMode === 'manual' && can('risks', 'assign') && <Button onClick={() => navigate(`/risks/${risk.id}/assign-reviewer`)}>分配审核人</Button>}
           {pending && can('risks', 'update') && <Button onClick={() => navigate(`/risks/${risk.id}/edit`)}>编辑</Button>}
           {pending && can('risks', 'update') && <Button danger onClick={remove}>删除</Button>}
           {pending && can('risks', 'confirm') && <Button type="primary" onClick={() => action('confirm')}>确认风险</Button>}

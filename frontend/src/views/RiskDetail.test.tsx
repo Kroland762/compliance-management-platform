@@ -39,6 +39,14 @@ describe('RiskDetail', () => {
     })) });
   });
 
+  it('offers independent assignment without granting risk editing permission', async () => {
+    setPermissions({ risks: ['read', 'assign'] });
+    renderPage();
+    expect(await screen.findByRole('button', { name: '分配审核人' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /编\s*辑/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /删\s*除/ })).not.toBeInTheDocument();
+  });
+
   it('按人工来源展示说明与引用，待确认阶段只提供编辑、删除和确认', async () => {
     setPermissions({ risks: ['read', 'update', 'confirm', 'accept', 'close'], remediation_actions: ['create'] });
     renderPage();

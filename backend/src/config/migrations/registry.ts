@@ -2215,6 +2215,80 @@ const migrations: Migration[] = [
       ]) await sequelize.query(`ALTER TABLE ${quoted}.risk_records DROP COLUMN IF EXISTS "${column}"`, { transaction });
     },
   },
+  {
+    id: '027_tenant_reconcile_legacy_terminal_findings',
+    scope: 'tenant',
+    description: 'Reconcile untouched migration 012 findings whose linked risks are terminal',
+    checksumSource: 'tenant:v1:012-timestamp-fingerprint-terminal-risk-snapshot-guarded-down',
+    up: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      const q = (sql: string) => sequelize.query(sql, { transaction, replacements: { schemaName } });
+      // 012 and its ledger entry share PostgreSQL transaction time. Requiring
+      // that timestamp and the untouched row fingerprint excludes later work.
+      await q(`LOCK TABLE ${quoted}.findings, ${quoted}.risk_finding_links,
+        ${quoted}.risk_sources, ${quoted}.risk_records IN SHARE ROW EXCLUSIVE MODE`);
+      await q(`CREATE TABLE ${quoted}.legacy_terminal_finding_snapshots (
+        finding_id uuid PRIMARY KEY, before_row jsonb NOT NULL, after_row jsonb)`);
+      await q(`INSERT INTO ${quoted}.legacy_terminal_finding_snapshots (finding_id, before_row)
+        SELECT finding.id, to_jsonb(finding)
+        FROM ${quoted}.findings finding
+        JOIN ${quoted}.question_items item ON item.id = finding."evaluationId"
+        JOIN public.schema_migrations migration ON migration.schema_name = :schemaName
+          AND migration.migration_id = '012_tenant_compliance_assessment_workflow'
+          AND migration.applied_at = finding."createdAt"
+        WHERE finding.description = '由历史风险来源迁移生成'
+          AND finding.status = 'escalated' AND finding.disposition = 'risk'
+          AND finding.severity = 'medium' AND finding."lockVersion" = 0
+          AND finding."createdAt" = finding."updatedAt" AND finding."dueDate" IS NULL
+          AND finding."resolvedAt" IS NULL AND finding."resolvedBy" IS NULL AND finding."resolutionComment" IS NULL
+          AND finding.title = left(item."controlPoint", 200) AND finding."taskId" = item."taskId"
+          AND finding."ownerDepartmentId" = item."responsibleDepartmentId" AND finding."ownerUserId" = item."assignedTo"
+          AND EXISTS (SELECT 1 FROM ${quoted}.risk_sources source
+            WHERE source."controlEvaluationId" = item.id AND source."createdBy" = finding."createdBy")
+          AND EXISTS (SELECT 1 FROM ${quoted}.risk_finding_links link WHERE link."findingId" = finding.id)
+          AND NOT EXISTS (SELECT 1 FROM ${quoted}.finding_action_links action WHERE action."findingId" = finding.id)
+          AND NOT EXISTS (SELECT 1 FROM ${quoted}.risk_finding_links link
+            JOIN ${quoted}.risk_records risk ON risk.id = link."riskId"
+            WHERE link."findingId" = finding.id AND (risk.status NOT IN ('closed', 'accepted')
+              OR CASE WHEN risk.status = 'closed' THEN risk."closedAt" ELSE risk."acceptedAt" END IS NULL
+              OR CASE WHEN risk.status = 'closed' THEN risk."closedBy" ELSE risk."acceptedBy" END IS NULL))
+          AND NOT EXISTS (SELECT 1 FROM ${quoted}.risk_finding_links link
+            WHERE link."findingId" = finding.id AND NOT EXISTS (SELECT 1 FROM ${quoted}.risk_sources source
+              WHERE source."riskId" = link."riskId" AND source."controlEvaluationId" = item.id
+                AND source."relationType" = link."relationType" AND source.rationale IS NOT DISTINCT FROM link.rationale))
+          AND NOT EXISTS (SELECT 1 FROM ${quoted}.risk_sources source
+            WHERE source."controlEvaluationId" = item.id AND NOT EXISTS (SELECT 1 FROM ${quoted}.risk_finding_links link
+              WHERE link."findingId" = finding.id AND link."riskId" = source."riskId"))`);
+      await q(`UPDATE ${quoted}.findings finding SET status = 'resolved',
+          "resolvedAt" = terminal.resolved_at, "resolvedBy" = terminal.resolved_by,
+          "resolutionComment" = '历史关联风险均已关闭或接受（迁移027核对）',
+          "lockVersion" = finding."lockVersion" + 1, "updatedAt" = now()
+        FROM (SELECT DISTINCT ON (link."findingId") link."findingId",
+          CASE WHEN risk.status = 'closed' THEN risk."closedAt" ELSE risk."acceptedAt" END AS resolved_at,
+          CASE WHEN risk.status = 'closed' THEN risk."closedBy" ELSE risk."acceptedBy" END AS resolved_by
+          FROM ${quoted}.risk_finding_links link JOIN ${quoted}.risk_records risk ON risk.id = link."riskId"
+          ORDER BY link."findingId", resolved_at DESC, risk.id) terminal
+        WHERE finding.id = terminal."findingId" AND finding.id IN
+          (SELECT finding_id FROM ${quoted}.legacy_terminal_finding_snapshots)`);
+      await q(`UPDATE ${quoted}.legacy_terminal_finding_snapshots snapshot SET after_row = to_jsonb(finding)
+        FROM ${quoted}.findings finding WHERE finding.id = snapshot.finding_id`);
+    },
+    down: async (schemaName, transaction) => {
+      const quoted = `"${schemaName.replace(/"/g, '""')}"`;
+      await sequelize.query(`LOCK TABLE ${quoted}.findings IN SHARE ROW EXCLUSIVE MODE`, { transaction });
+      const [{ count }] = await sequelize.query<{ count: number }>(`SELECT count(*)::int AS count
+        FROM ${quoted}.legacy_terminal_finding_snapshots snapshot LEFT JOIN ${quoted}.findings finding ON finding.id = snapshot.finding_id
+        WHERE to_jsonb(finding) IS DISTINCT FROM snapshot.after_row`, { type: QueryTypes.SELECT, transaction });
+      if (Number(count)) throw new Error('历史不符合项已发生后续修改，不能安全回滚迁移027');
+      await sequelize.query(`UPDATE ${quoted}.findings finding SET status = original.status,
+        "resolvedAt" = original."resolvedAt", "resolvedBy" = original."resolvedBy",
+        "resolutionComment" = original."resolutionComment", "lockVersion" = original."lockVersion", "updatedAt" = original."updatedAt"
+        FROM ${quoted}.legacy_terminal_finding_snapshots snapshot,
+          LATERAL jsonb_populate_record(NULL::${quoted}.findings, snapshot.before_row) original
+        WHERE finding.id = snapshot.finding_id`, { transaction });
+      await sequelize.query(`DROP TABLE ${quoted}.legacy_terminal_finding_snapshots`, { transaction });
+    },
+  },
 ];
 
 export function migrationChecksum(migration: Migration): string {

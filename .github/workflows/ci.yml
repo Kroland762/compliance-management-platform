@@ -41,6 +41,7 @@ jobs:
       E2E_AUDITOR_PASSWORD: Auditor1234!
       RUN_PG_INTEGRATION: "true"
       MIGRATION_COMPAT_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ci_migration_compat_test
+      LEGACY_FINDING_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ci_finding_migration_test
       ALLOW_PRIVATE_DATASOURCE_HOSTS: "true"
       BUSINESS_TIME_ZONE: Asia/Shanghai
     steps:
@@ -85,7 +86,9 @@ jobs:
       - name: Create isolated legacy migration compatibility database
         env:
           PGPASSWORD: postgres
-        run: createdb --host=127.0.0.1 --port=5432 --username=postgres ci_migration_compat_test
+        run: |
+          createdb --host=127.0.0.1 --port=5432 --username=postgres ci_migration_compat_test
+          createdb --host=127.0.0.1 --port=5432 --username=postgres ci_finding_migration_test
 
       - name: Backend unit and PostgreSQL integration tests
         working-directory: backend

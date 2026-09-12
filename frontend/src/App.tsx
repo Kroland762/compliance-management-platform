@@ -94,6 +94,7 @@ function App() {
           <Route path="risks" element={<Navigate to="/governance" replace />} />
           <Route path="risks/new" element={<PrivateRoute permission={['risks', 'create']}><RiskForm /></PrivateRoute>} />
           <Route path="risks/:id/edit" element={<PrivateRoute permission={['risks', 'update']}><RiskForm /></PrivateRoute>} />
+          <Route path="risks/:id/assign-reviewer" element={<PrivateRoute permission={['risks', 'read']}><PrivateRoute permission={['risks', 'assign']}><RiskForm assignmentOnly /></PrivateRoute></PrivateRoute>} />
           <Route path="risks/:id" element={<PrivateRoute permission={['risks', 'read']}><RiskDetail /></PrivateRoute>} />
           <Route path="assets" element={<PrivateRoute permission={['assets', 'read']}><AssetLedger /></PrivateRoute>} />
           <Route path="remediation-actions" element={<Navigate to="/governance?tab=remediation" replace />} />

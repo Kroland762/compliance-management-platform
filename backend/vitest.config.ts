@@ -25,6 +25,7 @@ export default defineConfig({
       'tests/migration-runner.test.ts',
       'tests/independent-risk-migration.test.ts',
       'tests/legacy-risk-compat.test.ts',
+      'tests/legacy-terminal-finding-migration.test.ts',
       'tests/config.test.ts',
       'tests/security-boundaries.test.ts',
       'tests/object-access.service.test.js',

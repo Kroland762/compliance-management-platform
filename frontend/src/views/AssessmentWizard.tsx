@@ -10,6 +10,7 @@ export default function AssessmentWizard() {
   const [current, setCurrent] = useState(0);
   const [loading, setLoading] = useState(false);
   const [taskId, setTaskId] = useState<string>();
+  const [auditorsSaved, setAuditorsSaved] = useState(false);
   const [template, setTemplate] = useState<any>();
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
   const [form] = Form.useForm();
@@ -31,20 +32,26 @@ export default function AssessmentWizard() {
 
   const createDraft = async () => {
     const values = await form.validateFields(['templateId', 'name', 'departmentId', 'defaultAssigneeId', 'period', 'auditorUserIds']);
-    const response: any = await apiClient.post('/tasks', {
-      templateId: values.templateId,
-      name: values.name,
-      assessmentTarget: values.name,
-      assessmentType: template?.name || '标准评估',
-      departmentId: values.departmentId,
-      assignedTo: values.defaultAssigneeId,
-      periodStart: values.period?.[0]?.format('YYYY-MM-DD'),
-      periodEnd: values.period?.[1]?.format('YYYY-MM-DD'),
-    });
-    setTaskId(response.data.id);
-    await apiClient.put(`/tasks/${response.data.id}/auditors`, { auditorUserIds: values.auditorUserIds });
+    let draftId = taskId;
+    if (!draftId) {
+      const response: any = await apiClient.post('/tasks', {
+        templateId: values.templateId,
+        name: values.name,
+        assessmentTarget: values.name,
+        assessmentType: template?.name || '标准评估',
+        departmentId: values.departmentId,
+        assignedTo: values.defaultAssigneeId,
+        periodStart: values.period?.[0]?.format('YYYY-MM-DD'),
+        periodEnd: values.period?.[1]?.format('YYYY-MM-DD'),
+      });
+      draftId = response.data.id;
+      setTaskId(draftId);
+    }
+    setAuditorsSaved(false);
+    await apiClient.put(`/tasks/${draftId}/auditors`, { auditorUserIds: values.auditorUserIds });
+    setAuditorsSaved(true);
     message.success('评估项目草稿已保存');
-    return response.data.id as string;
+    return draftId;
   };
 
   const exit = () => {
@@ -56,7 +63,7 @@ export default function AssessmentWizard() {
     setLoading(true);
     try {
       if (current === 0) await form.validateFields(['templateId']);
-      if (current === 1 && !taskId) await createDraft();
+      if (current === 1) await createDraft();
       if (current === 2) {
         if (!selectedAssetIds.length) throw new Error('至少选择一个资产');
         await apiClient.put(`/tasks/${taskId}/assets`, { assetIds: selectedAssetIds });
@@ -110,10 +117,10 @@ export default function AssessmentWizard() {
     <Card>
       {taskId && (
         <Alert
-          type="success"
+          type={auditorsSaved ? 'success' : 'warning'}
           showIcon
-          message="评估项目草稿已保存"
-          description="你可以继续配置资产范围并发布，也可以返回项目列表。"
+          message={auditorsSaved ? '评估项目草稿已保存' : '草稿已创建，审计员尚未保存'}
+          description={auditorsSaved ? '你可以继续配置资产范围并发布，也可以返回项目列表。' : '请修正审计员选择后重试下一步；不会重复创建项目。'}
           action={<Button size="small" onClick={exit}>返回项目列表</Button>}
           style={{ marginBottom: 24 }}
         />

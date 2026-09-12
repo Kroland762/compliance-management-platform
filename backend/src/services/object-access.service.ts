@@ -299,13 +299,17 @@ class ObjectAccessService {
     return { [Op.or]: [{ assignedTo: user.userId }, { reviewedBy: user.userId }] };
   }
 
-  async findingScope(user: RequestUser): Promise<WhereOptions> {
-    const scope = this.scope(user, 'findings', 'read');
+  async findingScope(user: RequestUser, action = 'read'): Promise<WhereOptions> {
+    const scope = this.scope(user, 'findings', action);
     if (scope === 'all') return {};
     if (scope === 'department' || scope === 'department_tree') {
       return { ownerDepartmentId: { [Op.in]: await this.departmentIds(user, scope) } };
     }
-    const visibleTaskIds = await this.accessibleTaskIds(user);
+    // Write scopes must not inherit a broader task read scope.
+    if (action !== 'read' && scope === 'self') return { ownerUserId: user.userId };
+    const visibleTaskIds = action !== 'read'
+      ? (await AuditTask.findAll({ where: await this.taskScope(user, 'read', true), attributes: ['id'], raw: true })).map((task: any) => task.id)
+      : await this.accessibleTaskIds(user);
     return {
       [Op.or]: [
         { ownerUserId: user.userId },
@@ -314,8 +318,8 @@ class ObjectAccessService {
     };
   }
 
-  async findingOrNotFound(id: string, user: RequestUser): Promise<Finding> {
-    const finding = await Finding.findOne({ where: { id, ...(await this.findingScope(user) as object) } });
+  async findingOrNotFound(id: string, user: RequestUser, action = 'read'): Promise<Finding> {
+    const finding = await Finding.findOne({ where: { id, ...(await this.findingScope(user, action) as object) } });
     if (!finding) throw new AppError(404, 'NOT_FOUND', '不符合项不存在');
     return finding;
   }

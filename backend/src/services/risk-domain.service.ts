@@ -455,7 +455,7 @@ class RiskDomainService {
     }
     const findingIds = [...new Set(input.findingIds)];
     if (findingIds.length !== input.findingIds.length) throw new AppError(409, 'CONFLICT', '不能重复选择不符合项');
-    for (const id of findingIds) await objectAccessService.findingOrNotFound(id, user);
+    for (const id of findingIds) await objectAccessService.findingOrNotFound(id, user, 'escalate');
     await lookupService.assertOwners('finding-escalation-owner', input.ownerDepartmentId, input.ownerUserId, user);
     const idempotencyKey = idempotencyService.requireKey(rawIdempotencyKey);
     const result = await idempotencyService.execute(

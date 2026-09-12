@@ -189,7 +189,7 @@ class FindingService {
     expectedLockVersion: number,
     rawIdempotencyKey?: string,
   ) {
-    const visible = await objectAccessService.findingOrNotFound(id, user);
+    const visible = await objectAccessService.findingOrNotFound(id, user, 'remediate');
     if (visible.status !== FindingStatus.OPEN) {
       throw new AppError(409, 'CONFLICT', '只有待处置的不符合项可以创建直接整改');
     }
@@ -290,7 +290,7 @@ class FindingService {
     user: RequestUser,
     expectedLockVersion: number,
   ) {
-    const finding = await objectAccessService.findingOrNotFound(findingId, user);
+    const finding = await objectAccessService.findingOrNotFound(findingId, user, 'verify');
     if (![VerificationStatus.APPROVED, VerificationStatus.REJECTED].includes(input.decision)) {
       throw new AppError(400, 'VALIDATION_ERROR', '复核结论必须为通过或驳回');
     }

@@ -163,7 +163,7 @@ test('独立风险从日常运维发现到整改验证和关闭的真实 UI 闭�
   // Create a reviewer with risks.verify but without remediation_actions.verify.
   // This exercises the same role/permission contract as the verification API.
   const reviewerPermissions = {
-    risks: ['read', 'confirm', 'verify', 'close'], remediation_actions: ['read'],
+    risks: ['read', 'assign', 'confirm', 'verify', 'close'], remediation_actions: ['read'],
     dashboard: ['read'], notifications: ['read', 'update'],
   };
   const reviewerRoleResponse = await page.request.post(`${apiBase}/api/roles`, {
@@ -171,7 +171,8 @@ test('独立风险从日常运维发现到整改验证和关闭的真实 UI 闭�
     data: {
       name: `E2E risk reviewer ${suffix}`, permissions: reviewerPermissions,
       permissionScopes: Object.fromEntries(Object.entries(reviewerPermissions).map(([resource, actions]) =>
-        [resource, Object.fromEntries(actions.map((permission) => [permission, 'assigned']))])),
+        [resource, Object.fromEntries(actions.map((permission) => [permission,
+          resource === 'risks' && ['read', 'assign'].includes(permission) ? 'all' : 'assigned']))])),
     },
   });
   expect(reviewerRoleResponse.status()).toBe(201);
@@ -235,6 +236,19 @@ test('独立风险从日常运维发现到整改验证和关闭的真实 UI 闭�
   observeErrors(auditorPage);
   await login(auditorPage, reviewerUsername, reviewerPassword);
   await expect(auditorPage).toHaveURL(/\/dashboard$/);
+  // Assignment is available without risks.update, through its own protected route.
+  await auditorPage.goto(`/risks/${riskId}`);
+  await expect(auditorPage.getByRole('button', { name: /^编\s*辑$/ })).toHaveCount(0);
+  await auditorPage.getByRole('button', { name: '分配审核人', exact: true }).click();
+  await expect(auditorPage.getByRole('heading', { name: '分配风险审核人' })).toBeVisible();
+  await expect(auditorPage.getByLabel('标题', { exact: true })).toHaveCount(0);
+  for (const candidate of ['CI Auditor', reviewerName]) {
+    await selectLookup(auditorPage, '审核人', candidate, candidate);
+    const reassigned = auditorPage.waitForResponse((response) =>
+      response.url().endsWith(`/api/risks/${riskId}/reviewer`) && response.request().method() === 'PUT');
+    await auditorPage.getByRole('button', { name: '分配审核人', exact: true }).click();
+    expect((await reassigned).ok()).toBeTruthy();
+  }
   await auditorPage.goto('/work-items');
   await expect(auditorPage.getByRole('tab', { name: /^待确认风险 \d+$/ })).toBeVisible();
   const confirmRow = auditorPage.getByRole('row', { name: new RegExp(riskTitle) });

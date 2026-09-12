@@ -57,6 +57,33 @@ describe('RiskForm', () => {
     expect(screen.getByLabelText('资产选择')).toBeInTheDocument();
   });
 
+  it('allows read and assign users to retry independent assignment without rendering editable risk fields', async () => {
+    const user = userEvent.setup();
+    useAuthStore.setState({ user: { ...useAuthStore.getState().user!, permissions: { risks: ['read', 'assign'] } } });
+    vi.mocked(riskApi.assignReviewer).mockRejectedValueOnce({ error: { message: '审核人资格已撤销' } })
+      .mockResolvedValue({ data: { ...savedRisk, reviewerUserId: 'reviewer-2', lockVersion: 5 } } as any);
+    render(<MemoryRouter initialEntries={['/risks/risk-1/assign-reviewer']}><Routes>
+      <Route path="/risks/:id/assign-reviewer" element={<RiskForm assignmentOnly />} />
+    </Routes></MemoryRouter>);
+    await screen.findByRole('heading', { name: '分配风险审核人' });
+    expect(screen.queryByLabelText('标题')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '保存修改' })).not.toBeInTheDocument();
+    const reviewer = screen.getByLabelText('输入具备确认/验证权限的人员姓名');
+    await user.clear(reviewer);
+    await user.type(reviewer, 'reviewer-2');
+    await user.click(screen.getByRole('button', { name: '分配审核人' }));
+    expect(await screen.findByText('审核人资格已撤销')).toBeInTheDocument();
+    expect(reviewer).toHaveValue('reviewer-2');
+    await user.click(screen.getByRole('button', { name: '分配审核人' }));
+    await waitFor(() => expect(riskApi.assignReviewer).toHaveBeenCalledTimes(2));
+    expect(riskApi.assignReviewer).toHaveBeenLastCalledWith('risk-1', 'reviewer-2', 4);
+    await user.clear(reviewer);
+    await user.type(reviewer, 'reviewer-3');
+    await user.click(screen.getByRole('button', { name: '分配审核人' }));
+    await waitFor(() => expect(riskApi.assignReviewer).toHaveBeenLastCalledWith('risk-1', 'reviewer-3', 5));
+    expect(riskApi.update).not.toHaveBeenCalled();
+  });
+
   it('编辑时使用乐观锁，冲突后保留表单并显示明确提示', async () => {
     const user = userEvent.setup();
     vi.mocked(riskApi.detail).mockResolvedValue({ data: {

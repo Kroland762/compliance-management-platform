@@ -25,7 +25,7 @@ vi.mock('../components/lookups', () => ({
   ),
   DepartmentSelect: ({ value, onChange }: any) => <select aria-label="归属部门" value={value || ''} onChange={(event) => onChange?.(event.currentTarget.value)}><option value="">请选择</option><option value="department-1">风险管理部</option></select>,
   PersonnelSelect: ({ value, onChange }: any) => <select aria-label="默认责任人" value={value || ''} onChange={(event) => onChange?.(event.currentTarget.value)}><option value="">请选择</option><option value="person-1">责任人甲</option></select>,
-  AuditorSelect: ({ value, onChange }: any) => <select aria-label="审计员池" multiple value={value || []} onChange={(event) => onChange?.(Array.from(event.currentTarget.selectedOptions).map((option) => option.value))}><option value="auditor-1">审计员甲</option></select>,
+  AuditorSelect: ({ value, onChange }: any) => <select aria-label="审计员池" multiple value={value || []} onChange={(event) => onChange?.(Array.from(event.currentTarget.selectedOptions).map((option) => option.value))}><option value="auditor-1">审计员甲</option><option value="auditor-2">审计员乙</option></select>,
 }));
 
 function renderPage() {
@@ -87,6 +87,29 @@ describe('AssessmentWizard', () => {
 
     expect(await screen.findByText('项目列表页')).toBeInTheDocument();
     await waitFor(() => expect(apiClient.post).not.toHaveBeenCalled());
+  });
+
+  it('retries failed auditor saving on the same draft before allowing the asset step', async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiClient.put).mockRejectedValueOnce(new Error('审计员已停用'));
+    renderPage();
+    await user.selectOptions(screen.getByLabelText('输入标准名称检索'), 'assessment-templates-1');
+    await user.click(screen.getByRole('button', { name: '下一步' }));
+    await user.type(screen.getByLabelText('评估名称'), '年度隐私评估');
+    await user.selectOptions(screen.getByLabelText('归属部门'), 'department-1');
+    await user.selectOptions(screen.getByLabelText('默认责任人'), 'person-1');
+    await user.selectOptions(screen.getByLabelText('审计员池'), 'auditor-1');
+    await user.click(screen.getByRole('button', { name: '下一步' }));
+    expect(await screen.findByText('草稿已创建，审计员尚未保存')).toBeInTheDocument();
+    expect(screen.queryByLabelText('输入资产名称检索')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('评估名称')).toHaveValue('年度隐私评估');
+    await user.deselectOptions(screen.getByLabelText('审计员池'), 'auditor-1');
+    await user.selectOptions(screen.getByLabelText('审计员池'), 'auditor-2');
+    await user.click(screen.getByRole('button', { name: '下一步' }));
+    expect(await screen.findByLabelText('输入资产名称检索')).toBeInTheDocument();
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
+    expect(apiClient.put).toHaveBeenCalledTimes(2);
+    expect(apiClient.put).toHaveBeenLastCalledWith('/tasks/task-1/auditors', { auditorUserIds: ['auditor-2'] });
   });
 
   it('retains the selected template and its row count after the template field unmounts', async () => {

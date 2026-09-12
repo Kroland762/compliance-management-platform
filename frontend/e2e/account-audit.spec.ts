@@ -58,6 +58,7 @@ test('CSV system reuses its saved mapping and blocks incompatible replacement fi
   const sourceType = page.getByLabel('数据源类型');
   await sourceType.locator('xpath=ancestor::*[contains(@class, "ant-select-selector")]').click();
   await page.locator('.ant-select-dropdown:visible').last().locator('.ant-select-item-option', { hasText: /^CSV 文件$/ }).click();
+  await page.getByRole('button', { name: '下一步' }).click();
   await expect(page.getByRole('button', { name: '选择 CSV 文件' })).toBeVisible();
   await page.locator('input[type="file"]').setInputFiles({
     name: 'accounts.csv',
@@ -65,6 +66,7 @@ test('CSV system reuses its saved mapping and blocks incompatible replacement fi
     buffer: Buffer.from('uid,name,status\n1,Alice,active\n2,Bob,disabled'),
   });
   await expect(page.getByText(/检测到 2 行/)).toBeVisible();
+  await page.getByRole('button', { name: '下一步' }).click();
 
   await page.getByTestId('mapping-accountId').click();
   await page.locator('.ant-select-dropdown:visible').last().locator('.ant-select-item-option', { hasText: /^uid$/ }).click();
@@ -106,8 +108,10 @@ test('auditor has the restricted account audit view', async ({ page }) => {
   test.skip(!process.env.E2E_AUDITOR_PASSWORD, 'Set E2E_AUDITOR_PASSWORD to run role-specific account-audit regression safely.');
   await login(page, process.env.E2E_AUDITOR_USERNAME || 'auditor', process.env.E2E_AUDITOR_PASSWORD!);
   await page.goto('/account-audit/data-sources');
+  await expect(page.getByRole('heading', { name: '数据源', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '添加数据源' })).toHaveCount(0);
   await page.goto('/account-audit/tasks');
+  await expect(page.getByRole('button', { name: /查\s*询/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /创建任务/ })).toHaveCount(0);
   await page.goto('/account-audit/problems');
   await expect(page.getByRole('button', { name: '导出' })).toBeVisible();

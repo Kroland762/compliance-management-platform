@@ -16,7 +16,7 @@ const DB_TYPES = [
   { value: 'sqlite', label: 'SQLite' },
 ];
 const BASIC_FIELDS = ['name', 'type'];
-const NETWORK_DATABASE_FIELDS = ['dbType', 'host', 'port', 'database', 'username', 'password', 'table'];
+const NETWORK_DATABASE_FIELDS = ['dbType', 'host', 'port', 'database', 'username', 'password', 'table', 'schema', 'ssl'];
 const SQLITE_DATABASE_FIELDS = ['dbType', 'database', 'table'];
 
 function schemaForDbType(type: string, schema?: string) {

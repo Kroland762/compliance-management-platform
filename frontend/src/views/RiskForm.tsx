@@ -13,7 +13,7 @@ const sourceOptions = Object.entries(RISK_DISCOVERY_SOURCE)
   .filter(([value]) => value !== 'compliance_assessment')
   .map(([value, label]) => ({ value, label }));
 
-export default function RiskForm() {
+export default function RiskForm({ assignmentOnly = false }: { assignmentOnly?: boolean }) {
   const { id } = useParams();
   const editing = Boolean(id);
   const navigate = useNavigate();
@@ -38,9 +38,10 @@ export default function RiskForm() {
       if (!active) return;
       const current = response.data;
       if (current.status !== 'pending_confirmation') throw new Error('只有待确认风险可以编辑');
+      if (assignmentOnly && current.creationMode !== 'manual') throw new Error('只有人工风险可以分配独立审核人');
       setRisk(current);
       reviewerForm.setFieldsValue({ reviewerUserId: current.reviewerUserId });
-      form.setFieldsValue({
+      if (!assignmentOnly) form.setFieldsValue({
         ...current,
         dueDate: current.dueDate ? dayjs(current.dueDate) : null,
         assets: (current.affectedAssets || []).map((item: any) => ({
@@ -50,10 +51,10 @@ export default function RiskForm() {
     }).catch((error) => { if (active) setLoadError(getApiErrorMessage(error, '风险加载失败')); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [id, form, reviewerForm]);
+  }, [id, form, reviewerForm, assignmentOnly]);
 
   const submit = async (values: any) => {
-    if (saving || assigning) return;
+    if (assignmentOnly || saving || assigning) return;
     setSaving(true);
     const payload: any = {
       title: values.title,
@@ -96,7 +97,7 @@ export default function RiskForm() {
       // Keep the latest concurrency token without replacing unsaved risk form fields.
       setRisk(response.data);
       reviewerForm.setFieldsValue({ reviewerUserId: response.data.reviewerUserId });
-      message.success('审核人已分配，未保存的风险资料保持不变');
+      message.success(assignmentOnly ? '审核人已分配' : '审核人已分配，未保存的风险资料保持不变');
     } catch (error: any) {
       setAssignmentError(getApiErrorMessage(error, error?.error?.code === 'CONFLICT'
         ? '风险已被其他人修改，请刷新后重试' : '分配失败，请修正后重试'));
@@ -107,11 +108,11 @@ export default function RiskForm() {
   if (loadError) return <Alert type="error" showIcon message={loadError} />;
   return (
     <div style={{ maxWidth: 920, margin: '0 auto' }}>
-      <Typography.Title level={3}>{editing ? '编辑风险' : '新增独立风险'}</Typography.Title>
+      <Typography.Title level={3}>{assignmentOnly ? '分配风险审核人' : editing ? '编辑风险' : '新增独立风险'}</Typography.Title>
       <Typography.Paragraph type="secondary">{manual
         ? '独立风险不属于评估项目，由指定审核人负责确认与整改验证。'
         : '评估风险的来源由评估关系确定，可修改风险资料和受影响资产。'}</Typography.Paragraph>
-      <Form form={form} layout="vertical" disabled={saving || assigning} onFinish={submit} initialValues={{
+      {!assignmentOnly && <Form form={form} layout="vertical" disabled={saving || assigning} onFinish={submit} initialValues={{
         discoverySource: 'daily_operations', riskLevel: 'medium', treatmentStrategy: 'mitigate', assets: [{}],
       }}>
         <Card title="基本信息" style={{ marginBottom: 16 }}>
@@ -151,12 +152,12 @@ export default function RiskForm() {
           </Form.List>
         </Card>
         <Space><Button type="primary" htmlType="submit" loading={saving}>{editing ? '保存修改' : '创建风险'}</Button><Button onClick={() => navigate(editing ? `/risks/${id}` : '/governance')}>取消</Button></Space>
-      </Form>
+      </Form>}
       {editing && manual && <Card title="独立审核人" style={{ marginTop: 16 }}>
         <Typography.Paragraph>当前审核人：{risk.reviewer?.displayName || '—'}</Typography.Paragraph>
         {canAssign && <Form form={reviewerForm} name="risk-reviewer-assignment" layout="vertical"
           disabled={saving || assigning} onFinish={assignReviewer}>
-          <Typography.Paragraph type="secondary">分配审核人单独保存，不会提交上方尚未保存的风险资料。</Typography.Paragraph>
+          <Typography.Paragraph type="secondary">{assignmentOnly ? '分配审核人单独保存。' : '分配审核人单独保存，不会提交上方尚未保存的风险资料。'}</Typography.Paragraph>
           {assignmentError && <Alert type="error" showIcon message={assignmentError} style={{ marginBottom: 16 }} />}
           <Form.Item name="reviewerUserId" label="审核人" rules={[{ required: true, message: '请选择审核人' },
             { validator: async (_, value) => {
@@ -167,6 +168,7 @@ export default function RiskForm() {
           <Button type="primary" htmlType="submit" loading={assigning}>分配审核人</Button>
         </Form>}
       </Card>}
+      {assignmentOnly && <Button style={{ marginTop: 16 }} onClick={() => navigate(`/risks/${id}`)}>返回风险详情</Button>}
     </div>
   );
 }
