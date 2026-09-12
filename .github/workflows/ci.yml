@@ -96,6 +96,8 @@ jobs:
 
       - name: Frontend tests
         working-directory: frontend
+        env:
+          NODE_ENV: test
         run: npm run test:ci
 
       - name: Build backend
