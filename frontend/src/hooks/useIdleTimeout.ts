@@ -14,7 +14,7 @@ export default function useIdleTimeout() {
   // 从后端获取配置的超时
   const refreshTimeout = async () => {
     try {
-      const res: any = await apiClient.get('/settings/security');
+      const res: any = await apiClient.get('/settings/session');
       if (res.data?.idleTimeoutMinutes) {
         timeoutMsRef.current = res.data.idleTimeoutMinutes * 60 * 1000;
       }

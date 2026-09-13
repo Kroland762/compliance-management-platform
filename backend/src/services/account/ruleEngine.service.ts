@@ -1,7 +1,8 @@
 import { Op } from 'sequelize';
-import { AuditRule, RuleType, Severity, BuiltinKey, AccountData } from '../../models/account';
+import { AuditRule, RuleType, Severity, AccountData, AccountAuditTask } from '../../models/account';
 import auditLogService from '../audit-log.service';
 import { OperationType } from '../../models';
+import { parsePagination, pagination } from '../../utils/pagination';
 
 interface ListQuery {
   page?: number;
@@ -33,7 +34,8 @@ class RuleEngineService {
    * 分页列出审计规则
    */
   async listRules(query: ListQuery) {
-    const { page = 1, pageSize = 20, ruleType, severity, isActive, search } = query;
+    const { page, pageSize } = parsePagination(query);
+    const { ruleType, severity, isActive, search } = query;
     const where: any = {};
 
     if (ruleType) where.ruleType = ruleType;
@@ -50,9 +52,13 @@ class RuleEngineService {
       offset: (page - 1) * pageSize,
     });
 
+    const linkedTasks = await this.linkedTasks(rows.map((row) => row.id));
     return {
-      items: rows.map(r => r.toJSON()),
-      pagination: { page, pageSize, total: count, totalPages: Math.ceil(count / pageSize) },
+      items: rows.map((row) => {
+        const ids = linkedTasks.get(row.id) || [];
+        return { ...row.toJSON(), taskCount: ids.length, linkedTaskIds: ids };
+      }),
+      pagination: pagination(page, pageSize, count),
     };
   }
 
@@ -62,7 +68,9 @@ class RuleEngineService {
   async getRule(id: string) {
     const rule = await AuditRule.findByPk(id);
     if (!rule) throw new Error('审计规则不存在');
-    return rule.toJSON();
+    const linkedTasks = await this.linkedTasks([id]);
+    const linkedTaskIds = linkedTasks.get(id) || [];
+    return { ...rule.toJSON(), taskCount: linkedTaskIds.length, linkedTaskIds };
   }
 
   /**
@@ -152,6 +160,19 @@ class RuleEngineService {
       default:
         return null;
     }
+  }
+
+  private async linkedTasks(ruleIds: string[]): Promise<Map<string, string[]>> {
+    const result = new Map<string, string[]>();
+    if (!ruleIds.length) return result;
+    const tasks = await AccountAuditTask.findAll({ attributes: ['id', 'selectedRules'] });
+    for (const task of tasks) {
+      for (const ruleId of task.selectedRules) {
+        if (!ruleIds.includes(ruleId)) continue;
+        result.set(ruleId, [...(result.get(ruleId) || []), task.id]);
+      }
+    }
+    return result;
   }
 
   /**
@@ -383,10 +404,13 @@ class RuleEngineService {
   /**
    * 批量评估：对给定的账户ID列表和规则ID列表进行交叉评估
    */
-  async evaluateBatch(accountIds: string[], ruleIds: string[]) {
+  async evaluateBatch(accountIds: string[], ruleIds: string[], sourceId?: string) {
     // 查询账户数据
     const accounts = await AccountData.findAll({
-      where: { accountId: { [Op.in]: accountIds } },
+      where: {
+        accountId: { [Op.in]: accountIds },
+        ...(sourceId ? { sourceId } : {}),
+      },
       attributes: ['id', 'accountId', 'accountName', 'mfaEnabled', 'accountPermission', 'createdTime', 'lastLoginTime', 'accountStatus', 'customFields', 'sourceRawData'],
     });
 

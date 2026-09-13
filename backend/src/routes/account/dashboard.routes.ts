@@ -4,8 +4,7 @@ import dashboardService from '../../services/account/dashboard.service';
 
 const router = Router();
 router.use(authenticate);
-
-// Dashboard 对所有已认证用户开放（只读）
+router.use(authorize('account_dashboard', 'read'));
 
 /**
  * GET /api/account/dashboard/overview
@@ -13,7 +12,7 @@ router.use(authenticate);
  */
 router.get('/overview', async (req: Request, res: Response) => {
   try {
-    const result = await dashboardService.getOverview();
+    const result = await dashboardService.getOverview(req.user!);
     res.json({ success: true, data: result });
   } catch (error: any) {
     res.status(500).json({ success: false, error: { code: 'QUERY_FAILED', message: error.message } });
@@ -27,7 +26,7 @@ router.get('/overview', async (req: Request, res: Response) => {
 router.get('/trends', async (req: Request, res: Response) => {
   try {
     const days = parseInt(req.query.days as string) || 30;
-    const result = await dashboardService.getTrends(days);
+    const result = await dashboardService.getTrends(days, req.user!);
     res.json({ success: true, data: result });
   } catch (error: any) {
     res.status(500).json({ success: false, error: { code: 'QUERY_FAILED', message: error.message } });
@@ -40,7 +39,7 @@ router.get('/trends', async (req: Request, res: Response) => {
  */
 router.get('/risk-distribution', async (req: Request, res: Response) => {
   try {
-    const result = await dashboardService.getRiskDistribution();
+    const result = await dashboardService.getRiskDistribution(req.user!);
     res.json({ success: true, data: result });
   } catch (error: any) {
     res.status(500).json({ success: false, error: { code: 'QUERY_FAILED', message: error.message } });
@@ -54,7 +53,7 @@ router.get('/risk-distribution', async (req: Request, res: Response) => {
 router.get('/source-ranking', async (req: Request, res: Response) => {
   try {
     const limit = parseInt(req.query.limit as string) || 10;
-    const result = await dashboardService.getSourceRanking(limit);
+    const result = await dashboardService.getSourceRanking(limit, req.user!);
     res.json({ success: true, data: result });
   } catch (error: any) {
     res.status(500).json({ success: false, error: { code: 'QUERY_FAILED', message: error.message } });

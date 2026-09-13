@@ -2,8 +2,10 @@ import { DataTypes, Model, type Optional } from 'sequelize';
 import sequelize from '../config/database';
 
 export enum TenantStatus {
+  PROVISIONING = 'provisioning',
   ACTIVE = 'active',
   SUSPENDED = 'suspended',
+  ARCHIVED = 'archived',
 }
 
 interface TenantAttributes {

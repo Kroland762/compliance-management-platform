@@ -2,6 +2,7 @@ import { Sequelize } from 'sequelize';
 import { config } from './index';
 
 const isProd = config.nodeEnv === 'production';
+const useSsl = config.db.ssl;
 
 const sequelize = new Sequelize({
   dialect: 'postgres',
@@ -17,7 +18,7 @@ const sequelize = new Sequelize({
     acquire: 30000,
     idle: 10000,
   },
-  dialectOptions: isProd
+  dialectOptions: useSsl
     ? {
         ssl: {
           require: true,

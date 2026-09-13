@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { ConfigProvider, App as AntApp } from 'antd';
+import zhCN from 'antd/locale/zh_CN';
 import App from './App';
 import './assets/global.css';
 
@@ -13,6 +14,10 @@ const appleTheme = {
     colorError: '#FF3B30',
     colorInfo: '#007AFF',
     colorTextBase: '#1D1D1F',
+    colorTextSecondary: '#636366',
+    colorTextTertiary: '#636366',
+    colorTextDescription: '#636366',
+    colorTextPlaceholder: '#636366',
     colorBgBase: '#FFFFFF',
     borderRadius: 12,
     borderRadiusLG: 18,
@@ -85,7 +90,7 @@ const appleTheme = {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <ConfigProvider theme={appleTheme}>
+    <ConfigProvider locale={zhCN} theme={appleTheme}>
       <AntApp>
         <BrowserRouter>
           <App />

@@ -3,35 +3,35 @@
 // ========================================
 
 import {
-  UserRole, AssessmentType, TaskStatus, AnswerStatus,
-  ComplianceStatus, RiskLevel, RemediationStatus, RiskStatus,
+  AssessmentType, TaskStatus, AnswerStatus,
+  ComplianceStatus, RiskLevel,
   NotificationType, OperationType,
+  EvidenceType,
+  EvidenceStatus, EvidenceScanStatus,
 } from './enums';
 
-// ---- User ----
-export interface IUser {
+// ---- Global identity and tenant member ----
+export interface IUserIdentity {
   id: string;
   username: string;
   passwordHash: string;
-  department: string | null;
-  role: UserRole;
+  email: string | null;
+  globalRoleTemplateId: string | null;
+  mustChangePassword: boolean;
   lastLogin: Date | null;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
 
-export interface IUserCreate {
-  username: string;
-  password: string;
-  department?: string;
-  role: UserRole;
-}
-
-export interface IUserUpdate {
-  department?: string;
-  role?: UserRole;
-  isActive?: boolean;
+export interface ITenantMember {
+  id: string;
+  userId: string;
+  displayName: string;
+  employeeNo: string | null;
+  email: string | null;
+  status: 'invited' | 'active' | 'suspended' | 'left';
+  sessionVersion: number;
 }
 
 // ---- QuestionnaireTemplate ----
@@ -65,6 +65,7 @@ export interface IAuditTask {
   assessmentTarget: string;
   createdBy: string;
   assignedTo: string;
+  departmentId: string;
   status: TaskStatus;
   returnReason: string | null;
   returnedAssignees: string[] | null;
@@ -78,6 +79,7 @@ export interface IAuditTaskCreate {
   assessmentType: AssessmentType;
   assessmentTarget: string;
   assignedTo: string;
+  departmentId: string;
   questionAssignments?: IQuestionAssignment[];
 }
 
@@ -102,9 +104,6 @@ export interface IQuestionItem {
   currentStatusDescription: string | null;
   answerStatus: AnswerStatus;
   complianceStatus: ComplianceStatus | null;
-  riskIdentification: string | null;
-  riskLevel: RiskLevel | null;
-  remediationMeasures: string | null;
   answeredAt: Date | null;
   reviewedAt: Date | null;
 }
@@ -113,6 +112,12 @@ export interface IQuestionItem {
 export interface IEvidenceFile {
   id: string;
   questionItemId: string;
+  evidenceType: EvidenceType;
+  version: number;
+  sha256: string | null;
+  scanStatus: EvidenceScanStatus;
+  status: EvidenceStatus;
+  isLocked: boolean;
   originalFilename: string;
   storedFilename: string;
   filePath: string;
@@ -120,20 +125,20 @@ export interface IEvidenceFile {
   mimeType: string;
   uploadedBy: string;
   uploadedAt: Date;
+  deletedAt: Date | null;
+  deletedBy: string | null;
 }
 
 // ---- RiskRecord ----
 export interface IRiskRecord {
   id: string;
-  taskId: string;
-  questionItemId: string;
-  assessmentType: AssessmentType;
-  assessmentTarget: string;
-  riskIdentification: string;
+  taskId: string | null;
+  code: string;
+  title: string;
+  description: string;
   riskLevel: RiskLevel;
-  remediationMeasures: string | null;
-  remediationStatus: RemediationStatus;
-  riskStatus: RiskStatus;
+  treatmentStrategy: string;
+  status: string;
   identifiedAt: Date;
   updatedAt: Date;
 }

@@ -6,9 +6,17 @@ build/
 *.log
 uploads/
 coverage/
+playwright-report/
+test-results/
 .DS_Store
 *.tsbuildinfo
 *.bak
 *.debug
 audit-api.js.bak
 *.tar.gz
+.codex-doc-work/
+*.dump
+*.backup
+backend/backups/
+backups/
+restore-uploads/

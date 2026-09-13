@@ -4,20 +4,22 @@ import { Typography, Button, Table, Tag, Progress, Space, message, Descriptions,
 import { ArrowLeftOutlined, PlayCircleOutlined } from '@ant-design/icons';
 import { taskApi, type TaskExecution, type Task } from '../../api/account';
 import { getApiErrorMessage } from '../../utils/error';
+import { useAuthStore } from '../../store/auth';
 
 const { Title, Text } = Typography;
 
 const statusColors: Record<string, string> = {
-  pending: 'default', running: 'processing', completed: 'green', failed: 'red',
+  ACTIVE: 'green', INACTIVE: 'default', RUNNING: 'processing', SUCCESS: 'green', FAILED: 'red',
 };
 const statusLabels: Record<string, string> = {
-  pending: '等待中', running: '运行中', completed: '已完成', failed: '失败',
+  ACTIVE: '启用', INACTIVE: '停用', RUNNING: '运行中', SUCCESS: '成功', FAILED: '失败',
 };
 const phaseColors: Record<string, string> = {
   pending: 'default', running: 'blue', completed: 'green', failed: 'red',
 };
 
 export default function TaskHistory() {
+  const canExecute = useAuthStore((state) => state.hasPermission('account_tasks', 'execute'));
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [task, setTask] = useState<Task | null>(null);
@@ -69,7 +71,7 @@ export default function TaskHistory() {
       render: (v: string) => <Tag color={statusColors[v]}>{statusLabels[v] || v}</Tag>,
     },
     {
-      title: '阶段', dataIndex: 'phase', width: 100,
+      title: '阶段', dataIndex: 'currentPhase', width: 100,
       render: (v: string, record: TaskExecution) => (
         <Space size={4}>
           <Tag color={phaseColors[record.status] || 'default'} style={{ borderRadius: 4 }}>{v || '-'}</Tag>
@@ -106,9 +108,9 @@ export default function TaskHistory() {
             <Tag color={statusColors[task.status]}>{statusLabels[task.status] || task.status}</Tag>
           )}
         </div>
-        <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleExecute}>
+        {canExecute && <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleExecute}>
           立即执行
-        </Button>
+        </Button>}
       </div>
 
       {/* Task Info Summary */}

@@ -3,6 +3,7 @@ import { Drawer, Descriptions, Tag, Typography, Button, Space, Select, Input, Ti
 import { ClockCircleOutlined } from '@ant-design/icons';
 import { problemApi, type Problem } from '../../api/account';
 import { getApiErrorMessage } from '../../utils/error';
+import { useAuthStore } from '../../store/auth';
 
 const { Text } = Typography;
 const { TextArea } = Input;
@@ -20,6 +21,7 @@ interface Props {
 }
 
 export default function ProblemDetail({ visible, problemId, onClose, onStatusUpdated }: Props) {
+  const canUpdate = useAuthStore((state) => state.hasPermission('problems', 'update'));
   const [problem, setProblem] = useState<Problem | null>(null);
   const [loading, setLoading] = useState(false);
   const [updating, setUpdating] = useState(false);
@@ -60,10 +62,8 @@ export default function ProblemDetail({ visible, problemId, onClose, onStatusUpd
   };
 
   const statusOptions = [
-    { value: 'PENDING', label: '待处理' },{ value: 'PROCESSING', label: '处理中' },{ value: 'RESOLVED', label: '已解决' },{ value: 'AUTO_RESOLVED', label: '自动修复' },{ value: 'FALSE_POSITIVE', label: '误报' },{ value: 'IGNORED', label: '已忽略' },
-    { value: 'acknowledged', label: '已确认' },
-    { value: 'resolved', label: '已解决' },
-    { value: 'false_positive', label: '误报' },
+    { value: 'PENDING', label: '待处理' }, { value: 'PROCESSING', label: '处理中' },
+    { value: 'RESOLVED', label: '已解决' }, { value: 'FALSE_POSITIVE', label: '误报' }, { value: 'IGNORED', label: '已忽略' },
   ];
 
   return (
@@ -96,7 +96,7 @@ export default function ProblemDetail({ visible, problemId, onClose, onStatusUpd
               {new Date(problem.firstDetectedAt).toLocaleString('zh-CN')}
             </Descriptions.Item>
             <Descriptions.Item label="最近检测">
-              {problem.lastDetectedAt ? new Date(problem.lastDetectedAt).toLocaleString('zh-CN') : '-'}
+              {problem.lastSeenAt ? new Date(problem.lastSeenAt).toLocaleString('zh-CN') : '-'}
             </Descriptions.Item>
             {problem.resolvedAt && (
               <Descriptions.Item label="解决时间">
@@ -111,7 +111,7 @@ export default function ProblemDetail({ visible, problemId, onClose, onStatusUpd
           <Divider />
 
           {/* Status Update */}
-          <div style={{ marginBottom: 20 }}>
+          {canUpdate && <div style={{ marginBottom: 20 }}>
             <Text strong style={{ display: 'block', marginBottom: 8 }}>更新状态</Text>
             <Space direction="vertical" style={{ width: '100%' }} size={10}>
               <Select
@@ -132,7 +132,7 @@ export default function ProblemDetail({ visible, problemId, onClose, onStatusUpd
                 更新状态
               </Button>
             </Space>
-          </div>
+          </div>}
 
           <Divider />
 
@@ -142,7 +142,7 @@ export default function ProblemDetail({ visible, problemId, onClose, onStatusUpd
               <Text strong style={{ display: 'block', marginBottom: 12 }}>状态历史</Text>
               <Timeline
                 items={problem.statusHistory.map(h => ({
-                  color: h.toStatus === 'resolved' ? 'green' : h.toStatus === 'open' ? 'red' : 'blue',
+                  color: h.toStatus === 'RESOLVED' ? 'green' : h.toStatus === 'PENDING' ? 'red' : 'blue',
                   dot: <ClockCircleOutlined style={{ fontSize: 12 }} />,
                   children: (
                     <div>

@@ -1,0 +1,629 @@
+import { expect, request, test } from '@playwright/test';
+
+const apiBase = process.env.E2E_API_BASE_URL || 'http://127.0.0.1:3001';
+
+async function tenantApiAuth(page: any, tenantSlug: string) {
+  const loginResponse = await page.request.post(`${apiBase}/api/auth/login`, {
+    data: {
+      username: process.env.E2E_ADMIN_USERNAME || 'admin',
+      password: process.env.E2E_ADMIN_PASSWORD || 'Admin1234',
+      captchaCode: '0000',
+    },
+  });
+  expect(loginResponse.ok()).toBeTruthy();
+  let payload = (await loginResponse.json()).data;
+  let token = payload.token;
+  let selectedTenant = (payload.contexts || []).find((item: any) => item.slug === tenantSlug)
+    || (payload.user?.tenantId ? (payload.contexts || []).find((item: any) => item.id === payload.user.tenantId) : null);
+  expect(selectedTenant?.id).toBeTruthy();
+  if (payload.user?.tenantId !== selectedTenant.id) {
+    const contextResponse = await page.request.post(`${apiBase}/api/auth/context`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { tenantId: selectedTenant.id },
+    });
+    expect(contextResponse.ok()).toBeTruthy();
+    payload = (await contextResponse.json()).data;
+    token = payload.token;
+    selectedTenant = (payload.contexts || []).find((item: any) => item.id === payload.user?.tenantId) || selectedTenant;
+  }
+  return { token, selectedTenant };
+}
+
+test('global administrator selects a tenant and completes core control flow', async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
+  const mutationTenantSlug = process.env.E2E_MUTATION_TENANT_SLUG;
+  test.skip(
+    !mutationTenantSlug,
+    'Set E2E_MUTATION_TENANT_SLUG to an isolated disposable tenant; this flow creates and mutates tenant data.',
+  );
+
+  await page.goto('/login');
+  await page.getByPlaceholder('用户名').fill(process.env.E2E_ADMIN_USERNAME || 'admin');
+  await page.getByPlaceholder('密码').fill(process.env.E2E_ADMIN_PASSWORD || 'Admin1234');
+  await page.getByPlaceholder('验证码').fill('0000');
+  await page.locator('button[type="submit"]').click();
+
+  await expect(page).toHaveURL(/\/tenants$/);
+  await page.getByRole('row', { name: new RegExp(mutationTenantSlug!) })
+    .getByRole('button', { name: '查看用户' })
+    .click();
+  await expect(page).toHaveURL(/\/users$/);
+
+  const auth = await tenantApiAuth(page, mutationTenantSlug!);
+  const headers = {
+    Authorization: `Bearer ${auth.token}`,
+    'X-Tenant-ID': auth.selectedTenant.id,
+  };
+
+  const suffix = Date.now();
+  const roleResponse = await page.request.get(`${apiBase}/api/roles`, { headers });
+  expect(roleResponse.ok()).toBeTruthy();
+  const roles = (await roleResponse.json()).data.items;
+  const userRole = roles.find((role: any) => role.name === '普通用户') || roles[0];
+  const departmentsResponse = await page.request.get(`${apiBase}/api/lookup/options/departments?purpose=user-membership&pageSize=50`, { headers });
+  expect(departmentsResponse.ok()).toBeTruthy();
+  const departments = (await departmentsResponse.json()).data.items;
+  const rootDepartment = departments[0];
+  expect(rootDepartment).toBeTruthy();
+
+  const userResponse = await page.request.post(`${apiBase}/api/members`, {
+    headers,
+    data: {
+      username: `e2e_user_${suffix}`,
+      displayName: `E2E User ${suffix}`,
+      email: `e2e-${suffix}@example.com`,
+      roleIds: [userRole.id],
+      departments: [{ departmentId: rootDepartment.value, isPrimary: true }],
+    },
+  });
+  expect(userResponse.status()).toBe(201);
+  const memberPayload = (await userResponse.json()).data;
+  const userId = memberPayload.member.userId;
+  const temporaryPassword = memberPayload.temporaryPassword;
+
+  const qualificationName = `E2E资质-${suffix}`;
+  const qualificationResponse = await page.request.post(`${apiBase}/api/qualifications`, {
+    headers,
+    data: {
+      name: qualificationName,
+      category: '企业资质',
+      ownerDepartmentId: rootDepartment.value,
+      expiryDate: '2030-12-31',
+    },
+  });
+  expect(qualificationResponse.status()).toBe(201);
+  await page.goto('/qualifications');
+  await expect(page.getByText(qualificationName)).toBeVisible();
+
+  const templateResponse = await page.request.post(`${apiBase}/api/templates/import`, {
+    headers,
+    multipart: {
+      name: `E2E模板-${suffix}`,
+      description: 'Playwright core flow',
+      file: {
+        name: 'template.csv',
+        mimeType: 'text/csv',
+        buffer: Buffer.from(
+          '序号,控制域名,控制点,参考回答\n'
+          + '1,访问控制,账号复核,应定期复核\n'
+          + '2,访问控制,权限复核,应定期复核权限\n',
+        ),
+      },
+    },
+  });
+  expect(templateResponse.status()).toBe(201);
+  const templateId = (await templateResponse.json()).data.templateId;
+
+  const taskResponse = await page.request.post(`${apiBase}/api/tasks`, {
+    headers,
+    data: {
+      templateId,
+      assessmentType: 'ISO27001',
+      assessmentTarget: `E2E任务-${suffix}`,
+      departmentId: rootDepartment.value,
+    },
+  });
+  expect(taskResponse.status()).toBe(201);
+  const taskId = (await taskResponse.json()).data.id;
+  const auditorsResponse = await page.request.get(`${apiBase}/api/lookup/options/auditors?purpose=assessment-owner&pageSize=50`, { headers });
+  expect(auditorsResponse.ok()).toBeTruthy();
+  const availableAuditors = (await auditorsResponse.json()).data.items;
+  expect(availableAuditors.length).toBeGreaterThan(0);
+  const assignedAuditor = availableAuditors[0];
+  expect(assignedAuditor).toBeTruthy();
+  expect((await page.request.put(`${apiBase}/api/tasks/${taskId}/auditors`, {
+    headers,
+    data: { auditorUserIds: [assignedAuditor.value] },
+  })).ok()).toBeTruthy();
+
+  const assetSpecs = [
+    { code: `E2E-APP-${suffix}`, name: `E2E应用-${suffix}`, assetType: 'application' },
+    { code: `E2E-DB-${suffix}`, name: `E2E数据库-${suffix}`, assetType: 'data' },
+    { code: `E2E-ORG-${suffix}`, name: `E2E组织治理-${suffix}`, assetType: 'organization' },
+  ];
+  const createdAssets = [];
+  for (const assetSpec of assetSpecs) {
+    const assetResponse = await page.request.post(`${apiBase}/api/assets`, {
+      headers,
+      data: {
+        ...assetSpec,
+        criticality: 'high',
+        ownerDepartmentId: rootDepartment.value,
+        ownerUserId: userId,
+      },
+    });
+    expect(assetResponse.status()).toBe(201);
+    createdAssets.push((await assetResponse.json()).data);
+  }
+  const templateDetailResponse = await page.request.get(
+    `${apiBase}/api/templates/${templateId}`,
+    { headers },
+  );
+  const controlPoints = (await templateDetailResponse.json()).data.templateQuestions;
+  expect((await page.request.put(`${apiBase}/api/tasks/${taskId}/assets`, {
+    headers,
+    data: { assetIds: createdAssets.map((asset: any) => asset.id) },
+  })).ok()).toBeTruthy();
+  const matrixItems = [
+    [controlPoints[0], createdAssets[0]],
+    [controlPoints[0], createdAssets[1]],
+    [controlPoints[1], createdAssets[1]],
+    [controlPoints[1], createdAssets[2]],
+  ].map(([controlPoint, asset]) => ({
+    controlPointId: controlPoint.id,
+    assetId: asset.id,
+    assignedTo: userId,
+    responsibleDepartmentId: rootDepartment.value,
+  }));
+  expect((await page.request.put(`${apiBase}/api/tasks/${taskId}/control-asset-matrix`, {
+    headers,
+    data: { items: matrixItems },
+  })).ok()).toBeTruthy();
+  const publishResponse = await page.request.post(
+    `${apiBase}/api/tasks/${taskId}/publish`,
+    { headers },
+  );
+  expect(publishResponse.ok()).toBeTruthy();
+  expect((await publishResponse.json()).data.total).toBe(4);
+  const evaluationsResponse = await page.request.get(
+    `${apiBase}/api/tasks/${taskId}/evaluations?pageSize=100`,
+    { headers },
+  );
+  const evaluations = (await evaluationsResponse.json()).data.items;
+  expect(evaluations).toHaveLength(4);
+
+  const missingPrecondition = await page.request.put(
+    `${apiBase}/api/evaluations/${evaluations[0].id}/answer`,
+    { headers, data: { currentStatusDescription: '缺少版本号的写入不得成功' } },
+  );
+  expect(missingPrecondition.status()).toBe(428);
+  for (const legacyWrite of [
+    page.request.put(`${apiBase}/api/questions/${evaluations[0].id}/answer`, {
+      headers,
+      data: { currentStatusDescription: '旧入口不得写入', lockVersion: evaluations[0].lockVersion },
+    }),
+    page.request.put(`${apiBase}/api/review/questions/${evaluations[0].id}`, {
+      headers,
+      data: { complianceStatus: 'compliant' },
+    }),
+    page.request.put(`${apiBase}/api/tasks/${taskId}/configure`, {
+      headers,
+      data: { questionAssignments: [] },
+    }),
+    page.request.post(`${apiBase}/api/tasks/${taskId}/submit`, { headers }),
+  ]) {
+    expect((await legacyWrite).status()).toBe(410);
+  }
+
+  // Keep the member's refresh-token cookie isolated from the administrator's
+  // browser context so the final rendered administrator workflow remains valid.
+  const memberRequest = await request.newContext({ baseURL: `${apiBase}` });
+  const userLoginResponse = await memberRequest.post('/api/auth/login', {
+    data: {
+      username: `e2e_user_${suffix}`,
+      password: temporaryPassword,
+      captchaCode: '0000',
+    },
+  });
+  expect(userLoginResponse.ok()).toBeTruthy();
+  const temporaryToken = (await userLoginResponse.json()).data.token;
+  const changePasswordResponse = await memberRequest.post('/api/auth/change-password', {
+    headers: { Authorization: `Bearer ${temporaryToken}` },
+    data: { oldPassword: temporaryPassword, newPassword: 'E2eUserChanged1234!' },
+  });
+  expect(changePasswordResponse.ok()).toBeTruthy();
+  const changedLoginResponse = await memberRequest.post('/api/auth/login', {
+    data: {
+      username: `e2e_user_${suffix}`,
+      password: 'E2eUserChanged1234!',
+      captchaCode: '0000',
+    },
+  });
+  expect(changedLoginResponse.ok()).toBeTruthy();
+  const userToken = (await changedLoginResponse.json()).data.token;
+  await memberRequest.dispose();
+  const userHeaders = {
+    Authorization: `Bearer ${userToken}`,
+    'X-Tenant-ID': auth.selectedTenant.id,
+  };
+
+  const answeredEvaluations = [];
+  for (const evaluation of evaluations) {
+    const answerResponse = await page.request.put(
+      `${apiBase}/api/evaluations/${evaluation.id}/answer`,
+      {
+        headers: userHeaders,
+        data: {
+          currentStatusDescription: `已检查 ${evaluation.sequenceNumber} 与资产 ${evaluation.asset?.name}`,
+          lockVersion: evaluation.lockVersion,
+        },
+      },
+    );
+    expect(answerResponse.ok()).toBeTruthy();
+    answeredEvaluations.push((await answerResponse.json()).data);
+  }
+
+  const evidenceResponse = await page.request.post(`${apiBase}/api/evaluations/${evaluations[0].id}/evidence`, {
+    headers: userHeaders,
+    multipart: {
+      file: {
+        name: 'evidence.pdf',
+        mimeType: 'application/pdf',
+        buffer: Buffer.from('%PDF-1.7\nE2E evidence\n'),
+      },
+    },
+  });
+  expect(evidenceResponse.status()).toBe(201);
+  const evidenceId = (await evidenceResponse.json()).data.id;
+
+  const downloadResponse = await page.request.get(`${apiBase}/api/evidence/${evidenceId}/download`, {
+    headers: userHeaders,
+  });
+  expect(downloadResponse.ok()).toBeTruthy();
+  expect(downloadResponse.headers()['content-type']).toContain('application/pdf');
+
+  const previewResponse = await page.request.get(
+    `${apiBase}/api/evidence/${evidenceId}/content`,
+    { headers: userHeaders },
+  );
+  expect(previewResponse.ok()).toBeTruthy();
+  expect(previewResponse.headers()['content-type']).toContain('application/pdf');
+
+  const submittedEvaluations = [];
+  for (const evaluation of answeredEvaluations) {
+    const submitResponse = await page.request.post(
+      `${apiBase}/api/evaluations/${evaluation.id}/submit`,
+      {
+        headers: { ...userHeaders, 'If-Match': `"${evaluation.lockVersion}"` },
+      },
+    );
+    expect(submitResponse.ok()).toBeTruthy();
+    const submitted = (await submitResponse.json()).data;
+    expect(submitted.workflowStatus).toBe('submitted');
+    submittedEvaluations.push(submitted);
+  }
+
+  const reviewDataResponse = await page.request.get(`${apiBase}/api/review/tasks/${taskId}`, { headers });
+  expect(reviewDataResponse.ok()).toBeTruthy();
+  const reviewEvaluation = (await reviewDataResponse.json()).data
+    .find((item: any) => item.id === evaluations[0].id);
+  expect(reviewEvaluation.evidenceFiles[0].id).toBe(evidenceId);
+  expect(reviewEvaluation.evidenceFiles[0].storageKey).toBeUndefined();
+  expect(reviewEvaluation.evidenceFiles[0].filePath).toBeUndefined();
+
+  const reviewedEvaluations = [];
+  for (const evaluation of submittedEvaluations) {
+    const claimResponse = await page.request.post(
+      `${apiBase}/api/evaluations/${evaluation.id}/review-claim`,
+      { headers },
+    );
+    expect(claimResponse.ok()).toBeTruthy();
+    const claimed = (await claimResponse.json()).data;
+    const reviewResponse = await page.request.post(
+      `${apiBase}/api/evaluations/${evaluation.id}/review`,
+      {
+        headers: { ...headers, 'If-Match': `"${claimed.lockVersion}"` },
+        data: {
+          complianceStatus: 'non_compliant',
+          finding: {
+            description: `E2E不符合项-${evaluation.sequenceNumber}`,
+            severity: 'high',
+            ownerDepartmentId: rootDepartment.value,
+            ownerUserId: userId,
+          },
+        },
+      },
+    );
+    expect(reviewResponse.ok()).toBeTruthy();
+    reviewedEvaluations.push((await reviewResponse.json()).data);
+  }
+
+  const firstRiskResponse = await page.request.post(`${apiBase}/api/risks`, {
+    headers: { ...headers, 'Idempotency-Key': `e2e-risk-first-${suffix}` },
+    data: {
+      taskId,
+      title: `E2E共享风险-${suffix}`,
+      description: '三个评估单元共同形成高风险',
+      riskLevel: 'high',
+      treatmentStrategy: 'mitigate',
+      ownerDepartmentId: rootDepartment.value,
+      ownerUserId: userId,
+      sources: reviewedEvaluations.slice(0, 3).map((evaluation: any) => ({
+        controlEvaluationId: evaluation.id,
+      })),
+      assets: createdAssets.map((asset: any) => ({ assetId: asset.id })),
+    },
+  });
+  expect(firstRiskResponse.status()).toBe(201);
+  let risk = (await firstRiskResponse.json()).data;
+  expect(risk.sources).toHaveLength(3);
+  expect(risk.affectedAssets).toHaveLength(3);
+
+  await page.goto(`/risks/${risk.id}/edit`);
+  await expect(page.getByRole('heading', { name: '编辑风险' })).toBeVisible();
+  await expect(page.getByLabel('来源说明', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '分配审核人', exact: true })).toHaveCount(0);
+  await page.getByLabel('描述', { exact: true }).fill('评估来源保持只读，更新风险资料后继续原有整改闭环。');
+  const riskEditPromise = page.waitForResponse((response) =>
+    response.url().endsWith(`/api/risks/${risk.id}`) && response.request().method() === 'PATCH');
+  await page.getByRole('button', { name: '保存修改', exact: true }).click();
+  const riskEditResponse = await riskEditPromise;
+  expect(riskEditResponse.ok(), await riskEditResponse.text()).toBeTruthy();
+  for (const forbiddenField of ['discoverySource', 'discoverySourceDetail', 'sourceReference', 'reviewerUserId']) {
+    expect(riskEditResponse.request().postDataJSON()).not.toHaveProperty(forbiddenField);
+  }
+  risk = (await riskEditResponse.json()).data;
+  await expect(page).toHaveURL(new RegExp(`/risks/${risk.id}$`));
+  await expect(page.getByRole('heading', { name: new RegExp(risk.title) })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('evaluation-risk-edited.png'), fullPage: true });
+
+  const secondRiskResponse = await page.request.post(`${apiBase}/api/risks`, {
+    headers: { ...headers, 'Idempotency-Key': `e2e-risk-second-${suffix}` },
+    data: {
+      taskId,
+      title: `E2E组织风险-${suffix}`,
+      description: '组织治理评估单元形成独立风险',
+      riskLevel: 'medium',
+      treatmentStrategy: 'mitigate',
+      ownerDepartmentId: rootDepartment.value,
+      ownerUserId: userId,
+      sources: [{ controlEvaluationId: reviewedEvaluations[3].id }],
+      assets: [{ assetId: createdAssets[2].id }],
+    },
+  });
+  expect(secondRiskResponse.status()).toBe(201);
+  const secondRisk = (await secondRiskResponse.json()).data;
+
+  const completeReviewResponse = await page.request.post(
+    `${apiBase}/api/tasks/${taskId}/complete-review`,
+    { headers },
+  );
+  expect(completeReviewResponse.ok()).toBeTruthy();
+  expect((await completeReviewResponse.json()).data.status).toBe('pending_closure');
+
+  expect((await page.request.post(
+    `${apiBase}/api/risks/${risk.id}/confirm`,
+    { headers: { ...headers, 'If-Match': `"${risk.lockVersion}"` } },
+  )).ok()).toBeTruthy();
+  expect((await page.request.post(
+    `${apiBase}/api/risks/${secondRisk.id}/confirm`,
+    { headers: { ...headers, 'If-Match': `"${secondRisk.lockVersion}"` } },
+  )).ok()).toBeTruthy();
+
+  const createAndSubmitAction = async (
+    actionIndex: number,
+    riskLinks: Array<{ riskId: string; contributionDescription: string }>,
+  ) => {
+    const createActionResponse = await page.request.post(`${apiBase}/api/remediation-actions`, {
+      headers,
+      data: {
+        title: `E2E整改行动${actionIndex}-${suffix}`,
+        description: `完成第${actionIndex}项整改`,
+        ownerUserId: userId,
+        ownerDepartmentId: rootDepartment.value,
+        dueDate: '2030-12-31',
+        riskLinks: riskLinks.map((link) => ({
+          riskId: link.riskId,
+          isRequired: true,
+          contributionDescription: link.contributionDescription,
+        })),
+      },
+    });
+    expect(createActionResponse.status()).toBe(201);
+    let remediationAction = (await createActionResponse.json()).data;
+    const updateActionResponse = await page.request.put(
+      `${apiBase}/api/remediation-actions/${remediationAction.id}`,
+      {
+        headers: { ...userHeaders, 'If-Match': `"${remediationAction.lockVersion}"` },
+        data: { progressNote: `第${actionIndex}项整改已完成并验证` },
+      },
+    );
+    expect(updateActionResponse.ok()).toBeTruthy();
+    remediationAction = (await updateActionResponse.json()).data;
+    const remediationEvidence = await page.request.post(
+      `${apiBase}/api/remediation-actions/${remediationAction.id}/evidence`,
+      {
+        headers: userHeaders,
+        multipart: {
+          file: {
+            name: `remediation-${actionIndex}.pdf`,
+            mimeType: 'application/pdf',
+            buffer: Buffer.from(`%PDF-1.7\nE2E remediation ${actionIndex}\n`),
+          },
+        },
+      },
+    );
+    expect(remediationEvidence.status()).toBe(201);
+    const submittedResponse = await page.request.post(
+      `${apiBase}/api/remediation-actions/${remediationAction.id}/submit`,
+      {
+        headers: {
+          ...userHeaders,
+          'If-Match': `"${remediationAction.lockVersion}"`,
+          'Idempotency-Key': `e2e-submit-${suffix}-${actionIndex}`,
+        },
+      },
+    );
+    expect(submittedResponse.ok()).toBeTruthy();
+    return (await submittedResponse.json()).data;
+  };
+
+  let sharedAction = await createAndSubmitAction(1, [
+    { riskId: risk.id, contributionDescription: '统一收敛账号权限' },
+    { riskId: secondRisk.id, contributionDescription: '补齐组织权限复核机制' },
+  ]);
+  const rejectedResponse = await page.request.post(
+    `${apiBase}/api/risks/${risk.id}/actions/${sharedAction.id}/verify`,
+    {
+      headers: { ...headers, 'If-Match': `"${sharedAction.lockVersion}"` },
+      data: { decision: 'rejected', comment: '证据不足，请补充验证记录' },
+    },
+  );
+  expect(rejectedResponse.ok()).toBeTruthy();
+  sharedAction = (await rejectedResponse.json()).data;
+  const fixedResponse = await page.request.put(
+    `${apiBase}/api/remediation-actions/${sharedAction.id}`,
+    {
+      headers: { ...userHeaders, 'If-Match': `"${sharedAction.lockVersion}"` },
+      data: { progressNote: '已按驳回意见补充完整验证记录' },
+    },
+  );
+  sharedAction = (await fixedResponse.json()).data;
+  const resubmitResponse = await page.request.post(
+    `${apiBase}/api/remediation-actions/${sharedAction.id}/submit`,
+    {
+      headers: {
+        ...userHeaders,
+        'If-Match': `"${sharedAction.lockVersion}"`,
+        'Idempotency-Key': `e2e-resubmit-${suffix}`,
+      },
+    },
+  );
+  expect(resubmitResponse.ok()).toBeTruthy();
+  sharedAction = (await resubmitResponse.json()).data;
+
+  for (const linkedRisk of [risk, secondRisk]) {
+    const approveResponse = await page.request.post(
+      `${apiBase}/api/risks/${linkedRisk.id}/actions/${sharedAction.id}/verify`,
+      {
+        headers: { ...headers, 'If-Match': `"${sharedAction.lockVersion}"` },
+        data: { decision: 'approved', comment: '补充后复核通过' },
+      },
+    );
+    expect(approveResponse.ok()).toBeTruthy();
+    sharedAction = (await approveResponse.json()).data;
+  }
+
+  let secondAction = await createAndSubmitAction(2, [
+    { riskId: risk.id, contributionDescription: '补充账号季度复核自动提醒' },
+  ]);
+  const secondActionApprove = await page.request.post(
+    `${apiBase}/api/risks/${risk.id}/actions/${secondAction.id}/verify`,
+    {
+      headers: { ...headers, 'If-Match': `"${secondAction.lockVersion}"` },
+      data: { decision: 'approved', comment: '第二项必要行动通过' },
+    },
+  );
+  expect(secondActionApprove.ok()).toBeTruthy();
+  secondAction = (await secondActionApprove.json()).data;
+
+  const closableRisk = (await (await page.request.get(
+    `${apiBase}/api/risks/${risk.id}`,
+    { headers },
+  )).json()).data;
+  const closeRiskResponse = await page.request.post(
+    `${apiBase}/api/risks/${risk.id}/close`,
+    {
+      headers: { ...headers, 'If-Match': `"${closableRisk.lockVersion}"` },
+      data: { comment: '全部必要行动已通过' },
+    },
+  );
+  expect(closeRiskResponse.ok()).toBeTruthy();
+  expect((await closeRiskResponse.json()).data.status).toBe('closed');
+
+  const closableSecondRisk = (await (await page.request.get(
+    `${apiBase}/api/risks/${secondRisk.id}`,
+    { headers },
+  )).json()).data;
+  const closeSecondRiskResponse = await page.request.post(
+    `${apiBase}/api/risks/${secondRisk.id}/close`,
+    {
+      headers: { ...headers, 'If-Match': `"${closableSecondRisk.lockVersion}"` },
+      data: { comment: '共享必要行动已通过' },
+    },
+  );
+  expect(closeSecondRiskResponse.ok()).toBeTruthy();
+
+  const riskExportResponse = await page.request.get(
+    `${apiBase}/api/export/risks`,
+    { headers: { ...headers, 'Idempotency-Key': `e2e-export-${suffix}` } },
+  );
+  expect(riskExportResponse.ok()).toBeTruthy();
+  expect(riskExportResponse.headers()['content-type']).toContain('spreadsheetml');
+
+  const accountCsvResponse = await page.request.get(
+    `${apiBase}/api/account/problems/export/data`,
+    { headers },
+  );
+  expect(accountCsvResponse.ok()).toBeTruthy();
+  expect(accountCsvResponse.headers()['content-type']).toContain('text/csv');
+
+  const auditResponse = await page.request.get(
+    `${apiBase}/api/audit-logs?page=1&pageSize=100`,
+    { headers },
+  );
+  expect(auditResponse.ok()).toBeTruthy();
+  const auditItems = (await auditResponse.json()).data.items;
+  expect(auditItems.some((item: any) => item.resourceType === 'task' && item.resourceId === taskId)).toBeTruthy();
+  expect(auditItems.some((item: any) => item.resourceType === 'evidence' && item.resourceId === evidenceId)).toBeTruthy();
+
+  await page.goto('/assessments/new');
+  await page.getByRole('combobox', { name: '标准版本' }).click();
+  await page.locator('.ant-select-item-option', { hasText: `E2E模板-${suffix}` }).click();
+  await page.getByRole('button', { name: '下一步' }).click();
+  await page.getByLabel('评估名称').fill(`E2E稀疏矩阵-${suffix}`);
+  await page.getByRole('combobox', { name: '归属部门' }).click();
+  await page.locator('.ant-select-item-option', { hasText: rootDepartment.label }).first().click();
+  await page.getByRole('combobox', { name: '默认责任人' }).click();
+  await page.locator('.ant-select-item-option', { hasText: `E2E User ${suffix}` }).click();
+  const auditorSelect = page.getByRole('combobox', { name: '审计员池' });
+  await auditorSelect.click();
+  const [auditorSearchResponse] = await Promise.all([
+    page.waitForResponse((response) => response.url().includes('/api/lookup/options/auditors') && response.url().includes('q=')),
+    auditorSelect.fill(assignedAuditor.label),
+  ]);
+  expect(auditorSearchResponse.ok()).toBeTruthy();
+  await auditorSelect.press('ArrowDown');
+  await auditorSelect.press('Enter');
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: '下一步' }).click();
+  const assetSelect = page.locator('main .ant-select').first();
+  await expect(assetSelect).toBeVisible();
+  await assetSelect.locator('.ant-select-selector').click();
+  const assetSearch = assetSelect.locator('input[role="combobox"]');
+  await expect(assetSearch).toHaveCount(1);
+  await expect(assetSearch).toBeVisible();
+  for (const asset of createdAssets) {
+    await assetSearch.click();
+    const [assetSearchResponse] = await Promise.all([
+      page.waitForResponse((response) => response.url().includes('/api/lookup/options/assets') && response.url().includes('q=')),
+      assetSearch.fill(asset.name),
+    ]);
+    expect(assetSearchResponse.ok()).toBeTruthy();
+    await page.locator('.ant-select-dropdown:visible .ant-select-item-option', { hasText: asset.name }).click();
+    await expect(assetSelect).toContainText(asset.name);
+  }
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: '下一步' }).click();
+  await expect(page.getByText('将生成 2 个评估行，每行默认关联所选 3 个资产。', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: '发布评估' }).click();
+  await expect(page).toHaveURL(/\/assessments\/[0-9a-f-]+$/);
+
+  await page.goto('/users');
+  const [memberSearchResponse] = await Promise.all([
+    page.waitForResponse((response) => response.url().includes('/api/members?') && response.url().includes('keyword=')),
+    page.getByPlaceholder('搜索成员姓名').fill(`E2E User ${suffix}`),
+  ]);
+  expect(memberSearchResponse.ok()).toBeTruthy();
+  await expect(page.getByText(`e2e_user_${suffix}`)).toBeVisible();
+});

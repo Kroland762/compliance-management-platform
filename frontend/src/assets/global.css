@@ -40,10 +40,208 @@ body {
   color: var(--apple-gray-900);
   letter-spacing: -0.01em;
   line-height: 1.5;
+  overflow-x: hidden;
 }
 
 #root {
   min-height: 100vh;
+  min-width: 0;
+}
+
+.app-content,
+.app-body,
+.ant-layout,
+.ant-card,
+.ant-card-body,
+.ant-table-wrapper,
+.ant-table-container {
+  min-width: 0;
+}
+
+.app-topnav {
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.app-topnav::-webkit-scrollbar {
+  display: none;
+}
+
+.app-content {
+  overflow-x: hidden;
+}
+
+.ant-table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.ant-table {
+  min-width: 0;
+}
+
+/* The evaluation workbench uses Ant Design's own horizontal scroll container.
+   Suppress the global wrapper scroller to avoid a second horizontal scrollbar. */
+.evaluation-workbench-table.ant-table-wrapper {
+  overflow-x: hidden;
+}
+
+.evaluation-workbench-table .evaluation-resizable-header {
+  position: relative;
+}
+
+.evaluation-column-resize-handle {
+  bottom: 0;
+  cursor: col-resize;
+  position: absolute;
+  right: -6px;
+  top: 0;
+  touch-action: none;
+  width: 12px;
+  z-index: 4;
+}
+
+.evaluation-column-resize-handle::after {
+  background: transparent;
+  bottom: 6px;
+  content: '';
+  position: absolute;
+  right: 5px;
+  top: 6px;
+  transition: background 0.15s ease;
+  width: 2px;
+}
+
+.evaluation-column-resize-handle:hover::after,
+.evaluation-column-resize-handle:focus-visible::after,
+.evaluation-column-resize-handle.is-resizing::after {
+  background: #1677ff;
+}
+
+.evaluation-column-resize-handle:focus-visible {
+  outline: none;
+}
+
+body.evaluation-column-resizing,
+body.evaluation-column-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+/* Keep responsive Select tags inside the scrolling asset cell. */
+.evaluation-workbench-table .ant-table-tbody > tr > .evaluation-assets-cell {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.evaluation-workbench-table .evaluation-assets-cell .ant-space-compact,
+.evaluation-workbench-table .evaluation-assets-cell .ant-select {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.template-column-header {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+}
+
+.template-column-header-label {
+  min-width: 0;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolbar-row,
+.toolbar-filters {
+  min-width: 0;
+}
+
+.filter-toolbar {
+  margin-bottom: 16px;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+.filter-toolbar-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: max-content;
+}
+
+.filter-toolbar .ant-input-affix-wrapper,
+.filter-toolbar .ant-picker,
+.filter-toolbar .ant-select,
+.filter-toolbar .ant-btn {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 900px) {
+  .app-topbar-main {
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+    gap: 8px;
+  }
+
+  .app-topbar-actions {
+    flex-shrink: 0;
+  }
+
+  .app-username {
+    display: none;
+  }
+
+  .app-content {
+    padding: 18px 14px !important;
+  }
+
+  .organization-layout {
+    grid-template-columns: 1fr !important;
+    gap: 16px !important;
+  }
+
+  .responsive-form-grid,
+  .responsive-form-grid-narrow {
+    grid-template-columns: 1fr !important;
+  }
+
+  .settings-field-row {
+    align-items: flex-start !important;
+    flex-direction: column;
+  }
+
+  .settings-password-rules {
+    columns: 1 !important;
+  }
+
+  .qualification-stat-grid {
+    grid-template-columns: 1fr 1fr !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .app-content {
+    padding: 14px 10px !important;
+  }
+
+  .ant-card .ant-card-body {
+    padding: 16px !important;
+  }
+
+  .qualification-stat-grid {
+    grid-template-columns: 1fr !important;
+  }
+
 }
 
 /* Apple-style scrollbar */

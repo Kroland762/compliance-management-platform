@@ -7,7 +7,7 @@ import AuditTask from './AuditTask';
 interface NotificationAttributes {
   id: string;
   userId: string;
-  taskId: string;
+  taskId: string | null;
   notificationType: NotificationType;
   title: string;
   content: string;
@@ -21,7 +21,7 @@ type CreationAttributes = Optional<NotificationAttributes, 'id' | 'createdAt' | 
 class Notification extends Model<NotificationAttributes, CreationAttributes> implements NotificationAttributes {
   declare id: string;
   declare userId: string;
-  declare taskId: string;
+  declare taskId: string | null;
   declare notificationType: NotificationType;
   declare title: string;
   declare content: string;
@@ -34,8 +34,8 @@ Notification.init(
   {
     id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
     userId: { type: DataTypes.UUID, allowNull: false, references: { model: User, key: 'id' } },
-    taskId: { type: DataTypes.UUID, allowNull: false, references: { model: AuditTask, key: 'id' } },
-    notificationType: { type: DataTypes.ENUM(...Object.values(NotificationType)), allowNull: false },
+    taskId: { type: DataTypes.UUID, allowNull: true, references: { model: AuditTask, key: 'id' } },
+    notificationType: { type: DataTypes.STRING(30), allowNull: false, validate: { isIn: [Object.values(NotificationType)] } },
     title: { type: DataTypes.STRING(200), allowNull: false },
     content: { type: DataTypes.TEXT, allowNull: false },
     isRead: { type: DataTypes.BOOLEAN, defaultValue: false },

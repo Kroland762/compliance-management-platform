@@ -1,25 +1,20 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Typography, Button, Descriptions, Tag, Table, Space, Spin, message, Card, Switch, Divider, Modal, InputNumber, DatePicker, Select } from 'antd';
+import { Typography, Button, Descriptions, Tag, Space, Spin, message, Card, Switch, Modal, InputNumber, DatePicker, Select } from 'antd';
 import { ArrowLeftOutlined, EditOutlined, SettingOutlined } from '@ant-design/icons';
 import { ruleApi, type Rule } from '../../api/account';
 import { getApiErrorMessage } from '../../utils/error';
 import RuleForm from './RuleForm';
 import dayjs from 'dayjs';
+import { useAuthStore } from '../../store/auth';
 
 const { Title, Text } = Typography;
 
 const severityColors: Record<string, string> = { HIGH: 'red', MEDIUM: 'orange', LOW: 'green' };
 const severityLabels: Record<string, string> = { HIGH: '高', MEDIUM: '中', LOW: '低' };
 
-const operatorLabels: Record<string, string> = {
-  eq: '等于', neq: '不等于', contains: '包含', not_contains: '不包含',
-  starts_with: '开头是', ends_with: '结尾是', gt: '大于', lt: '小于',
-  gte: '大于等于', lte: '小于等于', is_null: '为空', is_not_null: '非空',
-  in: '在列表中', not_in: '不在列表中',
-};
-
 export default function RuleDetail() {
+  const can = useAuthStore((state) => state.hasPermission);
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [rule, setRule] = useState<Rule | null>(null);
@@ -48,13 +43,6 @@ export default function RuleDetail() {
     return <div style={{ textAlign: 'center', padding: 60, color: '#8E8E93' }}>规则不存在</div>;
   }
 
-  const conditionColumns = [
-    { title: '#', render: (_: any, __: any, i: number) => i + 1, width: 40 },
-    { title: '字段', dataIndex: 'field', render: (v: string) => <Text code>{v}</Text>, width: 140 },
-    { title: '操作符', dataIndex: 'operator', render: (v: string) => operatorLabels[v] || v, width: 100 },
-    { title: '值', dataIndex: 'value', render: (v: string) => <Text strong>{v || '-'}</Text> },
-  ];
-
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
@@ -66,7 +54,7 @@ export default function RuleDetail() {
           </Tag>
           <Tag color={severityColors[rule.severity]}>{severityLabels[rule.severity]}</Tag>
         </div>
-        {rule.ruleType === 'CUSTOM' && (
+        {rule.ruleType === 'CUSTOM' && can('rules', 'update') && (
           <Button icon={<EditOutlined />} onClick={() => setEditOpen(true)}>编辑规则</Button>
         )}
       </div>
@@ -125,7 +113,7 @@ export default function RuleDetail() {
             title={
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Text strong>参数配置</Text>
-                <Button
+                {can('rules', 'update') && <Button
                   size="small"
                   icon={<SettingOutlined />}
                   onClick={() => {
@@ -134,7 +122,7 @@ export default function RuleDetail() {
                   }}
                 >
                   编辑参数
-                </Button>
+                </Button>}
               </div>
             }
             style={{

@@ -1,0 +1,32 @@
+[
+  {
+    "name": "legacy-template",
+    "input": [
+      { "key": "sequenceNumber", "label": "旧编号", "source": "core", "visible": false, "width": 42 },
+      { "key": "controlDomain", "label": "控制域", "source": "core", "visible": true, "width": 240 },
+      { "key": "controlPoint", "label": "旧控制点", "source": "core", "visible": true, "width": 280 },
+      { "key": "referenceAnswer", "label": "参考回答", "source": "core", "visible": true, "width": 200 },
+      { "key": "extraData.owner", "label": "负责人", "source": "extra", "visible": false, "width": 180 }
+    ],
+    "expectedKeys": [
+      "sequenceNumber", "controlPoint", "assets", "assignee", "answer", "controlDomain",
+      "extraData.owner", "evidence", "history", "compliance", "findingDescription",
+      "findingSeverity", "status", "actions"
+    ]
+  },
+  {
+    "name": "saved-layout",
+    "input": [
+      { "key": "status", "label": "自定义状态", "source": "system", "visible": false, "width": 90 },
+      { "key": "assets", "label": "自定义资产", "source": "system", "visible": false, "width": 120 },
+      { "key": "controlPoint", "label": "自定义控制点", "source": "core", "visible": false, "width": 120 },
+      { "key": "answer", "label": "自定义说明", "source": "system", "visible": false, "width": 120 },
+      { "key": "custom", "label": "自定义", "source": "extra", "visible": false, "width": 0 },
+      { "key": "custom", "label": "重复项", "source": "extra", "visible": true, "width": 999 }
+    ],
+    "expectedKeys": [
+      "compliance", "findingDescription", "findingSeverity", "status", "assets", "assignee",
+      "controlPoint", "answer", "custom", "evidence", "history", "actions", "sequenceNumber"
+    ]
+  }
+]
